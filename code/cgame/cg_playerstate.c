@@ -299,7 +299,7 @@ CG_CheckLocalSounds
 */
 void CG_CheckLocalSounds( playerState_t *ps, playerState_t *ops ) {
 	int			highScore, reward;
-	int			health, armor;
+	int			armor, health, hitDiff;
 	sfxHandle_t sfx;
 
 	// don't play the sounds if the player just changed teams
@@ -307,22 +307,30 @@ void CG_CheckLocalSounds( playerState_t *ps, playerState_t *ops ) {
 		return;
 	}
 
-	// hit changes
-	if ( ps->persistant[PERS_HITS] > ops->persistant[PERS_HITS] ) {
-		armor  = ps->persistant[PERS_ATTACKEE_ARMOR] & 0xff;
-		health = ps->persistant[PERS_ATTACKEE_ARMOR] >> 8;
-		if (ps->persistant[PERS_SCORE] > ops->persistant[PERS_SCORE]) {
-			trap_S_StartLocalSound(cgs.media.hitSoundKill, CHAN_LOCAL_SOUND);
-		} else if (armor > 50 ) {
-			trap_S_StartLocalSound( cgs.media.hitSoundHighArmor, CHAN_LOCAL_SOUND );
-		} else if (armor || health > 100) {
-			trap_S_StartLocalSound( cgs.media.hitSoundLowArmor, CHAN_LOCAL_SOUND );
-		} else {
-			trap_S_StartLocalSound( cgs.media.hitSound, CHAN_LOCAL_SOUND );
-		}
-	} else if ( ps->persistant[PERS_HITS] < ops->persistant[PERS_HITS] ) {
-		trap_S_StartLocalSound( cgs.media.hitTeamSound, CHAN_LOCAL_SOUND );
+	// Extract armor and health values from PERS_ATTACKEE_ARMOR.
+	armor = ps->persistant[PERS_ATTACKEE_ARMOR] & 0xff;
+	health = ps->persistant[PERS_ATTACKEE_ARMOR] >> 8;
+
+	// Calculate the difference in hits between the current and previous state.
+	hitDiff = ps->persistant[PERS_HITS] - ops->persistant[PERS_HITS];
+
+	// Determine the appropriate sound based on hit difference and game conditions.
+	if (hitDiff > 0) {
+		sfx =
+			(ps->persistant[PERS_SCORE] > ops->persistant[PERS_SCORE]) ? cgs.media.hitSoundKill :   // Score increased: play kill sound.
+			(armor > 50) ? cgs.media.hitSoundHighArmor :    // High armor: play high armor sound.
+			(armor || health > 100) ? cgs.media.hitSoundLowArmor :    // Low armor or high health: play low armor sound.
+			cgs.media.hitSound;    // Default hit sound.
 	}
+	else if (hitDiff < 0) {
+		sfx = cgs.media.hitTeamSound;   // Hits decreased: play team hit sound.
+	}
+	else {
+		return; // No change in hits: no sound.
+	}
+
+	// Play the determined sound.
+	trap_S_StartLocalSound(sfx, CHAN_LOCAL_SOUND);
 
 	// health changes of more than -1 should make pain sounds
 	if ( ps->stats[STAT_HEALTH] < ops->stats[STAT_HEALTH] - 1 ) {
