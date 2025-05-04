@@ -38,9 +38,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <io.h>
 #include <conio.h>
 #include <wincrypt.h>
-#include <shlobj.h>
 #include <psapi.h>
 #include <float.h>
+#include <shlobj.h>
+#include <shfolder.h>
+#pragma comment(lib, "shell32.lib")
 
 #ifndef KEY_WOW64_32KEY
 #define KEY_WOW64_32KEY 0x0200
@@ -100,45 +102,26 @@ void Sys_SetFloatEnv(void)
 Sys_DefaultHomePath
 ================
 */
-char *Sys_DefaultHomePath( void )
+char* Sys_DefaultHomePath(void)
 {
 	TCHAR szPath[MAX_PATH];
-	FARPROC qSHGetFolderPath;
-	HMODULE shfolder = LoadLibrary("shfolder.dll");
 
-	if(shfolder == NULL)
+	if (!*homePath && com_homepath)
 	{
-		Com_Printf("Unable to load SHFolder.dll\n");
-		return NULL;
-	}
-
-	if(!*homePath && com_homepath)
-	{
-		qSHGetFolderPath = GetProcAddress(shfolder, "SHGetFolderPathA");
-		if(qSHGetFolderPath == NULL)
-		{
-			Com_Printf("Unable to find SHGetFolderPath in SHFolder.dll\n");
-			FreeLibrary(shfolder);
-			return NULL;
-		}
-
-		if( !SUCCEEDED( qSHGetFolderPath( NULL, CSIDL_APPDATA,
-						NULL, 0, szPath ) ) )
+		if (!SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, szPath)))
 		{
 			Com_Printf("Unable to detect CSIDL_APPDATA\n");
-			FreeLibrary(shfolder);
 			return NULL;
 		}
-		
+
 		Com_sprintf(homePath, sizeof(homePath), "%s%c", szPath, PATH_SEP);
 
-		if(com_homepath->string[0])
+		if (com_homepath->string[0])
 			Q_strcat(homePath, sizeof(homePath), com_homepath->string);
 		else
 			Q_strcat(homePath, sizeof(homePath), HOMEPATH_NAME_WIN);
 	}
 
-	FreeLibrary(shfolder);
 	return homePath;
 }
 
@@ -236,35 +219,15 @@ Sys_MicrosoftStorePath
 char* Sys_MicrosoftStorePath(void)
 {
 #ifdef MSSTORE_PATH
-	if (!microsoftStorePath[0]) 
+	if (!microsoftStorePath[0])
 	{
 		TCHAR szPath[MAX_PATH];
-		FARPROC qSHGetFolderPath;
-		HMODULE shfolder = LoadLibrary("shfolder.dll");
 
-		if(shfolder == NULL)
-		{
-			Com_Printf("Unable to load SHFolder.dll\n");
-			return microsoftStorePath;
-		}
-
-		qSHGetFolderPath = GetProcAddress(shfolder, "SHGetFolderPathA");
-		if(qSHGetFolderPath == NULL)
-		{
-			Com_Printf("Unable to find SHGetFolderPath in SHFolder.dll\n");
-			FreeLibrary(shfolder);
-			return microsoftStorePath;
-		}
-
-		if( !SUCCEEDED( qSHGetFolderPath( NULL, CSIDL_PROGRAM_FILES,
-						NULL, 0, szPath ) ) )
+		if (!SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROGRAM_FILES, NULL, SHGFP_TYPE_CURRENT, szPath)))
 		{
 			Com_Printf("Unable to detect CSIDL_PROGRAM_FILES\n");
-			FreeLibrary(shfolder);
 			return microsoftStorePath;
 		}
-
-		FreeLibrary(shfolder);
 
 		// default: C:\Program Files\ModifiableWindowsApps\Quake 3\EN
 		Com_sprintf(microsoftStorePath, sizeof(microsoftStorePath), "%s%cModifiableWindowsApps%c%s%cEN", szPath, PATH_SEP, PATH_SEP, MSSTORE_PATH, PATH_SEP);

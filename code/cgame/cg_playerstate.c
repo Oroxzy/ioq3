@@ -300,6 +300,7 @@ CG_CheckLocalSounds
 void CG_CheckLocalSounds( playerState_t *ps, playerState_t *ops ) {
 	int			highScore, reward;
 	int			health, armor;
+	float       combined, pitch;  // <--- NEU HIER EINFÜGEN
 	sfxHandle_t sfx;
 
 	// don't play the sounds if the player just changed teams
@@ -312,9 +313,9 @@ void CG_CheckLocalSounds( playerState_t *ps, playerState_t *ops ) {
 		armor  = ps->persistant[PERS_ATTACKEE_ARMOR] & 0xff;
 		health = ps->persistant[PERS_ATTACKEE_ARMOR] >> 8;
 		// Beispielhafte Pitch-Berechnung: Health + Armor im Bereich 0–200 ergibt Pitch 0.8–1.2
-		float combined = armor + health;
+		combined = armor + health;
 		if (combined > 200.0f) combined = 200.0f;
-		float pitch = 0.8f + 0.4f * (combined / 200.0f);
+		pitch = 0.8f + 0.4f * (combined / 200.0f);
 
 		// Critical hit overrides pitch
 		if (ps->persistant[PERS_SCORE] > ops->persistant[PERS_SCORE]) {
