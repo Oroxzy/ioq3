@@ -311,14 +311,17 @@ void CG_CheckLocalSounds( playerState_t *ps, playerState_t *ops ) {
 	if ( ps->persistant[PERS_HITS] > ops->persistant[PERS_HITS] ) {
 		armor  = ps->persistant[PERS_ATTACKEE_ARMOR] & 0xff;
 		health = ps->persistant[PERS_ATTACKEE_ARMOR] >> 8;
+		// Beispielhafte Pitch-Berechnung: Health + Armor im Bereich 0–200 ergibt Pitch 0.8–1.2
+		float combined = armor + health;
+		if (combined > 200.0f) combined = 200.0f;
+		float pitch = 0.8f + 0.4f * (combined / 200.0f);
+
+		// Critical hit overrides pitch
 		if (ps->persistant[PERS_SCORE] > ops->persistant[PERS_SCORE]) {
-			trap_S_StartLocalSound(cgs.media.hitSoundKill, CHAN_LOCAL_SOUND);
-		} else if (armor > 50 ) {
-			trap_S_StartLocalSound( cgs.media.hitSoundHighArmor, CHAN_LOCAL_SOUND );
-		} else if (armor || health > 100) {
-			trap_S_StartLocalSound( cgs.media.hitSoundLowArmor, CHAN_LOCAL_SOUND );
-		} else {
-			trap_S_StartLocalSound( cgs.media.hitSound, CHAN_LOCAL_SOUND );
+			trap_S_StartLocalSoundWithPitch(cgs.media.hitSoundKill, CHAN_LOCAL_SOUND, 1.4f); // extra high
+		}
+		else {
+			trap_S_StartLocalSoundWithPitch(cgs.media.hitSound, CHAN_LOCAL_SOUND, pitch);
 		}
 	} else if ( ps->persistant[PERS_HITS] < ops->persistant[PERS_HITS] ) {
 		trap_S_StartLocalSound( cgs.media.hitTeamSound, CHAN_LOCAL_SOUND );

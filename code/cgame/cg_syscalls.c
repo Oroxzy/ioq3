@@ -194,6 +194,10 @@ void	trap_S_StartLocalSound( sfxHandle_t sfx, int channelNum ) {
 	syscall( CG_S_STARTLOCALSOUND, sfx, channelNum );
 }
 
+void trap_S_StartLocalSoundWithPitch(sfxHandle_t sfx, int channel, float pitch) {
+	syscall(CG_S_STARTLOCALSOUND_PITCH, sfx, channel, PASSFLOAT(pitch));
+}
+
 void	trap_S_ClearLoopingSounds( qboolean killall ) {
 	syscall( CG_S_CLEARLOOPINGSOUNDS, killall );
 }
