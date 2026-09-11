@@ -35,6 +35,14 @@ extern qboolean loadCamera(const char *name);
 extern void startCamera(int time);
 extern qboolean getCameraInfo(int time, vec3_t *origin, vec3_t *angles);
 
+// The hit sound is pitched by the health and armor the target has left,
+// see cl_hitPitch. This follows the baseq3 playerState_t conventions.
+#define HIT_SOUND			"sound/feedback/hit.wav"
+
+static sfxHandle_t	hitSound = -1;		// -1 until the cgame registers HIT_SOUND
+static int			cgameSnapshotNum;	// newest snapshot the cgame has read
+static int			hitSnapshotNum;		// snapshot of the last hit that got a sound
+
 /*
 ====================
 CL_GetGameState
@@ -142,6 +150,10 @@ qboolean	CL_GetSnapshot( int snapshotNumber, snapshot_t *snapshot ) {
 	// circular buffer, we can't return it
 	if ( cl.parseEntitiesNum - clSnap->parseEntitiesNum >= MAX_PARSE_ENTITIES ) {
 		return qfalse;
+	}
+
+	if ( snapshotNumber > cgameSnapshotNum ) {
+		cgameSnapshotNum = snapshotNumber;
 	}
 
 	// write the snapshot
@@ -402,6 +414,199 @@ static int	FloatAsInt( float f ) {
 
 /*
 ====================
+CL_RegisterCGameSound
+====================
+*/
+static sfxHandle_t CL_RegisterCGameSound( const char *name, qboolean compressed ) {
+	sfxHandle_t	sfx;
+
+	sfx = S_RegisterSound( name, compressed );
+	if ( !Q_stricmp( name, HIT_SOUND ) ) {
+		hitSound = sfx;
+	}
+
+	return sfx;
+}
+
+/*
+====================
+CL_SnapshotHasNewKill
+
+Looks for the obituary of a kill by killer that is in snap but was not in
+prev yet, temporary entities stay around for a few snapshots
+====================
+*/
+static qboolean CL_SnapshotHasNewKill( const clSnapshot_t *snap, const clSnapshot_t *prev, int killer ) {
+	const entityState_t	*es, *old;
+	int					i, j;
+
+	// prev is older, so if its entities are still there, so are snap's
+	if ( cl.parseEntitiesNum - prev->parseEntitiesNum >= MAX_PARSE_ENTITIES ) {
+		return qfalse;
+	}
+
+	for ( i = 0; i < snap->numEntities; i++ ) {
+		es = &cl.parseEntities[ ( snap->parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 ) ];
+		if ( es->eType != ET_EVENTS + EV_OBITUARY
+			|| es->otherEntityNum2 != killer || es->otherEntityNum == killer ) {
+			continue;
+		}
+
+		for ( j = 0; j < prev->numEntities; j++ ) {
+			old = &cl.parseEntities[ ( prev->parseEntitiesNum + j ) & ( MAX_PARSE_ENTITIES - 1 ) ];
+			if ( old->number == es->number && old->eType == es->eType
+				&& old->otherEntityNum == es->otherEntityNum ) {
+				break;
+			}
+		}
+		if ( j == prev->numEntities ) {
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
+/*
+====================
+CL_EstimateHitRemaining
+
+Servers without PERS_ATTACKEE_REMAINING only report what the target had
+before the hit, so take off what the weapon does in baseq3 (game/g_weapon.c,
+g_missile.c). Splash weapons are counted as direct hits.
+====================
+*/
+static void CL_EstimateHitRemaining( const clSnapshot_t *hit, int *health, int *armor ) {
+	const char	*info;
+	int			attackee, damage, save;
+
+	// persistant[] only has 16 bits on the network, so mask off the sign
+	attackee = hit->ps.persistant[PERS_ATTACKEE_ARMOR];
+	*health = ( attackee >> 8 ) & 0xff;
+	*armor = attackee & 0xff;
+
+	switch ( hit->ps.weapon ) {
+	case WP_GAUNTLET:
+		damage = 50;
+		break;
+	case WP_MACHINEGUN:
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SERVERINFO ];
+		damage = ( atoi( Info_ValueForKey( info, "g_gametype" ) ) == GT_TEAM ) ? 5 : 7;
+		break;
+	case WP_SHOTGUN:
+		damage = 10;	// the report is from before the last pellet
+		break;
+	case WP_LIGHTNING:
+		damage = 8;
+		break;
+	case WP_PLASMAGUN:
+		damage = 20;
+		break;
+	case WP_GRENADE_LAUNCHER:
+	case WP_ROCKET_LAUNCHER:
+	case WP_RAILGUN:
+	case WP_BFG:
+		damage = 100;
+		break;
+	default:
+		damage = 0;
+		break;
+	}
+
+	if ( hit->ps.powerups[PW_QUAD] ) {
+		damage *= 3;	// default g_quadfactor
+	}
+	damage = damage * hit->ps.stats[STAT_MAX_HEALTH] / 100;	// handicap
+
+	// armor takes its share first, as in CheckArmor
+	save = ceil( damage * ARMOR_PROTECTION );
+	if ( save > *armor ) {
+		save = *armor;
+	}
+	*health -= damage - save;
+	*armor -= save;
+
+	// this was not the killing hit, so the target has something left
+	if ( *health < 1 ) {
+		*health = 1;
+	}
+}
+
+/*
+====================
+CL_HitSoundPitch
+
+The cgame plays the hit sound when it reads a snapshot in which the hit
+counter went up. The pitch follows how much health and armor the target
+has left after the hit, see cl_hitPitchFull and cl_hitPitchEmpty.
+
+Returns qfalse if the sound does not belong to a new hit.
+====================
+*/
+static qboolean CL_HitSoundPitch( float *pitch ) {
+	const clSnapshot_t	*snap, *hit, *prev;
+	int					num, hits, remaining, health, armor;
+	float				frac;
+
+	// walk back from the newest snapshot the cgame has read to the
+	// one with the hit, keeping the snapshot before it for the kill check
+	hit = prev = NULL;
+	for ( num = cgameSnapshotNum; cl.snap.messageNum - num < PACKET_BACKUP; num-- ) {
+		snap = &cl.snapshots[ num & PACKET_MASK ];
+		if ( !snap->valid || snap->messageNum != num ) {
+			continue;
+		}
+
+		if ( hit && hit->ps.clientNum == snap->ps.clientNum ) {
+			hits = hit->ps.persistant[PERS_HITS] - snap->ps.persistant[PERS_HITS];
+			if ( hits < 0 ) {
+				// a team hit or a reset counter, the cgame can play those
+				// with a handle that is shared with the hit sound
+				return qfalse;
+			}
+			if ( hits > 0 ) {
+				prev = snap;
+				break;
+			}
+		}
+		hit = snap;
+	}
+
+	// the cgame can go back and forth between two snapshots around teleports,
+	// so make sure every hit gets exactly one sound
+	if ( !prev || hit->messageNum == hitSnapshotNum ) {
+		return qfalse;
+	}
+	hitSnapshotNum = hit->messageNum;
+
+	remaining = hit->ps.persistant[PERS_ATTACKEE_REMAINING];
+	if ( remaining ) {
+		// the server reports health plus one, so 0 health is a dead target
+		health = ( ( remaining >> 8 ) & 0xff ) - 1;
+		armor = remaining & 0xff;
+	} else {
+		CL_EstimateHitRemaining( hit, &health, &armor );
+	}
+
+	// the hit killed the target or landed on its body
+	if ( health <= 0 || CL_SnapshotHasNewKill( hit, prev, hit->ps.clientNum )
+		|| hit->ps.persistant[PERS_SCORE] > prev->ps.persistant[PERS_SCORE] ) {
+		*pitch = cl_hitPitchKill->value;
+		return qtrue;
+	}
+
+	// 200 health and armor combined counts as a full target
+	frac = ( health + armor ) / 200.0f;
+	if ( frac > 1.0f ) {
+		frac = 1.0f;
+	}
+
+	*pitch = cl_hitPitchEmpty->value + ( cl_hitPitchFull->value - cl_hitPitchEmpty->value ) * frac;
+	return qtrue;
+}
+
+/*
+====================
 CL_CgameSystemCalls
 
 The cgame module is making a system call
@@ -503,7 +708,15 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		S_StartSound( VMA(1), args[2], args[3], args[4] );
 		return 0;
 	case CG_S_STARTLOCALSOUND:
-		S_StartLocalSound( args[1], args[2] );
+		{
+			float	pitch;
+
+			if ( args[1] == hitSound && cl_hitPitch->integer && CL_HitSoundPitch( &pitch ) ) {
+				S_StartLocalSoundWithPitch( args[1], args[2], pitch );
+			} else {
+				S_StartLocalSound( args[1], args[2] );
+			}
+		}
 		return 0;
 	case CG_S_CLEARLOOPINGSOUNDS:
 		S_ClearLoopingSounds(args[1]);
@@ -524,7 +737,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		S_Respatialize( args[1], VMA(2), VMA(3), args[4] );
 		return 0;
 	case CG_S_REGISTERSOUND:
-		return S_RegisterSound( VMA(1), args[2] );
+		return CL_RegisterCGameSound( VMA(1), args[2] );
 	case CG_S_STARTBACKGROUNDTRACK:
 		S_StartBackgroundTrack( VMA(1), VMA(2) );
 		return 0;
@@ -732,6 +945,10 @@ void CL_InitCGame( void ) {
 		if(interpret != VMI_COMPILED && interpret != VMI_BYTECODE)
 			interpret = VMI_COMPILED;
 	}
+
+	hitSound = -1;
+	cgameSnapshotNum = 0;
+	hitSnapshotNum = 0;
 
 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
 	if ( !cgvm ) {

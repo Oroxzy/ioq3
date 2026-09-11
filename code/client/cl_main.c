@@ -75,6 +75,10 @@ cvar_t	*cl_showSend;
 cvar_t	*cl_timedemo;
 cvar_t	*cl_timedemoLog;
 cvar_t	*cl_autoRecordDemo;
+cvar_t	*cl_hitPitch;
+cvar_t	*cl_hitPitchFull;
+cvar_t	*cl_hitPitchEmpty;
+cvar_t	*cl_hitPitchKill;
 cvar_t	*cl_aviFrameRate;
 cvar_t	*cl_aviMotionJpeg;
 cvar_t	*cl_forceavidemo;
@@ -3575,6 +3579,20 @@ void CL_Init( void ) {
 	cl_timedemo = Cvar_Get ("timedemo", "0", 0);
 	cl_timedemoLog = Cvar_Get ("cl_timedemoLog", "", CVAR_ARCHIVE);
 	cl_autoRecordDemo = Cvar_Get ("cl_autoRecordDemo", "0", CVAR_ARCHIVE);
+
+	cl_hitPitch = Cvar_Get( "cl_hitPitch", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitPitch, 0, 1, qtrue );
+	Cvar_SetDescription( cl_hitPitch, "Pitch the hit sound by the health and armor the target has left after the hit" );
+	cl_hitPitchFull = Cvar_Get( "cl_hitPitchFull", "1.2", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitPitchFull, S_MIN_PITCH, S_MAX_PITCH, qfalse );
+	Cvar_SetDescription( cl_hitPitchFull, "Hit sound pitch when the target has 200 or more health and armor left" );
+	cl_hitPitchEmpty = Cvar_Get( "cl_hitPitchEmpty", "0.8", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitPitchEmpty, S_MIN_PITCH, S_MAX_PITCH, qfalse );
+	Cvar_SetDescription( cl_hitPitchEmpty, "Hit sound pitch when the target is almost dead" );
+	cl_hitPitchKill = Cvar_Get( "cl_hitPitchKill", "0.7", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitPitchKill, S_MIN_PITCH, S_MAX_PITCH, qfalse );
+	Cvar_SetDescription( cl_hitPitchKill, "Hit sound pitch for the hit that kills the target and for hits on its body" );
+
 	cl_aviFrameRate = Cvar_Get ("cl_aviFrameRate", "25", CVAR_ARCHIVE);
 	cl_aviMotionJpeg = Cvar_Get ("cl_aviMotionJpeg", "1", CVAR_ARCHIVE);
 	cl_forceavidemo = Cvar_Get ("cl_forceavidemo", "0", 0);

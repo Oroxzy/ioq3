@@ -239,7 +239,9 @@ typedef enum {
 	PERS_DEFEND_COUNT,				// defend awards
 	PERS_ASSIST_COUNT,				// assist awards
 	PERS_GAUNTLET_FRAG_COUNT,		// kills with the guantlet
-	PERS_CAPTURES					// captures
+	PERS_CAPTURES,					// captures
+	PERS_ATTACKEE_REMAINING			// health+1/armor the last person we attacked has left after
+									// the hit, 0 if the server does not report it
 } persEnum_t;
 
 

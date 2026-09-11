@@ -421,6 +421,11 @@ extern	cvar_t	*cl_inGameVideo;
 extern	cvar_t	*cl_lanForcePackets;
 extern	cvar_t	*cl_autoRecordDemo;
 
+extern	cvar_t	*cl_hitPitch;
+extern	cvar_t	*cl_hitPitchFull;
+extern	cvar_t	*cl_hitPitchEmpty;
+extern	cvar_t	*cl_hitPitchKill;
+
 extern	cvar_t	*cl_consoleKeys;
 
 #ifdef USE_MUMBLE
