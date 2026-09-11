@@ -1,4 +1,5 @@
 build*
+!/build_mingw64.bat
 *.swp
 *tags
 *~
