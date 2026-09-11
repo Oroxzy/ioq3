@@ -349,6 +349,76 @@ static void S_PaintChannelFrom16_scalar( channel_t *ch, const sfx_t *sc, int cou
 	}
 }
 
+/*
+===================
+S_PaintChannelFrom16_pitch
+
+Mixes an uncompressed one-shot channel that plays at a different
+pitch, resampling it on the fly with linear interpolation.
+sampleOffset counts output samples since the channel started.
+===================
+*/
+static void S_PaintChannelFrom16_pitch( channel_t *ch, const sfx_t *sc, int count, int sampleOffset, int bufferOffset ) {
+	int						leftvol, rightvol;
+	int						i, pos, chunkStart, chunkFrames;
+	int						left, right;
+	float					fpos, frac;
+	portable_samplepair_t	*samp;
+	sndBuffer				*chunk;
+	const short				*frame, *next;
+
+	if (sc->soundChannels <= 0) {
+		return;
+	}
+
+	samp = &paintbuffer[ bufferOffset ];
+	leftvol = ch->leftvol*snd_vol;
+	rightvol = ch->rightvol*snd_vol;
+
+	// SND_CHUNK_SIZE is a multiple of the channel count, so a
+	// frame never straddles two chunks
+	chunkFrames = SND_CHUNK_SIZE / sc->soundChannels;
+	chunk = sc->soundData;
+	chunkStart = 0;
+
+	for ( i=0 ; i<count ; i++ ) {
+		fpos = (sampleOffset + i) * ch->pitch;
+		pos = fpos;
+		frac = fpos - pos;
+
+		if ( pos >= sc->soundLength ) {
+			break;
+		}
+
+		// the position only ever moves forward
+		while ( pos >= chunkStart + chunkFrames ) {
+			chunk = chunk->next;
+			chunkStart += chunkFrames;
+		}
+
+		frame = chunk->sndChunk + (pos - chunkStart) * sc->soundChannels;
+
+		// the frame to interpolate towards may be in the next chunk
+		if ( pos + 1 >= sc->soundLength ) {
+			next = frame;
+		} else if ( pos + 1 < chunkStart + chunkFrames ) {
+			next = frame + sc->soundChannels;
+		} else {
+			next = chunk->next->sndChunk;
+		}
+
+		left = frame[0] + (next[0] - frame[0]) * frac;
+		if ( sc->soundChannels == 2 ) {
+			right = frame[1] + (next[1] - frame[1]) * frac;
+		} else {
+			right = left;
+		}
+
+		samp[i].left += (left * leftvol)>>8;
+		samp[i].right += (right * rightvol)>>8;
+	}
+}
+
 static void S_PaintChannelFrom16( channel_t *ch, const sfx_t *sc, int count, int sampleOffset, int bufferOffset ) {
 #if idppc_altivec
 	if (com_altivec->integer) {
@@ -505,6 +575,19 @@ void S_PaintChannelFromMuLaw( channel_t *ch, sfx_t *sc, int count, int sampleOff
 
 /*
 ===================
+S_ChannelLength
+===================
+*/
+int S_ChannelLength( const channel_t *ch ) {
+	if ( ch->pitch == 1.0f ) {
+		return ch->thesfx->soundLength;
+	}
+
+	return ceil( ch->thesfx->soundLength / ch->pitch );
+}
+
+/*
+===================
 S_PaintChannels
 ===================
 */
@@ -515,7 +598,7 @@ void S_PaintChannels( int endtime ) {
 	channel_t *ch;
 	sfx_t	*sc;
 	int		ltime, count;
-	int		sampleOffset;
+	int		sampleOffset, length;
 
 	if(s_muted->integer)
 		snd_vol = 0;
@@ -562,12 +645,15 @@ void S_PaintChannels( int endtime ) {
 
 			sampleOffset = ltime - ch->startSample;
 			count = end - ltime;
-			if ( sampleOffset + count > sc->soundLength ) {
-				count = sc->soundLength - sampleOffset;
+			length = S_ChannelLength( ch );
+			if ( sampleOffset + count > length ) {
+				count = length - sampleOffset;
 			}
 
 			if ( count > 0 ) {	
-				if( sc->soundCompressionMethod == 1) {
+				if( ch->pitch != 1.0f ) {
+					S_PaintChannelFrom16_pitch	(ch, sc, count, sampleOffset, ltime - s_paintedtime);
+				} else if( sc->soundCompressionMethod == 1) {
 					S_PaintChannelFromADPCM		(ch, sc, count, sampleOffset, ltime - s_paintedtime);
 				} else if( sc->soundCompressionMethod == 2) {
 					S_PaintChannelFromWavelet	(ch, sc, count, sampleOffset, ltime - s_paintedtime);

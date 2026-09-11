@@ -524,7 +524,7 @@ if origin is NULL, the sound will be dynamically sourced from the entity
 Entchannel 0 will never override a playing sound
 ====================
 */
-static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfxHandle, qboolean localSound ) {
+static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfxHandle, qboolean localSound, float pitch, qboolean allowRepeat ) {
 	channel_t	*ch;
 	sfx_t		*sfx;
   int i, oldest, chosen, time;
@@ -573,7 +573,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 	inplay = 0;
 	for ( i = 0; i < MAX_CHANNELS ; i++, ch++ ) {		
 		if (ch->entnum == entityNum && ch->thesfx == sfx) {
-			if (time - ch->allocTime < 50) {
+			if (time - ch->allocTime < 50 && !allowRepeat) {
 //				if (Cvar_VariableValue( "cg_showmiss" )) {
 //					Com_Printf("double sound start\n");
 //				}
@@ -645,6 +645,8 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 	ch->rightvol = ch->master_vol;		// unless the game isn't running
 	ch->doppler = qfalse;
 	ch->fullVolume = fullVolume;
+	// only uncompressed samples can be resampled while mixing
+	ch->pitch = ( sfx->soundCompressionMethod == 0 ) ? pitch : 1.0f;
 }
 
 /*
@@ -655,15 +657,15 @@ if origin is NULL, the sound will be dynamically sourced from the entity
 ====================
 */
 void S_Base_StartSound( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfxHandle ) {
-	S_Base_StartSoundEx( origin, entityNum, entchannel, sfxHandle, qfalse );
+	S_Base_StartSoundEx( origin, entityNum, entchannel, sfxHandle, qfalse, 1.0f, qfalse );
 }
 
 /*
 ==================
-S_StartLocalSound
+S_Base_StartLocalSoundEx
 ==================
 */
-void S_Base_StartLocalSound( sfxHandle_t sfxHandle, int channelNum ) {
+static void S_Base_StartLocalSoundEx( sfxHandle_t sfxHandle, int channelNum, float pitch, qboolean allowRepeat ) {
 	if ( !s_soundStarted || s_soundMuted ) {
 		return;
 	}
@@ -673,7 +675,25 @@ void S_Base_StartLocalSound( sfxHandle_t sfxHandle, int channelNum ) {
 		return;
 	}
 
-	S_Base_StartSoundEx( NULL, listener_number, channelNum, sfxHandle, qtrue );
+	S_Base_StartSoundEx( NULL, listener_number, channelNum, sfxHandle, qtrue, pitch, allowRepeat );
+}
+
+/*
+==================
+S_StartLocalSound
+==================
+*/
+void S_Base_StartLocalSound( sfxHandle_t sfxHandle, int channelNum ) {
+	S_Base_StartLocalSoundEx( sfxHandle, channelNum, 1.0f, qfalse );
+}
+
+/*
+==================
+S_StartLocalSoundWithPitch
+==================
+*/
+static void S_Base_StartLocalSoundWithPitch( sfxHandle_t sfxHandle, int channelNum, float pitch ) {
+	S_Base_StartLocalSoundEx( sfxHandle, channelNum, pitch, qtrue );
 }
 
 
@@ -934,6 +954,7 @@ void S_AddLoopSounds (void) {
 		ch->dopplerScale = loop->dopplerScale;
 		ch->oldDopplerScale = loop->oldDopplerScale;
 		ch->fullVolume = qfalse;
+		ch->pitch = 1.0f;
 		numLoopChannels++;
 		if (numLoopChannels == MAX_CHANNELS) {
 			return;
@@ -1189,7 +1210,7 @@ qboolean S_ScanChannelStarts( void ) {
 		}
 
 		// if it is completely finished by now, clear it
-		if ( ch->startSample + (ch->thesfx->soundLength) <= s_paintedtime ) {
+		if ( ch->startSample + S_ChannelLength( ch ) <= s_paintedtime ) {
 			S_ChannelFree(ch);
 		}
 	}
@@ -1589,6 +1610,7 @@ qboolean S_Base_Init( soundInterface_t *si ) {
 	si->Shutdown = S_Base_Shutdown;
 	si->StartSound = S_Base_StartSound;
 	si->StartLocalSound = S_Base_StartLocalSound;
+	si->StartLocalSoundWithPitch = S_Base_StartLocalSoundWithPitch;
 	si->StartBackgroundTrack = S_Base_StartBackgroundTrack;
 	si->StopBackgroundTrack = S_Base_StopBackgroundTrack;
 	si->RawSamples = S_Base_RawSamples;

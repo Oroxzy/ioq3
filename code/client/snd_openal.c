@@ -1004,6 +1004,9 @@ static void S_AL_SrcKill(srcHandle_t src)
 	// Detach any buffers
 	qalSourcei(curSource->alSource, AL_BUFFER, 0);
 
+	// Music and stream sources skip S_AL_SrcSetup, so undo a pitched hit sound here
+	qalSourcef(curSource->alSource, AL_PITCH, 1.0f);
+
 	curSource->sfx = 0;
 	curSource->lastUsedTime = 0;
 	curSource->priority = 0;
@@ -1201,6 +1204,36 @@ static qboolean S_AL_CheckInput(int entityNum, sfxHandle_t sfx)
 
 /*
 =================
+S_AL_StartLocalSoundWithPitch
+
+Play a local (non-spatialized) sound effect at the given pitch
+=================
+*/
+static
+void S_AL_StartLocalSoundWithPitch(sfxHandle_t sfx, int channel, float pitch)
+{
+	srcHandle_t src;
+
+	if(S_AL_CheckInput(0, sfx))
+		return;
+
+	// Try to grab a source
+	src = S_AL_SrcAlloc(SRCPRI_LOCAL, -1, channel);
+
+	if(src == -1)
+		return;
+
+	// Set up the effect, this resets the pitch of a reused source
+	S_AL_SrcSetup(src, sfx, SRCPRI_LOCAL, -1, channel, qtrue);
+	qalSourcef(srcList[src].alSource, AL_PITCH, pitch);
+
+	// Start it playing
+	srcList[src].isPlaying = qtrue;
+	qalSourcePlay(srcList[src].alSource);
+}
+
+/*
+=================
 S_AL_StartLocalSound
 
 Play a local (non-spatialized) sound effect
@@ -1209,23 +1242,7 @@ Play a local (non-spatialized) sound effect
 static
 void S_AL_StartLocalSound(sfxHandle_t sfx, int channel)
 {
-	srcHandle_t src;
-	
-	if(S_AL_CheckInput(0, sfx))
-		return;
-
-	// Try to grab a source
-	src = S_AL_SrcAlloc(SRCPRI_LOCAL, -1, channel);
-	
-	if(src == -1)
-		return;
-
-	// Set up the effect
-	S_AL_SrcSetup(src, sfx, SRCPRI_LOCAL, -1, channel, qtrue);
-
-	// Start it playing
-	srcList[src].isPlaying = qtrue;
-	qalSourcePlay(srcList[src].alSource);
+	S_AL_StartLocalSoundWithPitch(sfx, channel, 1.0f);
 }
 
 /*
@@ -2712,6 +2729,7 @@ qboolean S_AL_Init( soundInterface_t *si )
 	si->Shutdown = S_AL_Shutdown;
 	si->StartSound = S_AL_StartSound;
 	si->StartLocalSound = S_AL_StartLocalSound;
+	si->StartLocalSoundWithPitch = S_AL_StartLocalSoundWithPitch;
 	si->StartBackgroundTrack = S_AL_StartBackgroundTrack;
 	si->StopBackgroundTrack = S_AL_StopBackgroundTrack;
 	si->RawSamples = S_AL_RawSamples;

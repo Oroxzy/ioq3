@@ -108,6 +108,7 @@ typedef struct
 	sfx_t		*thesfx;		// sfx structure
 	qboolean	doppler;
 	qboolean	fullVolume;
+	float		pitch;			// playback rate, 1.0 = unchanged
 } channel_t;
 
 
@@ -129,6 +130,7 @@ typedef struct
 	void (*Shutdown)(void);
 	void (*StartSound)( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx );
 	void (*StartLocalSound)( sfxHandle_t sfx, int channelNum );
+	void (*StartLocalSoundWithPitch)( sfxHandle_t sfx, int channelNum, float pitch );
 	void (*StartBackgroundTrack)( const char *intro, const char *loop );
 	void (*StopBackgroundTrack)( void );
 	void (*RawSamples)(int stream, int samples, int rate, int width, int channels, const byte *data, float volume, int entityNum);
@@ -220,6 +222,9 @@ void		SND_setup( void );
 void		SND_shutdown(void);
 
 void S_PaintChannels(int endtime);
+
+// number of output samples a channel plays for, which depends on its pitch
+int S_ChannelLength( const channel_t *ch );
 
 void S_memoryLoad(sfx_t *sfx);
 

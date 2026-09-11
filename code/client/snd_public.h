@@ -28,6 +28,13 @@ void S_Shutdown( void );
 void S_StartSound( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx );
 void S_StartLocalSound( sfxHandle_t sfx, int channelNum );
 
+// pitch scales the playback rate, it is clamped to S_MIN_PITCH - S_MAX_PITCH.
+// Meant for feedback like hit sounds: unlike S_StartLocalSound, the sound
+// also starts when the same one has just started.
+#define S_MIN_PITCH	0.5f
+#define S_MAX_PITCH	2.0f
+void S_StartLocalSoundWithPitch( sfxHandle_t sfx, int channelNum, float pitch );
+
 void S_StartBackgroundTrack( const char *intro, const char *loop );
 void S_StopBackgroundTrack( void );
 

@@ -46,6 +46,7 @@ static qboolean S_ValidSoundInterface( soundInterface_t *pSi )
 	if( !pSi->Shutdown ) return qfalse;
 	if( !pSi->StartSound ) return qfalse;
 	if( !pSi->StartLocalSound ) return qfalse;
+	if( !pSi->StartLocalSoundWithPitch ) return qfalse;
 	if( !pSi->StartBackgroundTrack ) return qfalse;
 	if( !pSi->StopBackgroundTrack ) return qfalse;
 	if( !pSi->RawSamples ) return qfalse;
@@ -96,6 +97,23 @@ void S_StartLocalSound( sfxHandle_t sfx, int channelNum )
 {
 	if( si.StartLocalSound ) {
 		si.StartLocalSound( sfx, channelNum );
+	}
+}
+
+/*
+=================
+S_StartLocalSoundWithPitch
+=================
+*/
+void S_StartLocalSoundWithPitch( sfxHandle_t sfx, int channelNum, float pitch )
+{
+	if( Q_isnan( pitch ) ) {
+		pitch = 1.0f;
+	}
+
+	if( si.StartLocalSoundWithPitch ) {
+		si.StartLocalSoundWithPitch( sfx, channelNum,
+			Com_Clamp( S_MIN_PITCH, S_MAX_PITCH, pitch ) );
 	}
 }
 
