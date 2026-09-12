@@ -38,9 +38,11 @@ extern qboolean getCameraInfo(int time, vec3_t *origin, vec3_t *angles);
 // The hit sound is pitched by the health and armor the target has left,
 // see cl_hitPitch. This follows the baseq3 playerState_t conventions.
 #define HIT_SOUND			"sound/feedback/hit.wav"
+#define HIT_SOUND_QC		"sound/feedback/hit_qc.wav"	// from zz-hitsound-qc.pk3
 
 static sfxHandle_t	hitSound = -1;		// -1 until the cgame registers HIT_SOUND
-static sfxHandle_t	customHitSound = -1;	// -1 until cl_hitSoundFile is registered
+static sfxHandle_t	customHitSound = -1;	// -1 until the chosen file is registered
+static char			customHitSoundFile[MAX_QPATH];	// what customHitSound was registered from
 static int			cgameSnapshotNum;	// newest snapshot the cgame has read
 static int			hitsSounded = -1;	// hit counter the last played hit sound belongs to
 
@@ -592,20 +594,39 @@ static qboolean CL_FindHitSnapshot( const clSnapshot_t **hitOut, const clSnapsho
 	return qfalse;
 }
 
+// the file cl_hitSound asks for, empty for the game's own hit sound
+static const char *CL_HitSoundFile( void ) {
+	switch ( cl_hitSound->integer ) {
+	case 1:
+		return HIT_SOUND_QC;
+	case 2:
+		return cl_hitSoundFile->string;
+	default:
+		return "";
+	}
+}
+
 static sfxHandle_t CL_HitSoundHandle( void ) {
-	if ( !cl_hitSound->integer || !cl_hitSoundFile->string[0] ) {
+	const char *file = CL_HitSoundFile();
+
+	if ( !file[0] ) {
 		return hitSound;
 	}
 
-	if ( customHitSound < 0 || cl_hitSoundFile->modified ) {
-		cl_hitSoundFile->modified = qfalse;
+	// look the file up again only when the choice changed
+	if ( Q_stricmp( file, customHitSoundFile ) ) {
+		Q_strncpyz( customHitSoundFile, file, sizeof( customHitSoundFile ) );
 
-		if ( FS_FOpenFileRead( cl_hitSoundFile->string, NULL, qfalse ) >= 0 ) {
-			customHitSound = S_RegisterSound( cl_hitSoundFile->string, qfalse );
+		if ( FS_FOpenFileRead( file, NULL, qfalse ) >= 0 ) {
+			customHitSound = S_RegisterSound( file, qfalse );
+
+			if ( cl_hitSoundDebug->integer ) {
+				Com_Printf( "hit sound: playing %s\n", file );
+			}
 		} else {
 			customHitSound = -1;
 			Com_Printf( S_COLOR_YELLOW "cl_hitSound: %s not found, using the game's hit sound\n",
-				cl_hitSoundFile->string );
+				file );
 		}
 	}
 
@@ -1051,6 +1072,7 @@ void CL_InitCGame( void ) {
 
 	hitSound = -1;
 	customHitSound = -1;
+	customHitSoundFile[0] = '\0';
 	cgameSnapshotNum = 0;
 	hitsSounded = -1;
 

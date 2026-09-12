@@ -3600,10 +3600,10 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_hitPitchStack, 1, 999, qtrue );
 	Cvar_SetDescription( cl_hitPitchStack, "Health and armor combined that counts as a full target for cl_hitPitch" );
 	cl_hitSound = Cvar_Get( "cl_hitSound", "0", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_hitSound, 0, 1, qtrue );
-	Cvar_SetDescription( cl_hitSound, "Hit sound to play: 0 the game's own one, 1 the file in cl_hitSoundFile" );
+	Cvar_CheckRange( cl_hitSound, 0, 2, qtrue );
+	Cvar_SetDescription( cl_hitSound, "Hit sound to play: 0 the game's own one, 1 the Quake Champions one, 2 the file in cl_hitSoundFile" );
 	cl_hitSoundFile = Cvar_Get( "cl_hitSoundFile", "sound/feedback/hit_custom.wav", CVAR_ARCHIVE );
-	Cvar_SetDescription( cl_hitSoundFile, "Sound file played for hits when cl_hitSound is 1" );
+	Cvar_SetDescription( cl_hitSoundFile, "Sound file played for hits when cl_hitSound is 2" );
 	cl_hitSoundDebug = Cvar_Get( "cl_hitSoundDebug", "0", 0 );
 	Cvar_CheckRange( cl_hitSoundDebug, 0, 1, qtrue );
 	Cvar_SetDescription( cl_hitSoundDebug, "Print a line for every hit sound, to check that no hit stays silent" );
