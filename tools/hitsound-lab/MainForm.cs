@@ -43,6 +43,7 @@ public class MainForm : Form {
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 5, Width = 60 };
 
 	readonly Label statHits = Number();
+	readonly Label statFrames = Number();
 	readonly Label statSounds = Number();
 	readonly Label statMissed = Number();
 	readonly TextBox logView = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font( "Consolas", 9 ), Dock = DockStyle.Fill };
@@ -173,7 +174,8 @@ public class MainForm : Form {
 
 		// eine Zeile statt Spalten: bleibt auch in einem schmalen Fenster lesbar
 		grid.Controls.Add( Row(
-			Counter( "Treffer:", statHits ), Counter( "Sounds:", statSounds ), Counter( "ohne Ton:", statMissed ) ), 0, 0 );
+			Counter( "Schaden:", statHits ), Counter( "Treffer:", statFrames ),
+			Counter( "Sounds:", statSounds ), Counter( "ohne Ton:", statMissed ) ), 0, 0 );
 		grid.Controls.Add( logView, 0, 1 );
 		box.Controls.Add( grid );
 		return box;
@@ -280,23 +282,34 @@ public class MainForm : Form {
 		}
 
 		int hits = 0, sounds = 0;
+		var frames = new HashSet<string>();
 		var recent = new List<string>();
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
+
 			if ( trimmed.StartsWith( "hit on " ) ) {
 				hits++;
+				// Treffer im selben Server-Frame beantwortet das Spiel mit einem Ton,
+				// deshalb zaehlen die Frames und nicht die einzelnen Schadensereignisse
+				var mark = trimmed.LastIndexOf( " frame ", StringComparison.Ordinal );
+				frames.Add( mark >= 0 ? trimmed[( mark + 7 )..] : "#" + hits );
 				recent.Add( trimmed );
-			} else if ( trimmed.StartsWith( "hit sound: " ) && trimmed.Length > 11 && char.IsDigit( trimmed[11] ) ) {
-				sounds++;
-				recent.Add( trimmed );
+			} else if ( trimmed.StartsWith( "hit sound: " ) ) {
+				var rest = trimmed[11..];
+				if ( rest.Length > 0 && ( char.IsDigit( rest[0] ) || rest.StartsWith( "kill" ) ) ) {
+					sounds++;
+					recent.Add( trimmed );
+				}
 			}
 		}
 
+		int missed = Math.Max( 0, frames.Count - sounds );
 		statHits.Text = hits.ToString();
+		statFrames.Text = frames.Count.ToString();
 		statSounds.Text = sounds.ToString();
-		statMissed.Text = Math.Max( 0, hits - sounds ).ToString();
-		statMissed.ForeColor = hits > sounds ? Color.Firebrick : Color.ForestGreen;
+		statMissed.Text = missed.ToString();
+		statMissed.ForeColor = missed > 0 ? Color.Firebrick : Color.ForestGreen;
 
 		var tail = string.Join( Environment.NewLine, recent.TakeLast( 200 ) );
 		if ( logView.Text != tail ) {

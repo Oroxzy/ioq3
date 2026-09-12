@@ -1002,10 +1002,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		// health is stored plus one, so a reported value is never 0
 		attacker->client->ps.persistant[PERS_ATTACKEE_REMAINING] = ((healthLeft+1)<<8)|armorLeft;
 
-		// only the hits of a real player, bots fighting each other would drown them out
+		// only the hits of a real player, bots fighting each other would drown them out.
+		// The frame time is printed as well: hits that share it reach the client in one
+		// snapshot and are answered by a single hit sound, as they are in stock Quake 3.
 		if ( g_hitSoundDebug.integer && !( attacker->r.svFlags & SVF_BOT ) ) {
-			G_Printf( "hit on %s: %i health %i armor left (%s)\n", client->pers.netname,
-				healthLeft, armorLeft, modNames[mod] );
+			G_Printf( "hit on %s: %i health %i armor left (%s) frame %i\n", client->pers.netname,
+				healthLeft, armorLeft, modNames[mod], level.time );
 		}
 	}
 
