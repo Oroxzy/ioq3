@@ -425,6 +425,7 @@ extern	cvar_t	*cl_hitPitch;
 extern	cvar_t	*cl_hitPitchFull;
 extern	cvar_t	*cl_hitPitchEmpty;
 extern	cvar_t	*cl_hitPitchKill;
+extern	cvar_t	*cl_hitPitchStack;
 
 extern	cvar_t	*cl_consoleKeys;
 

@@ -79,6 +79,7 @@ cvar_t	*cl_hitPitch;
 cvar_t	*cl_hitPitchFull;
 cvar_t	*cl_hitPitchEmpty;
 cvar_t	*cl_hitPitchKill;
+cvar_t	*cl_hitPitchStack;
 cvar_t	*cl_aviFrameRate;
 cvar_t	*cl_aviMotionJpeg;
 cvar_t	*cl_forceavidemo;
@@ -3592,6 +3593,9 @@ void CL_Init( void ) {
 	cl_hitPitchKill = Cvar_Get( "cl_hitPitchKill", "0.7", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_hitPitchKill, S_MIN_PITCH, S_MAX_PITCH, qfalse );
 	Cvar_SetDescription( cl_hitPitchKill, "Hit sound pitch for the hit that kills the target and for hits on its body" );
+	cl_hitPitchStack = Cvar_Get( "cl_hitPitchStack", "200", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitPitchStack, 1, 999, qtrue );
+	Cvar_SetDescription( cl_hitPitchStack, "Health and armor combined that counts as a full target for cl_hitPitch" );
 
 	cl_aviFrameRate = Cvar_Get ("cl_aviFrameRate", "25", CVAR_ARCHIVE);
 	cl_aviMotionJpeg = Cvar_Get ("cl_aviMotionJpeg", "1", CVAR_ARCHIVE);

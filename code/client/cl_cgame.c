@@ -543,10 +543,9 @@ has left after the hit, see cl_hitPitchFull and cl_hitPitchEmpty.
 Returns qfalse if the sound does not belong to a new hit.
 ====================
 */
-static qboolean CL_HitSoundPitch( float *pitch ) {
+static qboolean CL_FindHitSnapshot( const clSnapshot_t **hitOut, const clSnapshot_t **prevOut ) {
 	const clSnapshot_t	*snap, *hit, *prev;
-	int					num, hits, remaining, health, armor;
-	float				frac;
+	int					num, hits;
 
 	// walk back from the newest snapshot the cgame has read to the
 	// one with the hit, keeping the snapshot before it for the kill check
@@ -572,9 +571,27 @@ static qboolean CL_HitSoundPitch( float *pitch ) {
 		hit = snap;
 	}
 
+	if ( !prev ) {
+		return qfalse;
+	}
+
+	*hitOut = hit;
+	*prevOut = prev;
+	return qtrue;
+}
+
+static qboolean CL_HitSoundPitch( float *pitch ) {
+	const clSnapshot_t	*hit, *prev;
+	int					remaining, health, armor;
+	float				frac;
+
+	if ( !CL_FindHitSnapshot( &hit, &prev ) ) {
+		return qfalse;
+	}
+
 	// the cgame can go back and forth between two snapshots around teleports,
 	// so make sure every hit gets exactly one sound
-	if ( !prev || hit->messageNum == hitSnapshotNum ) {
+	if ( hit->messageNum == hitSnapshotNum ) {
 		return qfalse;
 	}
 	hitSnapshotNum = hit->messageNum;
@@ -595,14 +612,57 @@ static qboolean CL_HitSoundPitch( float *pitch ) {
 		return qtrue;
 	}
 
-	// 200 health and armor combined counts as a full target
-	frac = ( health + armor ) / 200.0f;
+	// cl_hitPitchStack health and armor combined counts as a full target
+	frac = ( health + armor ) / cl_hitPitchStack->value;
 	if ( frac > 1.0f ) {
 		frac = 1.0f;
 	}
 
 	*pitch = cl_hitPitchEmpty->value + ( cl_hitPitchFull->value - cl_hitPitchEmpty->value ) * frac;
 	return qtrue;
+}
+
+/*
+====================
+CL_CheckMissedHitSound
+
+In frames where no user command runs, the cgame returns from
+CG_PredictPlayerState before it looks at the hit counter (the "if ( !moved )"
+path), and the hit sound for that snapshot is lost for good. Play it here
+when that happens, so that every hit is heard.
+====================
+*/
+static void CL_CheckMissedHitSound( void ) {
+	const clSnapshot_t	*hit, *prev;
+	float				pitch;
+
+	if ( !cl_hitPitch->integer || hitSound < 0 || clc.state != CA_ACTIVE ) {
+		return;
+	}
+
+	if ( !CL_FindHitSnapshot( &hit, &prev ) || hit->messageNum == hitSnapshotNum ) {
+		return;
+	}
+
+	// the cgame stays quiet in these cases as well, see CG_TransitionPlayerState
+	if ( cl.snap.ps.pm_type == PM_INTERMISSION
+		|| hit->ps.persistant[PERS_TEAM] == TEAM_SPECTATOR
+		|| hit->ps.persistant[PERS_TEAM] != prev->ps.persistant[PERS_TEAM] ) {
+		return;
+	}
+
+	// without prediction the cgame plays a snapshot's sounds when it reaches
+	// its time, so only step in once it has moved on to a newer snapshot
+	if ( ( clc.demoplaying || ( cl.snap.ps.pm_flags & PMF_FOLLOW )
+			|| Cvar_VariableIntegerValue( "cg_nopredict" )
+			|| Cvar_VariableIntegerValue( "cg_synchronousClients" ) )
+		&& cgameSnapshotNum <= hit->messageNum ) {
+		return;
+	}
+
+	if ( CL_HitSoundPitch( &pitch ) ) {
+		S_StartLocalSoundWithPitch( hitSound, CHAN_LOCAL_SOUND, pitch );
+	}
 }
 
 /*
@@ -1012,6 +1072,8 @@ CL_CGameRendering
 void CL_CGameRendering( stereoFrame_t stereo ) {
 	VM_Call( cgvm, CG_DRAW_ACTIVE_FRAME, cl.serverTime, stereo, clc.demoplaying );
 	VM_Debug( 0 );
+
+	CL_CheckMissedHitSound();
 }
 
 
