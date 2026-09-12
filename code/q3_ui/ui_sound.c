@@ -49,6 +49,7 @@ SOUND OPTIONS MENU
 //#define ID_A3D				18
 #define ID_BACK				19
 #define ID_APPLY			20
+#define ID_HITSOUND			21
 
 #define DEFAULT_SDL_SND_SPEED 22050
 
@@ -61,6 +62,11 @@ static const char *quality_items[] = {
 
 static const char *soundSystem_items[] = {
 	"SDL", "OpenAL", NULL
+};
+
+// in the order cl_hitSound takes them
+static const char *hitSound_items[] = {
+	"Original", "Quake Champions", "Custom File", NULL
 };
 
 typedef struct {
@@ -79,6 +85,7 @@ typedef struct {
 	menuslider_s		musicvolume;
 	menulist_s  		soundSystem;
 	menulist_s			quality;
+	menulist_s			hitSound;
 //	menuradiobutton_s	a3d;
 
 	menubitmap_s		back;
@@ -115,6 +122,11 @@ static void UI_SoundOptionsMenu_Event( void* ptr, int event ) {
 		break;
 
 	case ID_SOUND:
+		break;
+
+	// no snd_restart needed, so this one applies right away
+	case ID_HITSOUND:
+		trap_Cvar_SetValue( "cl_hitSound", soundOptionsInfo.hitSound.curvalue );
 		break;
 
 	case ID_NETWORK:
@@ -350,6 +362,16 @@ static void UI_SoundOptionsMenu_Init( void ) {
 	soundOptionsInfo.quality.generic.y			= y;
 	soundOptionsInfo.quality.itemnames			= quality_items;
 
+	y += BIGCHAR_HEIGHT+2;
+	soundOptionsInfo.hitSound.generic.type		= MTYPE_SPINCONTROL;
+	soundOptionsInfo.hitSound.generic.name		= "Hit Sound:";
+	soundOptionsInfo.hitSound.generic.flags		= QMF_PULSEIFFOCUS|QMF_SMALLFONT;
+	soundOptionsInfo.hitSound.generic.callback	= UI_SoundOptionsMenu_Event;
+	soundOptionsInfo.hitSound.generic.id		= ID_HITSOUND;
+	soundOptionsInfo.hitSound.generic.x			= 400;
+	soundOptionsInfo.hitSound.generic.y			= y;
+	soundOptionsInfo.hitSound.itemnames			= hitSound_items;
+
 /*
 	y += BIGCHAR_HEIGHT+2;
 	soundOptionsInfo.a3d.generic.type			= MTYPE_RADIOBUTTON;
@@ -393,6 +415,7 @@ static void UI_SoundOptionsMenu_Init( void ) {
 	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.musicvolume );
 	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.soundSystem );
 	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.quality );
+	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.hitSound );
 //	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.a3d );
 	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.back );
 	Menu_AddItem( &soundOptionsInfo.menu, ( void * ) &soundOptionsInfo.apply );
@@ -418,6 +441,9 @@ static void UI_SoundOptionsMenu_Init( void ) {
 	else // 44100
 		soundOptionsInfo.quality_original = 2;
 	soundOptionsInfo.quality.curvalue = soundOptionsInfo.quality_original;
+
+	// the spin control draws itemnames[curvalue] unchecked
+	soundOptionsInfo.hitSound.curvalue = Com_Clamp( 0, 2, trap_Cvar_VariableValue( "cl_hitSound" ) );
 
 //	soundOptionsInfo.a3d.curvalue = (int)trap_Cvar_VariableValue( "s_usingA3D" );
 }

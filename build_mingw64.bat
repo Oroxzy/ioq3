@@ -37,10 +37,10 @@ echo === Building in "%BUILD_DIR%" ===
 "%CMAKE_EXE%" --build "%BUILD_DIR%" -j %NUMBER_OF_PROCESSORS% || goto :error
 "%CMAKE_EXE%" --install "%BUILD_DIR%" --prefix "%GAME_DIR%" || goto :error
 
-REM qagame zusaetzlich als pk3: Bei sv_pure 1 laedt der lokale Server nach einem Mapwechsel
+REM qagame und ui zusaetzlich als pk3: Bei sv_pure 1 laedt der lokale Server nach einem Mapwechsel
 REM nur noch QVMs aus pk3s, und zz-hitpitch.pk3 wird vor pak8.pk3 durchsucht
 pushd "%GAME_DIR%\baseq3" || goto :error
-"%CMAKE_EXE%" -E tar cf zz-hitpitch.pk3 --format=zip vm/qagame.qvm
+"%CMAKE_EXE%" -E tar cf zz-hitpitch.pk3 --format=zip vm/qagame.qvm vm/ui.qvm
 set "PK3_ERROR=%ERRORLEVEL%"
 popd
 if not "%PK3_ERROR%"=="0" goto :error
