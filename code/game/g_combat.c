@@ -954,11 +954,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		damage *= 0.5;
 	}
 
-	// add to the attacker's hit counter (if the target isn't a general entity like a prox mine),
-	// dead players and the bodies they leave behind (ET_PLAYER without a client) count too,
-	// so every hit gets a hit sound
-	if ( attacker->client && ( client || targ->s.eType == ET_PLAYER )
-			&& targ != attacker
+	// add to the attacker's hit counter (if the target isn't a general entity like a prox mine)
+	if ( attacker->client && client
+			&& targ != attacker && targ->health > 0
 			&& targ->s.eType != ET_MISSILE
 			&& targ->s.eType != ET_GENERAL) {
 		if ( OnSameTeam( targ, attacker ) ) {
@@ -966,11 +964,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		} else {
 			attacker->client->ps.persistant[PERS_HITS]++;
 		}
-		if ( client ) {
-			attacker->client->ps.persistant[PERS_ATTACKEE_ARMOR] = (MAX( targ->health, 0 )<<8)|(client->ps.stats[STAT_ARMOR]);
-		} else {
-			attacker->client->ps.persistant[PERS_ATTACKEE_ARMOR] = 0;
-		}
+		attacker->client->ps.persistant[PERS_ATTACKEE_ARMOR] = (targ->health<<8)|(client->ps.stats[STAT_ARMOR]);
 		hitCounted = qtrue;
 	}
 
@@ -993,10 +987,10 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 	// can follow how close it is to dying
 	if ( hitCounted ) {
 		int	healthLeft = targ->health - take;
-		int	armorLeft = client ? client->ps.stats[STAT_ARMOR] : 0;
+		int	armorLeft = client->ps.stats[STAT_ARMOR];
 
-		// a dead target or a body has nothing left, whatever armor it still carries
-		if ( healthLeft <= 0 || !client ) {
+		// the killing hit leaves nothing, whatever armor the target still carries
+		if ( healthLeft <= 0 ) {
 			healthLeft = 0;
 			armorLeft = 0;
 		} else if ( healthLeft > 254 ) {
