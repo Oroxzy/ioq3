@@ -42,6 +42,11 @@ REM nur noch QVMs aus pk3s, und zz-hitpitch.pk3 wird vor pak8.pk3 durchsucht
 pushd "%GAME_DIR%\baseq3" || goto :error
 "%CMAKE_EXE%" -E tar cf zz-hitpitch.pk3 --format=zip vm/qagame.qvm vm/ui.qvm
 set "PK3_ERROR=%ERRORLEVEL%"
+REM Die losen Kopien loeschen: sie werden vor jedem pk3 gefunden, dadurch meldet der
+REM Server fuer vm/ui.qvm die Pruefsumme aus zz-hitpitch.pk3, bietet das pk3 aber nie
+REM zum Download an - fremde Spieler fliegen dann als "Unpure Client" raus
+if exist vm\qagame.qvm del vm\qagame.qvm
+if exist vm\ui.qvm del vm\ui.qvm
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
