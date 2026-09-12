@@ -40,8 +40,9 @@ extern qboolean getCameraInfo(int time, vec3_t *origin, vec3_t *angles);
 #define HIT_SOUND			"sound/feedback/hit.wav"
 
 static sfxHandle_t	hitSound = -1;		// -1 until the cgame registers HIT_SOUND
+static sfxHandle_t	customHitSound = -1;	// -1 until cl_hitSoundFile is registered
 static int			cgameSnapshotNum;	// newest snapshot the cgame has read
-static int			hitSnapshotNum;		// snapshot of the last hit that got a sound
+static int			hitsSounded = -1;	// hit counter the last played hit sound belongs to
 
 /*
 ====================
@@ -544,43 +545,74 @@ Returns qfalse if the sound does not belong to a new hit.
 ====================
 */
 static qboolean CL_FindHitSnapshot( const clSnapshot_t **hitOut, const clSnapshot_t **prevOut ) {
+	const clSnapshot_t	*list[PACKET_BACKUP];
 	const clSnapshot_t	*snap, *hit, *prev;
-	int					num, hits;
+	int					num, count, i;
 
-	// walk back from the newest snapshot the cgame has read to the
-	// one with the hit, keeping the snapshot before it for the kill check
-	hit = prev = NULL;
+	// collect the snapshots the cgame has seen, newest first
+	count = 0;
 	for ( num = cgameSnapshotNum; cl.snap.messageNum - num < PACKET_BACKUP; num-- ) {
 		snap = &cl.snapshots[ num & PACKET_MASK ];
-		if ( !snap->valid || snap->messageNum != num ) {
-			continue;
+		if ( snap->valid && snap->messageNum == num ) {
+			list[count++] = snap;
 		}
-
-		if ( hit && hit->ps.clientNum == snap->ps.clientNum ) {
-			hits = hit->ps.persistant[PERS_HITS] - snap->ps.persistant[PERS_HITS];
-			if ( hits < 0 ) {
-				// a team hit or a reset counter, the cgame can play those
-				// with a handle that is shared with the hit sound
-				return qfalse;
-			}
-			if ( hits > 0 ) {
-				prev = snap;
-				break;
-			}
-		}
-		hit = snap;
 	}
 
-	if ( !prev ) {
+	if ( count < 2 ) {
 		return qfalse;
 	}
 
-	*hitOut = hit;
-	*prevOut = prev;
-	return qtrue;
+	// a counter that went backwards means a new player, a respawn or a
+	// match restart, so take it as the new starting point
+	if ( hitsSounded < 0 || list[0]->ps.persistant[PERS_HITS] < hitsSounded ) {
+		if ( cl_hitSoundDebug->integer ) {
+			Com_Printf( "hit sound: counter resync %i -> %i\n", hitsSounded, list[0]->ps.persistant[PERS_HITS] );
+		}
+		hitsSounded = list[0]->ps.persistant[PERS_HITS];
+		return qfalse;
+	}
+
+	// report the oldest hit that has not been played yet, the cgame can be
+	// a snapshot behind what it has already read (teleports and respawns)
+	for ( i = count - 1; i > 0; i-- ) {
+		prev = list[i];
+		hit = list[i - 1];
+
+		if ( prev->ps.clientNum != hit->ps.clientNum ) {
+			continue;
+		}
+		if ( hit->ps.persistant[PERS_HITS] > prev->ps.persistant[PERS_HITS]
+			&& hit->ps.persistant[PERS_HITS] > hitsSounded ) {
+			*hitOut = hit;
+			*prevOut = prev;
+			return qtrue;
+		}
+	}
+
+	return qfalse;
 }
 
-static qboolean CL_HitSoundPitch( float *pitch ) {
+static sfxHandle_t CL_HitSoundHandle( void ) {
+	if ( !cl_hitSound->integer || !cl_hitSoundFile->string[0] ) {
+		return hitSound;
+	}
+
+	if ( customHitSound < 0 || cl_hitSoundFile->modified ) {
+		cl_hitSoundFile->modified = qfalse;
+
+		if ( FS_FOpenFileRead( cl_hitSoundFile->string, NULL, qfalse ) >= 0 ) {
+			customHitSound = S_RegisterSound( cl_hitSoundFile->string, qfalse );
+		} else {
+			customHitSound = -1;
+			Com_Printf( S_COLOR_YELLOW "cl_hitSound: %s not found, using the game's hit sound\n",
+				cl_hitSoundFile->string );
+		}
+	}
+
+	return ( customHitSound >= 0 ) ? customHitSound : hitSound;
+}
+
+static qboolean CL_HitSoundPitch( float *pitch, const char *source ) {
 	const clSnapshot_t	*hit, *prev;
 	int					remaining, health, armor;
 	float				frac;
@@ -588,13 +620,7 @@ static qboolean CL_HitSoundPitch( float *pitch ) {
 	if ( !CL_FindHitSnapshot( &hit, &prev ) ) {
 		return qfalse;
 	}
-
-	// the cgame can go back and forth between two snapshots around teleports,
-	// so make sure every hit gets exactly one sound
-	if ( hit->messageNum == hitSnapshotNum ) {
-		return qfalse;
-	}
-	hitSnapshotNum = hit->messageNum;
+	hitsSounded = hit->ps.persistant[PERS_HITS];
 
 	remaining = hit->ps.persistant[PERS_ATTACKEE_REMAINING];
 	if ( remaining ) {
@@ -605,10 +631,13 @@ static qboolean CL_HitSoundPitch( float *pitch ) {
 		CL_EstimateHitRemaining( hit, &health, &armor );
 	}
 
-	// the hit killed the target or landed on its body
+	// the hit killed the target
 	if ( health <= 0 || CL_SnapshotHasNewKill( hit, prev, hit->ps.clientNum )
 		|| hit->ps.persistant[PERS_SCORE] > prev->ps.persistant[PERS_SCORE] ) {
 		*pitch = cl_hitPitchKill->value;
+		if ( cl_hitSoundDebug->integer ) {
+			Com_Printf( "hit sound: kill, pitch %.2f (%s)\n", *pitch, source );
+		}
 		return qtrue;
 	}
 
@@ -619,6 +648,10 @@ static qboolean CL_HitSoundPitch( float *pitch ) {
 	}
 
 	*pitch = cl_hitPitchEmpty->value + ( cl_hitPitchFull->value - cl_hitPitchEmpty->value ) * frac;
+	if ( cl_hitSoundDebug->integer ) {
+		Com_Printf( "hit sound: %i health %i armor left%s, pitch %.2f (%s)\n",
+			health, armor, remaining ? "" : " (estimated)", *pitch, source );
+	}
 	return qtrue;
 }
 
@@ -640,7 +673,7 @@ static void CL_CheckMissedHitSound( void ) {
 		return;
 	}
 
-	if ( !CL_FindHitSnapshot( &hit, &prev ) || hit->messageNum == hitSnapshotNum ) {
+	if ( !CL_FindHitSnapshot( &hit, &prev ) ) {
 		return;
 	}
 
@@ -660,8 +693,8 @@ static void CL_CheckMissedHitSound( void ) {
 		return;
 	}
 
-	if ( CL_HitSoundPitch( &pitch ) ) {
-		S_StartLocalSoundWithPitch( hitSound, CHAN_LOCAL_SOUND, pitch );
+	if ( CL_HitSoundPitch( &pitch, "engine" ) ) {
+		S_StartLocalSoundWithPitch( CL_HitSoundHandle(), CHAN_LOCAL_SOUND, pitch );
 	}
 }
 
@@ -769,13 +802,23 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 	case CG_S_STARTLOCALSOUND:
 		{
-			float	pitch;
+			float		pitch;
+			sfxHandle_t	sfx = args[1];
 
-			if ( args[1] == hitSound && cl_hitPitch->integer && CL_HitSoundPitch( &pitch ) ) {
-				S_StartLocalSoundWithPitch( args[1], args[2], pitch );
-			} else {
-				S_StartLocalSound( args[1], args[2] );
+			if ( args[1] == hitSound ) {
+				sfx = CL_HitSoundHandle();
+
+				if ( cl_hitPitch->integer ) {
+					// the hit sound is ours now: either it belongs to a hit
+					// that has not been played yet, or it is a repeat and
+					// stays silent instead of leaking an unpitched copy
+					if ( CL_HitSoundPitch( &pitch, "cgame" ) ) {
+						S_StartLocalSoundWithPitch( sfx, args[2], pitch );
+					}
+					return 0;
+				}
 			}
+			S_StartLocalSound( sfx, args[2] );
 		}
 		return 0;
 	case CG_S_CLEARLOOPINGSOUNDS:
@@ -1007,8 +1050,9 @@ void CL_InitCGame( void ) {
 	}
 
 	hitSound = -1;
+	customHitSound = -1;
 	cgameSnapshotNum = 0;
-	hitSnapshotNum = 0;
+	hitsSounded = -1;
 
 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
 	if ( !cgvm ) {

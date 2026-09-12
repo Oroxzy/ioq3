@@ -426,6 +426,9 @@ extern	cvar_t	*cl_hitPitchFull;
 extern	cvar_t	*cl_hitPitchEmpty;
 extern	cvar_t	*cl_hitPitchKill;
 extern	cvar_t	*cl_hitPitchStack;
+extern	cvar_t	*cl_hitSound;
+extern	cvar_t	*cl_hitSoundFile;
+extern	cvar_t	*cl_hitSoundDebug;
 
 extern	cvar_t	*cl_consoleKeys;
 

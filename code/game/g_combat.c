@@ -1001,6 +1001,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		}
 		// health is stored plus one, so a reported value is never 0
 		attacker->client->ps.persistant[PERS_ATTACKEE_REMAINING] = ((healthLeft+1)<<8)|armorLeft;
+
+		// only the hits of a real player, bots fighting each other would drown them out
+		if ( g_hitSoundDebug.integer && !( attacker->r.svFlags & SVF_BOT ) ) {
+			G_Printf( "hit on %s: %i health %i armor left (%s)\n", client->pers.netname,
+				healthLeft, armorLeft, modNames[mod] );
+		}
 	}
 
 	if ( g_debugDamage.integer ) {

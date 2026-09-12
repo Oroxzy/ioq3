@@ -80,6 +80,9 @@ cvar_t	*cl_hitPitchFull;
 cvar_t	*cl_hitPitchEmpty;
 cvar_t	*cl_hitPitchKill;
 cvar_t	*cl_hitPitchStack;
+cvar_t	*cl_hitSound;
+cvar_t	*cl_hitSoundFile;
+cvar_t	*cl_hitSoundDebug;
 cvar_t	*cl_aviFrameRate;
 cvar_t	*cl_aviMotionJpeg;
 cvar_t	*cl_forceavidemo;
@@ -3596,6 +3599,14 @@ void CL_Init( void ) {
 	cl_hitPitchStack = Cvar_Get( "cl_hitPitchStack", "200", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_hitPitchStack, 1, 999, qtrue );
 	Cvar_SetDescription( cl_hitPitchStack, "Health and armor combined that counts as a full target for cl_hitPitch" );
+	cl_hitSound = Cvar_Get( "cl_hitSound", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_hitSound, 0, 1, qtrue );
+	Cvar_SetDescription( cl_hitSound, "Hit sound to play: 0 the game's own one, 1 the file in cl_hitSoundFile" );
+	cl_hitSoundFile = Cvar_Get( "cl_hitSoundFile", "sound/feedback/hit_custom.wav", CVAR_ARCHIVE );
+	Cvar_SetDescription( cl_hitSoundFile, "Sound file played for hits when cl_hitSound is 1" );
+	cl_hitSoundDebug = Cvar_Get( "cl_hitSoundDebug", "0", 0 );
+	Cvar_CheckRange( cl_hitSoundDebug, 0, 1, qtrue );
+	Cvar_SetDescription( cl_hitSoundDebug, "Print a line for every hit sound, to check that no hit stays silent" );
 
 	cl_aviFrameRate = Cvar_Get ("cl_aviFrameRate", "25", CVAR_ARCHIVE);
 	cl_aviMotionJpeg = Cvar_Get ("cl_aviMotionJpeg", "1", CVAR_ARCHIVE);
