@@ -46,6 +46,9 @@ static char			customHitSoundFile[MAX_QPATH];	// what customHitSound was register
 static int			cgameSnapshotNum;	// newest snapshot the cgame has read
 static int			hitsSounded = -1;	// hit counter the last played hit sound belongs to
 
+static refdef_t		botOutlineView;		// the view the cgame rendered last
+static qboolean		botOutlineViewValid;
+
 /*
 ====================
 CL_GetGameState
@@ -906,6 +909,13 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		re.AddAdditiveLightToScene( VMA(1), VMF(2), VMF(3), VMF(4), VMF(5) );
 		return 0;
 	case CG_R_RENDERSCENE:
+		// The cgame renders several scenes a frame: the world first, then the
+		// little ones inside the status bar. Only the first is the view the
+		// outlines belong on.
+		if ( !botOutlineViewValid ) {
+			botOutlineView = *(const refdef_t *)VMA(1);
+			botOutlineViewValid = qtrue;
+		}
 		re.RenderScene( VMA(1) );
 		return 0;
 	case CG_R_SETCOLOR:
@@ -1137,14 +1147,148 @@ qboolean CL_GameCommand( void ) {
 
 
 /*
+====================
+CL_ProjectToScreen
+
+Where a point in the world lands on the view the cgame just drew.  Anything
+behind the viewer has no place on the screen and is refused.
+====================
+*/
+static qboolean CL_ProjectToScreen( const vec3_t point, float *screenX, float *screenY ) {
+	vec3_t	local;
+	float	forward, left, up, halfWidth, halfHeight;
+
+	VectorSubtract( point, botOutlineView.vieworg, local );
+	forward = DotProduct( local, botOutlineView.viewaxis[0] );
+	if ( forward < 1.0f ) {
+		return qfalse;
+	}
+
+	// viewaxis[1] points left, the screen counts to the right
+	left = DotProduct( local, botOutlineView.viewaxis[1] );
+	up = DotProduct( local, botOutlineView.viewaxis[2] );
+
+	halfWidth = forward * tan( DEG2RAD( botOutlineView.fov_x * 0.5f ) );
+	halfHeight = forward * tan( DEG2RAD( botOutlineView.fov_y * 0.5f ) );
+	if ( halfWidth <= 0.0f || halfHeight <= 0.0f ) {
+		return qfalse;
+	}
+
+	*screenX = botOutlineView.x + botOutlineView.width * 0.5f * ( 1.0f - left / halfWidth );
+	*screenY = botOutlineView.y + botOutlineView.height * 0.5f * ( 1.0f - up / halfHeight );
+
+	return qtrue;
+}
+
+
+/*
+====================
+CL_DrawOutlineBox
+====================
+*/
+static void CL_DrawOutlineBox( float x, float y, float width, float height, const vec4_t colour ) {
+	float	edge;
+
+	edge = 1.0f + botOutlineView.height / 480.0f;	// a line that stays visible on a tall screen
+
+	re.SetColor( colour );
+	re.DrawStretchPic( x, y, width, edge, 0, 0, 0, 0, cls.whiteShader );
+	re.DrawStretchPic( x, y + height - edge, width, edge, 0, 0, 0, 0, cls.whiteShader );
+	re.DrawStretchPic( x, y, edge, height, 0, 0, 0, 0, cls.whiteShader );
+	re.DrawStretchPic( x + width - edge, y, edge, height, 0, 0, 0, 0, cls.whiteShader );
+	re.SetColor( NULL );
+}
+
+
+/*
+====================
+CL_DrawBotOutlines
+
+Marks the bots through the walls, for watching what the aim assist picks and
+where a shot went wide.  It carries the same two locks as the assist itself:
+a loopback connection, so it cannot run on anyone else's server, and only
+targets the server itself reports as bots.
+====================
+*/
+static void CL_DrawBotOutlines( void ) {
+	static const vec4_t	visible = { 1.0f, 0.45f, 0.1f, 0.85f };
+	static const vec4_t	hidden = { 1.0f, 0.45f, 0.1f, 0.35f };
+	const entityState_t	*entity;
+	const char			*info;
+	trace_t				trace;
+	vec3_t				head, feet, eye;
+	float				topX, topY, bottomX, bottomY, height, width;
+	int					i;
+
+	if ( !cl_botOutline->integer || clc.state != CA_ACTIVE || clc.demoplaying
+		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || !botOutlineViewValid
+		|| !cl.snap.valid ) {
+		return;
+	}
+
+	VectorCopy( cl.snap.ps.origin, eye );
+	eye[2] += cl.snap.ps.viewheight;
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->eType != ET_PLAYER || entity->clientNum == cl.snap.ps.clientNum
+			|| entity->clientNum < 0 || entity->clientNum >= MAX_CLIENTS
+			|| ( entity->eFlags & EF_DEAD ) ) {
+			continue;
+		}
+
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+		if ( !*Info_ValueForKey( info, "skill" ) ) {
+			continue;	// a human player is never outlined
+		}
+
+		VectorCopy( entity->pos.trBase, head );
+		head[2] += 32.0f;
+		VectorCopy( entity->pos.trBase, feet );
+		feet[2] -= 24.0f;
+
+		if ( !CL_ProjectToScreen( head, &topX, &topY )
+			|| !CL_ProjectToScreen( feet, &bottomX, &bottomY ) ) {
+			continue;
+		}
+
+		height = bottomY - topY;
+		if ( height < 4.0f ) {
+			continue;	// too far away to be worth a frame
+		}
+		width = height * 0.55f;
+
+		// beside the screen rather than on it
+		if ( topX + width * 0.5f < botOutlineView.x
+			|| topX - width * 0.5f > botOutlineView.x + botOutlineView.width
+			|| bottomY < botOutlineView.y
+			|| topY > botOutlineView.y + botOutlineView.height ) {
+			continue;
+		}
+
+		// dimmer through a wall, so it still reads which ones are actually in view
+		CM_BoxTrace( &trace, eye, entity->pos.trBase, vec3_origin, vec3_origin,
+			0, MASK_SOLID, qfalse );
+		CL_DrawOutlineBox( topX - width * 0.5f, topY, width, height,
+			trace.fraction < 1.0f ? hidden : visible );
+
+	}
+
+}
+
+
+/*
 =====================
 CL_CGameRendering
 =====================
 */
 void CL_CGameRendering( stereoFrame_t stereo ) {
+	botOutlineViewValid = qfalse;		// the world view of this frame is yet to come
+
 	VM_Call( cgvm, CG_DRAW_ACTIVE_FRAME, cl.serverTime, stereo, clc.demoplaying );
 	VM_Debug( 0 );
 
+	CL_DrawBotOutlines();
 	CL_CheckMissedHitSound();
 }
 

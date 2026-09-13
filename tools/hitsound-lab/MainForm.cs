@@ -48,6 +48,7 @@ public class MainForm : Form, IMessageFilter {
 
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
+	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", AutoSize = true };
 	readonly TextBox aimKey = new() {
 		Text = "MOUSE4", Width = 110, ReadOnly = true,
 		BackColor = SystemColors.Window, Cursor = Cursors.Hand,
@@ -277,6 +278,7 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
+			Row( Pad( botOutline ) ),
 			Row( new Label {
 				Text = "Hold-Key zielt nur; geschossen wird separat mit der Feuertaste (10 = sofort)",
 				AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 0, 2, 0, 0 ),
@@ -393,6 +395,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( "seta cl_hitSoundDebug 1" );
 		cfg.AppendLine( "seta g_hitSoundDebug 1" );
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
+		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( "set logfile 2" );

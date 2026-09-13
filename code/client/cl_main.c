@@ -78,6 +78,7 @@ cvar_t	*cl_autoRecordDemo;
 cvar_t	*cl_aimAssist;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
+cvar_t	*cl_botOutline;
 cvar_t	*cl_hitPitch;
 cvar_t	*cl_hitPitchFull;
 cvar_t	*cl_hitPitchEmpty;
@@ -3592,6 +3593,9 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible enemy bots on a local server (0 disables it)" );
 	cl_aimAssistKey = Cvar_Get( "cl_aimAssistKey", "MOUSE4", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistKey, "Key that must be held to activate local bot aim assistance" );
+	cl_botOutline = Cvar_Get( "cl_botOutline", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_botOutline, 0, 1, qtrue );
+	Cvar_SetDescription( cl_botOutline, "Outline enemy bots through walls on a local server, for watching what the aim assist does" );
 	cl_aimAssistDebug = Cvar_Get( "cl_aimAssistDebug", "0", 0 );
 	Cvar_CheckRange( cl_aimAssistDebug, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistDebug, "Print a line for every shot fired with aim assistance, to check where the prediction misses" );
