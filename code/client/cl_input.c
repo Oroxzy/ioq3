@@ -611,6 +611,45 @@ static const char *CL_AimAssistWeaponName( int weapon ) {
 
 /*
 =================
+CL_AimAssistEye
+
+The eye to aim from, moved smoothly the way the picture moves.
+
+Reading the snapshot position straight makes the aim jerk while the player
+moves: the snapshot lands twenty times a second while the view is drawn
+hundreds of times, so the bearing to a target steps twenty times a second,
+and a step is small when standing still but large when moving fast. The
+renderer does not step - it slides between the last two snapshots - so the
+eye is taken the same way here: interpolated to render time, which crosses a
+snapshot boundary without a jump, then carried forward to when the shot fires.
+=================
+*/
+static float CL_AimAssistLag( void );
+
+static void CL_AimAssistEye( vec3_t eye ) {
+	const clSnapshot_t	*previous;
+	vec3_t				rendered, step;
+	float				interval, fraction;
+
+	VectorCopy( cl.snap.ps.origin, rendered );
+
+	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
+	if ( previous->valid && previous->serverTime < cl.snap.serverTime ) {
+		interval = (float)( cl.snap.serverTime - previous->serverTime );
+		fraction = Com_Clamp( 0.0f, 1.0f, ( cl.serverTime - previous->serverTime ) / interval );
+		VectorSubtract( cl.snap.ps.origin, previous->ps.origin, step );
+		VectorMA( previous->ps.origin, fraction, step, rendered );
+	}
+
+	// carry the smooth render eye forward to firing time, so a strafing player
+	// still aims from the muzzle the server will fire from
+	VectorMA( rendered, CL_AimAssistLag(), cl.snap.ps.velocity, eye );
+	eye[2] += cl.snap.ps.viewheight;
+}
+
+
+/*
+=================
 CL_AimAssistLag
 
 How far behind the world the last snapshot is: its own age plus the way the
@@ -1175,11 +1214,9 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	key = Key_StringToKeynum( cl_aimAssistKey->string );
 	steering = cl_aimAssist->integer && key >= 0 && Key_IsDown( key );
 
-	// The shooter has moved on since this snapshot too, so carry the eye
-	// forward as well; a strafing player would otherwise aim from beside
-	// the muzzle the server ends up firing from.
-	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, viewOrigin );
-	viewOrigin[2] += cl.snap.ps.viewheight;
+	// The eye, moved smoothly the way the picture moves so the aim does not
+	// jerk while the player runs.
+	CL_AimAssistEye( viewOrigin );
 	weapon = cl.cgameUserCmdValue;
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
 		weapon = cl.snap.ps.weapon;

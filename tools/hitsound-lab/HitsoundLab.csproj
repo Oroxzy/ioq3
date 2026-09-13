@@ -9,7 +9,11 @@
     <AssemblyName>HitsoundLab</AssemblyName>
     <RootNamespace>HitsoundLab</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationIcon>assets\hitsound-lab.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="assets\hitsound-lab.ico" LogicalName="HitsoundLab.AppIcon" />
+  </ItemGroup>
 
 </Project>

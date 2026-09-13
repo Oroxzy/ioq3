@@ -46,13 +46,13 @@ public class MainForm : Form, IMessageFilter {
 	readonly NumericUpDown pitchKill = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0.5m, Maximum = 2.0m, Value = 0.70m, Width = 70 };
 	readonly NumericUpDown pitchStack = new() { Minimum = 1, Maximum = 999, Value = 200, Width = 70 };
 
-	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", AutoSize = true };
+	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", Checked = true, AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
-	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", AutoSize = true };
+	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", Checked = true, AutoSize = true };
 	readonly CheckBox aimPrefer = new() { Text = "kurze Waffen: nächstes Ziel zuerst", Checked = true, AutoSize = true };
-	readonly CheckBox aimAttacker = new() { Text = "sofort auf den, der mich trifft", AutoSize = true };
-	readonly CheckBox itemOutline = new() { Text = "Waffen und Powerups mit Respawn-Zeit", AutoSize = true };
-	readonly CheckBox itemOutlineAll = new() { Text = "auch Rüstung und Mega", AutoSize = true };
+	readonly CheckBox aimAttacker = new() { Text = "sofort auf den, der mich trifft", Checked = true, AutoSize = true };
+	readonly CheckBox itemOutline = new() { Text = "Waffen und Powerups mit Respawn-Zeit", Checked = true, AutoSize = true };
+	readonly CheckBox itemOutlineAll = new() { Text = "auch Rüstung und Mega", Checked = true, AutoSize = true };
 	readonly TextBox aimKey = new() {
 		Text = "MOUSE4", Width = 110, ReadOnly = true,
 		BackColor = SystemColors.Window, Cursor = Cursors.Hand,
@@ -106,11 +106,18 @@ public class MainForm : Form, IMessageFilter {
 			aimPrefer.Enabled = aimAssist.Checked;
 		};
 		itemOutline.CheckedChanged += ( _, _ ) => itemOutlineAll.Enabled = itemOutline.Checked;
-		itemOutlineAll.Enabled = false;
-		aimAttacker.Enabled = false;
-		aimPrefer.Enabled = false;
-		aimStrength.Enabled = false;
-		aimKey.Enabled = false;
+		// die Folge-Felder auf den Standard-Hakenstand bringen
+		itemOutlineAll.Enabled = itemOutline.Checked;
+		aimAttacker.Enabled = aimAssist.Checked;
+		aimPrefer.Enabled = aimAssist.Checked;
+		aimStrength.Enabled = aimAssist.Checked;
+		aimKey.Enabled = aimAssist.Checked;
+
+		// das eigene Icon der App, auch in der Titelleiste und der Taskleiste
+		try {
+			Icon = Icon.ExtractAssociatedIcon( Application.ExecutablePath );
+		} catch {
+		}
 		shotView.Columns.Add( "Frame", 70 );
 		shotView.Columns.Add( "Waffe", 90 );
 		shotView.Columns.Add( "Ziel", 90 );
