@@ -628,6 +628,12 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 	}
 	trust = 1.0f / ( 1.0f + excess * excess / 0.25f );
 
+	// A target in the air cannot change where it is going, and the falling
+	// part is modelled anyway, so its course is the surest one there is.
+	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
+		return trust;
+	}
+
 	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
 	if ( previous->valid ) {
 		for ( i = 0; i < previous->numEntities; i++ ) {
@@ -636,9 +642,12 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 				continue;
 			}
 
-			// a target that just changed direction is not going anywhere we know
+			// A target that just changed direction is not going anywhere we
+			// know. Only sideways counts: up and down is the gravity above.
 			VectorSubtract( entity->pos.trDelta, old->pos.trDelta, change );
-			speed = VectorLength( entity->pos.trDelta );
+			change[2] = 0.0f;
+			speed = sqrt( entity->pos.trDelta[0] * entity->pos.trDelta[0]
+				+ entity->pos.trDelta[1] * entity->pos.trDelta[1] );
 			if ( speed > 1.0f ) {
 				trust *= Com_Clamp( 0.0f, 1.0f, 1.0f - VectorLength( change ) / speed );
 			}
