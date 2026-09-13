@@ -78,6 +78,7 @@ cvar_t	*cl_autoRecordDemo;
 cvar_t	*cl_aimAssist;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
+cvar_t	*cl_aimAssistPrefer;
 cvar_t	*cl_aimAssistAttacker;
 cvar_t	*cl_botOutline;
 cvar_t	*cl_itemOutline;
@@ -3604,6 +3605,9 @@ void CL_Init( void ) {
 	cl_aimAssistAttacker = Cvar_Get( "cl_aimAssistAttacker", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistAttacker, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistAttacker, "Aim assistance snaps to whichever bot is dealing damage, instead of the one nearest the crosshair" );
+	cl_aimAssistPrefer = Cvar_Get( "cl_aimAssistPrefer", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_aimAssistPrefer, 0, 1, qtrue );
+	Cvar_SetDescription( cl_aimAssistPrefer, "With a short-ranged weapon the aim assist takes the closest bot first and ignores those out of reach" );
 	cl_aimAssistDebug = Cvar_Get( "cl_aimAssistDebug", "0", 0 );
 	Cvar_CheckRange( cl_aimAssistDebug, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistDebug, "Print a line for every shot fired with aim assistance, to check where the prediction misses" );

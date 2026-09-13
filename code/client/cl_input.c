@@ -548,6 +548,37 @@ static float CL_AimAssistProjectileSpeed( int weapon ) {
 }
 
 
+/*
+=================
+CL_AimAssistReach
+
+How far a weapon is worth steering for. Measured in play: beyond these
+distances the rocket and the shotgun stop hitting anything, the lightning gun
+simply ends and the gauntlet has to touch. Zero means no limit.
+=================
+*/
+static float CL_AimAssistReach( int weapon ) {
+	switch ( weapon ) {
+	case WP_GAUNTLET:
+		return 64.0f;
+	case WP_SHOTGUN:
+		return 800.0f;
+	case WP_GRENADE_LAUNCHER:
+		return 700.0f;
+	case WP_ROCKET_LAUNCHER:
+		return 900.0f;
+	case WP_LIGHTNING:
+		return 768.0f;
+	case WP_PLASMAGUN:
+		return 1400.0f;
+	case WP_BFG:
+		return 2000.0f;
+	default:
+		return 0.0f;
+	}
+}
+
+
 // Movement constants the game keeps to itself: the height a walking player is
 // lifted over (STEPSIZE in bg_local.h) and the head start every missile gets on
 // its first frame (MISSILE_PRESTEP_TIME in g_missile.c).
@@ -798,12 +829,13 @@ only eligible targets are bots identified by the server's player configstring.
 */
 static void CL_AimAssist( usercmd_t *cmd ) {
 	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
+	static int		aimAssistTarget = -1;	// who we steered at last frame
 	int			previousButtons;
 	const char		*info;
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			bestScore, score, pitchDelta, yawDelta, blend, lead;
+	float			bestScore, score, pitchDelta, yawDelta, blend, lead, distance, reach;
 	int			bestEntity, i, key, localTeam, targetTeam, weapon;
 	qboolean		aimKeyHasAttack, otherAttackKey;
 
@@ -851,6 +883,12 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	// the muzzle the server ends up firing from.
 	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, viewOrigin );
 	viewOrigin[2] += cl.snap.ps.viewheight;
+	weapon = cl.cgameUserCmdValue;
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		weapon = cl.snap.ps.weapon;
+	}
+	reach = CL_AimAssistReach( weapon );
+
 	bestEntity = -1;
 	// Consider every visible bot.  The angular score below still ensures that
 	// the one nearest to the crosshair wins, even when none starts inside a
@@ -884,12 +922,34 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		}
 
 		VectorSubtract( targetOrigin, viewOrigin, direction );
+		distance = VectorLength( direction );
+
+		// A weapon that cannot reach the target has no business steering
+		// towards it: a rocket at fourteen hundred units hits nothing, and
+		// pulling the aim there only costs the shot at whoever is close.
+		if ( reach > 0.0f && distance > reach ) {
+			continue;
+		}
+
 		vectoangles( direction, desired );
 		desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 		desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
 		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
-		score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+
+		if ( reach > 0.0f && cl_aimAssistPrefer->integer ) {
+			// short weapon: the closest target first, the crosshair only
+			// decides between two at the same range
+			score = distance + sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
+		} else {
+			score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+		}
+
+		// Stay with the target we already have unless another is clearly
+		// better, or the aim hops between two bots running side by side.
+		if ( entity->clientNum == aimAssistTarget ) {
+			score *= 0.6f;
+		}
 
 		// Whoever is hurting us comes first, however far from the crosshair it
 		// is. The server names it in the player state, so this needs nothing
@@ -906,16 +966,14 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	}
 
 	if ( bestEntity < 0 ) {
+		aimAssistTarget = -1;
 		return;
 	}
 
 	entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + bestEntity ) & ( MAX_PARSE_ENTITIES - 1 )];
+	aimAssistTarget = entity->clientNum;
 	lead = 0.0f;
 	CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
-	weapon = cl.cgameUserCmdValue;
-	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
-		weapon = cl.snap.ps.weapon;
-	}
 
 	// The shot has to be able to get there. A led point can end up behind a
 	// corner or below an edge, and steering a rocket into the floor in front
