@@ -49,6 +49,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
 	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", AutoSize = true };
+	readonly CheckBox aimAttacker = new() { Text = "sofort auf den, der mich trifft", AutoSize = true };
 	readonly CheckBox itemOutline = new() { Text = "Waffen und Powerups mit Respawn-Zeit", AutoSize = true };
 	readonly CheckBox itemOutlineAll = new() { Text = "auch Rüstung und Mega", AutoSize = true };
 	readonly TextBox aimKey = new() {
@@ -99,9 +100,11 @@ public class MainForm : Form, IMessageFilter {
 		aimAssist.CheckedChanged += ( _, _ ) => {
 			aimStrength.Enabled = aimAssist.Checked;
 			aimKey.Enabled = aimAssist.Checked;
+			aimAttacker.Enabled = aimAssist.Checked;
 		};
 		itemOutline.CheckedChanged += ( _, _ ) => itemOutlineAll.Enabled = itemOutline.Checked;
 		itemOutlineAll.Enabled = false;
+		aimAttacker.Enabled = false;
 		aimStrength.Enabled = false;
 		aimKey.Enabled = false;
 		shotView.Columns.Add( "Frame", 70 );
@@ -282,6 +285,7 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
+			Row( Pad( aimAttacker ) ),
 			Row( Pad( botOutline ) ),
 			Row( Pad( itemOutline ), Pad( itemOutlineAll ) ),
 			Row( new Label {
@@ -402,6 +406,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
 		cfg.AppendLine( $"seta cl_itemOutline {( itemOutline.Checked ? ( itemOutlineAll.Checked ? 2 : 1 ) : 0 )}" );
 		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( "set logfile 2" );

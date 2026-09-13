@@ -890,6 +890,15 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 		score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+
+		// Whoever is hurting us comes first, however far from the crosshair it
+		// is. The server names it in the player state, so this needs nothing
+		// the client would not already know.
+		if ( cl_aimAssistAttacker->integer
+			&& entity->clientNum == cl.snap.ps.persistant[PERS_ATTACKER] ) {
+			score = -1.0f;
+		}
+
 		if ( score < bestScore ) {
 			bestScore = score;
 			bestEntity = i;
@@ -936,7 +945,11 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 
 	// Level 10 snaps directly onto the closest crosshair target.  Lower
 	// levels retain the same target choice but ease towards it.
-	blend = cl_aimAssist->integer == 10 ? 1.0f : cl_aimAssist->value * frame_msec / 200.0f;
+	// The one hurting us is snapped onto at once, that is the point of it
+	blend = ( cl_aimAssist->integer == 10
+		|| ( cl_aimAssistAttacker->integer
+			&& entity->clientNum == cl.snap.ps.persistant[PERS_ATTACKER] ) )
+		? 1.0f : cl_aimAssist->value * frame_msec / 200.0f;
 	blend = Com_Clamp( 0.0f, 1.0f, blend );
 	pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 	yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );

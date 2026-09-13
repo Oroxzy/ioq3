@@ -424,6 +424,7 @@ extern	cvar_t	*cl_autoRecordDemo;
 extern	cvar_t	*cl_aimAssist;
 extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
+extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;
 extern	cvar_t	*cl_itemOutline;
 
@@ -592,6 +593,7 @@ void	SCR_DrawNamedPic( float x, float y, float width, float height, const char *
 
 void	SCR_DrawBigString( int x, int y, const char *s, float alpha, qboolean noColorEscape );			// draws a string with embedded color control characters with fade
 void	SCR_DrawBigStringColor( int x, int y, const char *s, vec4_t color, qboolean noColorEscape );	// ignores embedded color control characters
+void	SCR_DrawStringExt( int x, int y, float size, const char *string, float *setColor, qboolean forceColor, qboolean noColorEscape );
 void	SCR_DrawSmallStringExt( int x, int y, const char *string, float *setColor, qboolean forceColor, qboolean noColorEscape );
 void	SCR_DrawSmallChar( int x, int y, int ch );
 

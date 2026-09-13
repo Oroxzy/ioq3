@@ -66,12 +66,15 @@ static void CL_AddItemOutlines( void );
 #define ITEM_RESPAWN_POWERUP	120
 #define ITEM_RESPAWN_ARMOR		25
 #define ITEM_RESPAWN_HEALTH		35
+#define ITEM_RESPAWN_AMMO		40
+#define ITEM_RESPAWN_HOLDABLE	60
 
 typedef struct {
 	int		taken;			// server time the item went away, 0 while it is there
 	int		present;		// the last frame the snapshot still had it
 	vec3_t	origin;			// where it lies, remembered for while it is gone
 	int		respawn;		// seconds it stays away
+	int		item;			// which entry of the item list it is, for its colour
 	float	x, y;			// where its label goes on the screen
 	int		labelFrame;		// the frame that label was worked out for
 	char	label[8];
@@ -1435,8 +1438,79 @@ How long the kind of item stays away once it has been taken, or zero for the
 ones this is not asked about.
 ====================
 */
+/*
+====================
+CL_ItemOutlineColour
+
+The colour the item wears in the game, so a box can be told apart at a glance:
+the rocket launcher red, the railgun green, the quad blue, and so on. A taken
+one keeps its colour but is dimmed right down.
+====================
+*/
+static void CL_ItemOutlineColour( const gitem_t *item, qboolean taken, byte *colour ) {
+	static const byte	weapon[WP_NUM_WEAPONS][3] = {
+		{ 160, 160, 170 },		// none
+		{ 170, 170, 180 },		// gauntlet
+		{ 200, 200, 150 },		// machinegun
+		{ 230, 150, 60 },		// shotgun
+		{ 150, 180, 70 },		// grenade launcher
+		{ 235, 70, 50 },		// rocket launcher
+		{ 120, 200, 255 },		// lightning
+		{ 60, 225, 120 },		// railgun
+		{ 185, 110, 255 },		// plasma
+		{ 140, 255, 80 },		// bfg
+		{ 170, 170, 180 },		// grappling hook
+	};
+	static const byte	powerup[PW_NUM_POWERUPS][3] = {
+		{ 200, 200, 200 },		// none
+		{ 80, 120, 255 },		// quad
+		{ 210, 200, 90 },		// battle suit
+		{ 245, 230, 70 },		// haste
+		{ 220, 220, 235 },		// invisibility
+		{ 235, 90, 60 },		// regeneration
+		{ 90, 230, 230 },		// flight
+	};
+	const byte	*base;
+	int			i;
+
+	switch ( item->giType ) {
+	case IT_WEAPON:
+	case IT_AMMO:
+		base = weapon[( item->giTag > WP_NONE && item->giTag < WP_NUM_WEAPONS ) ? item->giTag : 0];
+		break;
+	case IT_POWERUP:
+	case IT_PERSISTANT_POWERUP:
+		base = powerup[( item->giTag > PW_NONE && item->giTag < PW_NUM_POWERUPS ) ? item->giTag : 0];
+		break;
+	case IT_ARMOR:
+		// shard, yellow and red, as they look on the floor
+		base = item->quantity <= 5 ? (const byte[]){ 110, 230, 110 }
+			: item->quantity >= 100 ? (const byte[]){ 235, 80, 60 }
+			: (const byte[]){ 245, 210, 60 };
+		break;
+	case IT_HEALTH:
+		base = item->quantity >= 100 ? (const byte[]){ 90, 160, 255 }
+			: (const byte[]){ 235, 190, 80 };
+		break;
+	case IT_HOLDABLE:
+		base = item->giTag == HI_MEDKIT ? (const byte[]){ 235, 120, 120 }
+			: (const byte[]){ 200, 200, 235 };
+		break;
+	default:
+		base = (const byte[]){ 200, 200, 200 };
+		break;
+	}
+
+	for ( i = 0; i < 3; i++ ) {
+		colour[i] = taken ? (byte)( base[i] * 0.35f ) : base[i];
+	}
+	colour[3] = 255;
+}
+
+
 static int CL_ItemRespawnTime( const entityState_t *entity ) {
 	const gitem_t	*item;
+	qboolean		everything;
 
 	if ( entity->modelindex <= 0 || entity->modelindex >= bg_numItems ) {
 		return 0;
@@ -1444,16 +1518,27 @@ static int CL_ItemRespawnTime( const entityState_t *entity ) {
 
 	item = &bg_itemlist[entity->modelindex];
 
+	// 1 marks what a match is usually timed by, 2 everything that can be picked
+	// up at all, down to the ammo boxes
+	everything = cl_itemOutline->integer > 1;
+
 	switch ( item->giType ) {
 	case IT_WEAPON:
 		return ITEM_RESPAWN_WEAPON;
 	case IT_POWERUP:
+	case IT_PERSISTANT_POWERUP:
 		return ITEM_RESPAWN_POWERUP;
 	case IT_ARMOR:
-		return cl_itemOutline->integer > 1 ? ITEM_RESPAWN_ARMOR : 0;
+		// the shards are small change, the rest is worth a clock
+		return ( everything || item->quantity > 5 ) ? ITEM_RESPAWN_ARMOR : 0;
 	case IT_HEALTH:
-		// only the mega health is worth a clock
-		return ( cl_itemOutline->integer > 1 && item->quantity == 100 ) ? ITEM_RESPAWN_HEALTH : 0;
+		return ( everything || item->quantity == 100 ) ? ITEM_RESPAWN_HEALTH : 0;
+	case IT_HOLDABLE:
+		return ITEM_RESPAWN_HOLDABLE;
+	case IT_AMMO:
+		return everything ? ITEM_RESPAWN_AMMO : 0;
+	case IT_TEAM:
+		return everything ? ITEM_RESPAWN_ARMOR : 0;
 	default:
 		return 0;
 	}
@@ -1470,12 +1555,11 @@ finished picture, since text is flat and the boxes are not.
 ====================
 */
 static void CL_AddItemOutlines( void ) {
-	static const byte	waiting[4] = { 90, 160, 255, 255 };		// lying there to be had
-	static const byte	gone[4] = { 80, 80, 90, 255 };			// taken, counting down
 	static vec3_t		mins = { -14, -14, -6 };
 	static vec3_t		maxs = { 14, 14, 26 };
 	const entityState_t	*entity;
 	itemTimer_t			*timer;
+	byte				colour[4];
 	vec3_t				corner[8], near[8], top;
 	qboolean			ahead;
 	int					i, j, respawn, left, vanished = 0;
@@ -1502,6 +1586,7 @@ static void CL_AddItemOutlines( void ) {
 		timer = &itemTimers[entity->number];
 		VectorCopy( entity->pos.trBase, timer->origin );
 		timer->respawn = respawn;
+		timer->item = entity->modelindex;
 		timer->taken = 0;
 		timer->present = itemFrame;
 	}
@@ -1558,7 +1643,8 @@ static void CL_AddItemOutlines( void ) {
 			continue;
 		}
 
-		CL_BotOutlineWireBox( near, timer->taken ? gone : waiting );
+		CL_ItemOutlineColour( &bg_itemlist[timer->item], timer->taken != 0, colour );
+		CL_BotOutlineWireBox( near, colour );
 
 		if ( !timer->taken ) {
 			continue;						// no clock on something that is there
@@ -1585,6 +1671,7 @@ The countdowns over the finished picture.
 static void CL_DrawItemTimers( void ) {
 	static const vec4_t	colour = { 0.35f, 0.65f, 1.0f, 1.0f };
 	itemTimer_t			*timer;
+	float				size, x, y;
 	int					i;
 
 	if ( !itemLabels ) {
@@ -1599,10 +1686,15 @@ static void CL_DrawItemTimers( void ) {
 			continue;
 		}
 
-		// SCR_DrawSmallChar works in real screen pixels, which is what the
-		// projection already hands us
-		SCR_DrawSmallStringExt( (int)( timer->x - strlen( timer->label ) * g_smallchar_width * 0.5f ),
-			(int)timer->y, timer->label, (float *)colour, qtrue, qfalse );
+		// The bigger letters are laid out on the 640x480 grid the menus use,
+		// unlike the small ones, which take real pixels. The projection hands
+		// out real pixels, so it has to be put on that grid first.
+		size = 14.0f;
+		x = timer->x * 640.0f / cls.glconfig.vidWidth;
+		y = timer->y * 480.0f / cls.glconfig.vidHeight;
+
+		SCR_DrawStringExt( (int)( x - strlen( timer->label ) * size * 0.5f ),
+			(int)( y - size ), size, timer->label, (float *)colour, qtrue, qfalse );
 	}
 }
 
