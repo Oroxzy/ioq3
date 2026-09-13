@@ -425,6 +425,7 @@ extern	cvar_t	*cl_aimAssist;
 extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
 extern	cvar_t	*cl_botOutline;
+extern	cvar_t	*cl_itemOutline;
 
 extern	cvar_t	*cl_hitPitch;
 extern	cvar_t	*cl_hitPitchFull;

@@ -79,6 +79,7 @@ cvar_t	*cl_aimAssist;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_botOutline;
+cvar_t	*cl_itemOutline;
 cvar_t	*cl_hitPitch;
 cvar_t	*cl_hitPitchFull;
 cvar_t	*cl_hitPitchEmpty;
@@ -3593,6 +3594,9 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible enemy bots on a local server (0 disables it)" );
 	cl_aimAssistKey = Cvar_Get( "cl_aimAssistKey", "MOUSE4", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistKey, "Key that must be held to activate local bot aim assistance" );
+	cl_itemOutline = Cvar_Get( "cl_itemOutline", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_itemOutline, 0, 2, qtrue );
+	Cvar_SetDescription( cl_itemOutline, "Outline weapons and powerups through walls on a local server and count them back in: 2 adds armor and mega health" );
 	cl_botOutline = Cvar_Get( "cl_botOutline", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_botOutline, 0, 1, qtrue );
 	Cvar_SetDescription( cl_botOutline, "Outline enemy bots through walls on a local server, for watching what the aim assist does" );

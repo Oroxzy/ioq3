@@ -9,6 +9,7 @@ include(shared_sources)
 include(renderer_common)
 
 set(CLIENT_SOURCES
+    ${SOURCE_DIR}/game/bg_misc.c
     ${SOURCE_DIR}/client/cl_cgame.c
     ${SOURCE_DIR}/client/cl_cin.c
     ${SOURCE_DIR}/client/cl_console.c

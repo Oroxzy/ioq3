@@ -57,6 +57,29 @@ static qboolean		botOutlineViewValid;
 static qhandle_t	botOutlineShader;
 
 static void CL_AddBotOutlines( void );
+static void CL_AddItemOutlines( void );
+
+// Items are made invisible when taken and come back after a fixed wait, so the
+// moment one goes away is enough to count it down.  The waits are the ones in
+// g_items.c; a weapon uses g_weaponrespawn, which is five seconds by default.
+#define ITEM_RESPAWN_WEAPON		5
+#define ITEM_RESPAWN_POWERUP	120
+#define ITEM_RESPAWN_ARMOR		25
+#define ITEM_RESPAWN_HEALTH		35
+
+typedef struct {
+	int		taken;			// server time the item went away, 0 while it is there
+	int		present;		// the last frame the snapshot still had it
+	vec3_t	origin;			// where it lies, remembered for while it is gone
+	int		respawn;		// seconds it stays away
+	float	x, y;			// where its label goes on the screen
+	int		labelFrame;		// the frame that label was worked out for
+	char	label[8];
+} itemTimer_t;
+
+static itemTimer_t	itemTimers[MAX_GENTITIES];
+static int			itemLabels;
+static int			itemFrame;		// counts the drawn frames, to spot a stale label
 
 /*
 ====================
@@ -925,6 +948,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 			botOutlineView = *(const refdef_t *)VMA(1);
 			botOutlineViewValid = qtrue;
 			CL_AddBotOutlines();
+			CL_AddItemOutlines();
 		}
 
 		re.RenderScene( VMA(1) );
@@ -1098,6 +1122,7 @@ void CL_InitCGame( void ) {
 	}
 
 	botOutlineShader = re.RegisterShader( "white" );
+	Com_Memset( itemTimers, 0, sizeof( itemTimers ) );
 	hitSound = -1;
 	customHitSound = -1;
 	customHitSoundFile[0] = '\0';
@@ -1243,6 +1268,41 @@ static qboolean CL_BotOutlineNearPoint( const vec3_t point, vec3_t near ) {
 
 /*
 ====================
+CL_ProjectToScreen
+
+Where a point in the world lands on the view being drawn. Anything behind the
+eye has no place on the screen and is refused.
+====================
+*/
+static qboolean CL_ProjectToScreen( const vec3_t point, float *screenX, float *screenY ) {
+	vec3_t	local;
+	float	forward, left, up, halfWidth, halfHeight;
+
+	VectorSubtract( point, botOutlineView.vieworg, local );
+	forward = DotProduct( local, botOutlineView.viewaxis[0] );
+	if ( forward < 1.0f ) {
+		return qfalse;
+	}
+
+	// viewaxis[1] points left, the screen counts to the right
+	left = DotProduct( local, botOutlineView.viewaxis[1] );
+	up = DotProduct( local, botOutlineView.viewaxis[2] );
+
+	halfWidth = forward * tan( DEG2RAD( botOutlineView.fov_x * 0.5f ) );
+	halfHeight = forward * tan( DEG2RAD( botOutlineView.fov_y * 0.5f ) );
+	if ( halfWidth <= 0.0f || halfHeight <= 0.0f ) {
+		return qfalse;
+	}
+
+	*screenX = botOutlineView.x + botOutlineView.width * 0.5f * ( 1.0f - left / halfWidth );
+	*screenY = botOutlineView.y + botOutlineView.height * 0.5f * ( 1.0f - up / halfHeight );
+
+	return qtrue;
+}
+
+
+/*
+====================
 CL_BotOutlineEdge
 
 One edge of the wire box, as a thin strip turned towards the eye.
@@ -1286,14 +1346,30 @@ so it cannot run on anyone else's server, and only the players the server
 itself reports as bots, so a human is never outlined.
 ====================
 */
-static void CL_AddBotOutlines( void ) {
-	static const byte	visible[4] = { 255, 115, 25, 255 };
-	static const byte	hidden[4] = { 120, 40, 10, 255 };
+/*
+====================
+CL_BotOutlineWireBox
+
+The twelve edges of a box whose corners are already on the near shell.
+====================
+*/
+static void CL_BotOutlineWireBox( const vec3_t near[8], const byte *colour ) {
 	static const int	edges[12][2] = {
 		{ 0, 1 }, { 1, 3 }, { 3, 2 }, { 2, 0 },		// the floor of the box
 		{ 4, 5 }, { 5, 7 }, { 7, 6 }, { 6, 4 },		// and its lid
 		{ 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 },		// the uprights
 	};
+	int	i;
+
+	for ( i = 0; i < 12; i++ ) {
+		CL_BotOutlineEdge( near[edges[i][0]], near[edges[i][1]], colour );
+	}
+}
+
+
+static void CL_AddBotOutlines( void ) {
+	static const byte	visible[4] = { 255, 115, 25, 255 };
+	static const byte	hidden[4] = { 120, 40, 10, 255 };
 	static vec3_t		mins = { -15, -15, -24 };
 	static vec3_t		maxs = { 15, 15, 32 };
 	const entityState_t	*entity;
@@ -1346,9 +1422,187 @@ static void CL_AddBotOutlines( void ) {
 		CM_BoxTrace( &trace, eye, origin, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse );
 		colour = trace.fraction < 1.0f ? hidden : visible;
 
-		for ( j = 0; j < 12; j++ ) {
-			CL_BotOutlineEdge( near[edges[j][0]], near[edges[j][1]], colour );
+		CL_BotOutlineWireBox( near, colour );
+	}
+}
+
+
+/*
+====================
+CL_ItemRespawnTime
+
+How long the kind of item stays away once it has been taken, or zero for the
+ones this is not asked about.
+====================
+*/
+static int CL_ItemRespawnTime( const entityState_t *entity ) {
+	const gitem_t	*item;
+
+	if ( entity->modelindex <= 0 || entity->modelindex >= bg_numItems ) {
+		return 0;
+	}
+
+	item = &bg_itemlist[entity->modelindex];
+
+	switch ( item->giType ) {
+	case IT_WEAPON:
+		return ITEM_RESPAWN_WEAPON;
+	case IT_POWERUP:
+		return ITEM_RESPAWN_POWERUP;
+	case IT_ARMOR:
+		return cl_itemOutline->integer > 1 ? ITEM_RESPAWN_ARMOR : 0;
+	case IT_HEALTH:
+		// only the mega health is worth a clock
+		return ( cl_itemOutline->integer > 1 && item->quantity == 100 ) ? ITEM_RESPAWN_HEALTH : 0;
+	default:
+		return 0;
+	}
+}
+
+
+/*
+====================
+CL_AddItemOutlines
+
+A wire box around every weapon and powerup, and once one has been taken the
+seconds until it comes back.  The labels are collected here and drawn over the
+finished picture, since text is flat and the boxes are not.
+====================
+*/
+static void CL_AddItemOutlines( void ) {
+	static const byte	waiting[4] = { 90, 160, 255, 255 };		// lying there to be had
+	static const byte	gone[4] = { 80, 80, 90, 255 };			// taken, counting down
+	static vec3_t		mins = { -14, -14, -6 };
+	static vec3_t		maxs = { 14, 14, 26 };
+	const entityState_t	*entity;
+	itemTimer_t			*timer;
+	vec3_t				corner[8], near[8], top;
+	qboolean			ahead;
+	int					i, j, respawn, left, vanished = 0;
+
+	itemFrame++;
+
+	if ( !cl_itemOutline->integer || clc.state != CA_ACTIVE || clc.demoplaying
+		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || !cl.snap.valid ) {
+		return;
+	}
+
+	// what the snapshot still holds is lying there to be had
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->eType != ET_ITEM || entity->number < 0 || entity->number >= MAX_GENTITIES ) {
+			continue;
 		}
+
+		respawn = CL_ItemRespawnTime( entity );
+		if ( !respawn ) {
+			continue;
+		}
+
+		timer = &itemTimers[entity->number];
+		VectorCopy( entity->pos.trBase, timer->origin );
+		timer->respawn = respawn;
+		timer->taken = 0;
+		timer->present = itemFrame;
+	}
+
+	// A taken item does not stay in the snapshot as an invisible one, the
+	// server unlinks it and it is simply gone. Whatever was there a moment ago
+	// and is missing now has been picked up - unless a whole roomful goes at
+	// once, which means we walked out of it rather than someone emptying it.
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		timer = &itemTimers[i];
+		if ( timer->respawn && !timer->taken && timer->present == itemFrame - 1 ) {
+			vanished++;
+		}
+	}
+
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		timer = &itemTimers[i];
+		if ( !timer->respawn ) {
+			continue;
+		}
+
+		if ( !timer->taken && timer->present == itemFrame - 1 ) {
+			if ( vanished > 2 ) {
+				timer->respawn = 0;			// out of sight, not taken
+				continue;
+			}
+			timer->taken = cl.serverTime;
+		}
+
+		if ( !timer->taken && timer->present != itemFrame ) {
+			continue;						// long gone and none of our business
+		}
+
+		left = timer->taken ? timer->respawn - ( cl.serverTime - timer->taken ) / 1000 : 0;
+		if ( timer->taken && left < -3 ) {
+			timer->respawn = 0;				// it should be back by now, we just cannot see it
+			continue;
+		}
+		if ( left < 0 ) {
+			left = 0;
+		}
+
+		for ( j = 0; j < 8; j++ ) {
+			corner[j][0] = timer->origin[0] + ( ( j & 1 ) ? maxs[0] : mins[0] );
+			corner[j][1] = timer->origin[1] + ( ( j & 2 ) ? maxs[1] : mins[1] );
+			corner[j][2] = timer->origin[2] + ( ( j & 4 ) ? maxs[2] : mins[2] );
+		}
+
+		ahead = qtrue;
+		for ( j = 0; j < 8 && ahead; j++ ) {
+			ahead = CL_BotOutlineNearPoint( corner[j], near[j] );
+		}
+		if ( !ahead ) {
+			continue;
+		}
+
+		CL_BotOutlineWireBox( near, timer->taken ? gone : waiting );
+
+		if ( !timer->taken ) {
+			continue;						// no clock on something that is there
+		}
+
+		VectorCopy( timer->origin, top );
+		top[2] += maxs[2] + 12.0f;
+		if ( CL_ProjectToScreen( top, &timer->x, &timer->y ) ) {
+			Com_sprintf( timer->label, sizeof( timer->label ), "%i", left );
+			timer->labelFrame = itemFrame;
+			itemLabels++;
+		}
+	}
+}
+
+
+/*
+====================
+CL_DrawItemTimers
+
+The countdowns over the finished picture.
+====================
+*/
+static void CL_DrawItemTimers( void ) {
+	static const vec4_t	colour = { 0.35f, 0.65f, 1.0f, 1.0f };
+	itemTimer_t			*timer;
+	int					i;
+
+	if ( !itemLabels ) {
+		return;
+	}
+
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		timer = &itemTimers[i];
+		// only what was worked out for this very frame: an item that went out
+		// of sight must not leave its clock hanging in the air
+		if ( !timer->taken || !timer->label[0] || timer->labelFrame != itemFrame ) {
+			continue;
+		}
+
+		// SCR_DrawSmallChar works in real screen pixels, which is what the
+		// projection already hands us
+		SCR_DrawSmallStringExt( (int)( timer->x - strlen( timer->label ) * g_smallchar_width * 0.5f ),
+			(int)timer->y, timer->label, (float *)colour, qtrue, qfalse );
 	}
 }
 
@@ -1363,6 +1617,8 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
 
 	VM_Call( cgvm, CG_DRAW_ACTIVE_FRAME, cl.serverTime, stereo, clc.demoplaying );
 	VM_Debug( 0 );
+
+	CL_DrawItemTimers();
 
 	CL_CheckMissedHitSound();
 }
