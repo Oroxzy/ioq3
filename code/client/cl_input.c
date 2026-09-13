@@ -603,17 +603,68 @@ straight line would aim high above a bot that merely jumped.  The box trace
 keeps the guess out of the floor and out of walls the target cannot pass.
 =================
 */
+/*
+=================
+CL_AimAssistTrust
+
+How much of the sideways lead is worth using. A straight line is a good guess
+for the next tenth of a second and a poor one for the next second and a half,
+because a player turns several times on the way. Two things shorten it: the
+lead itself, and a target that is already changing its velocity between the
+last two snapshots.
+=================
+*/
+static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
+	const clSnapshot_t	*previous;
+	const entityState_t	*old;
+	vec3_t				change;
+	float				trust, speed, excess;
+	int					i;
+
+	// beyond half a second a straight line stops being an answer
+	excess = time - 0.5f;
+	if ( excess < 0.0f ) {
+		excess = 0.0f;
+	}
+	trust = 1.0f / ( 1.0f + excess * excess / 0.25f );
+
+	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
+	if ( previous->valid ) {
+		for ( i = 0; i < previous->numEntities; i++ ) {
+			old = &cl.parseEntities[( previous->parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+			if ( old->number != entity->number ) {
+				continue;
+			}
+
+			// a target that just changed direction is not going anywhere we know
+			VectorSubtract( entity->pos.trDelta, old->pos.trDelta, change );
+			speed = VectorLength( entity->pos.trDelta );
+			if ( speed > 1.0f ) {
+				trust *= Com_Clamp( 0.0f, 1.0f, 1.0f - VectorLength( change ) / speed );
+			}
+			break;
+		}
+	}
+
+	return trust;
+}
+
+
 static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
 	// A hair above the player box: standing on a floor the position is snapped
 	// to whole units, which puts the bottom face exactly on the floor plane and
 	// makes the trace below start solid.
 	static vec3_t	mins = { -15, -15, -23 };
 	static vec3_t	maxs = { 15, 15, 32 };
-	vec3_t			end;
-	float			gravity;
+	vec3_t			end, velocity;
+	float			gravity, trust;
 	trace_t			trace;
 
-	VectorMA( entity->pos.trBase, time, entity->pos.trDelta, end );
+	// Only the sideways guess is damped. Falling is physics and stays whole.
+	trust = CL_AimAssistTrust( entity, time );
+	VectorScale( entity->pos.trDelta, trust, velocity );
+	velocity[2] = entity->pos.trDelta[2];
+	VectorMA( entity->pos.trBase, time, velocity, end );
 
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
 		// players fall at the gravity the server hands out, not at the default
@@ -809,7 +860,29 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
 		weapon = cl.snap.ps.weapon;
 	}
+
+	// The shot has to be able to get there. A led point can end up behind a
+	// corner or below an edge, and steering a rocket into the floor in front
+	// of you is worse than not helping at all: fall back to the plain position
+	// the target was picked by, and leave the aim alone when even that is
+	// blocked or the impact would land in your own splash.
+	CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
+		0, MASK_SHOT, qfalse );
+	if ( trace.fraction < 1.0f ) {
+		VectorCopy( entity->pos.trBase, targetOrigin );
+		targetOrigin[2] += 20.0f;
+		lead = 0.0f;
+		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
+			0, MASK_SHOT, qfalse );
+		if ( trace.fraction < 1.0f ) {
+			return;
+		}
+	}
+
 	VectorSubtract( targetOrigin, viewOrigin, direction );
+	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f && VectorLength( direction ) < 160.0f ) {
+		return;			// inside our own splash, the player aims this one alone
+	}
 	vectoangles( direction, desired );
 	desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 	desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
@@ -830,11 +903,12 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		&& !( previousButtons & BUTTON_ATTACK ) ) {
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
 		VectorSubtract( targetOrigin, viewOrigin, direction );
-		Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i error %.2f at %.0f %.0f %.0f frame %i\n",
+		Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f at %.0f %.0f %.0f frame %i\n",
 			CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 			VectorLength( direction ),
 			entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 			(int)( lead * 1000.0f ),
+			CL_AimAssistTrust( entity, lead ),
 			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ),
 			targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
 	}
