@@ -609,41 +609,26 @@ static const char *CL_AimAssistWeaponName( int weapon ) {
 }
 
 
+static float CL_AimAssistLag( void );
+
 /*
 =================
 CL_AimAssistEye
 
-The eye to aim from, moved smoothly the way the picture moves.
+The eye to aim from: the latest snapshot position carried forward to when the
+shot fires. Anchoring on the newest snapshot keeps a moving railgun shot
+accurate - a strafing player fires from a muzzle well ahead of where the last
+snapshot put it, and the forward carry is that lead.
 
-Reading the snapshot position straight makes the aim jerk while the player
-moves: the snapshot lands twenty times a second while the view is drawn
-hundreds of times, so the bearing to a target steps twenty times a second,
-and a step is small when standing still but large when moving fast. The
-renderer does not step - it slides between the last two snapshots - so the
-eye is taken the same way here: interpolated to render time, which crosses a
-snapshot boundary without a jump, then carried forward to when the shot fires.
+A smoother base was tried, read from between the last two snapshots. It looked
+smoother while running but it lost the forward carry and set the eye behind
+where the shot leaves from, which cost about a body width of accuracy at
+running speed - the railgun fell from three in four to one in five. The
+snapshot anchor stays; the jerk is the lesser price.
 =================
 */
-static float CL_AimAssistLag( void );
-
 static void CL_AimAssistEye( vec3_t eye ) {
-	const clSnapshot_t	*previous;
-	vec3_t				rendered, step;
-	float				interval, fraction;
-
-	VectorCopy( cl.snap.ps.origin, rendered );
-
-	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
-	if ( previous->valid && previous->serverTime < cl.snap.serverTime ) {
-		interval = (float)( cl.snap.serverTime - previous->serverTime );
-		fraction = Com_Clamp( 0.0f, 1.0f, ( cl.serverTime - previous->serverTime ) / interval );
-		VectorSubtract( cl.snap.ps.origin, previous->ps.origin, step );
-		VectorMA( previous->ps.origin, fraction, step, rendered );
-	}
-
-	// carry the smooth render eye forward to firing time, so a strafing player
-	// still aims from the muzzle the server will fire from
-	VectorMA( rendered, CL_AimAssistLag(), cl.snap.ps.velocity, eye );
+	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, eye );
 	eye[2] += cl.snap.ps.viewheight;
 }
 
