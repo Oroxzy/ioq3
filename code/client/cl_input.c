@@ -548,6 +548,12 @@ static float CL_AimAssistProjectileSpeed( int weapon ) {
 }
 
 
+// Movement constants the game keeps to itself: the height a walking player is
+// lifted over (STEPSIZE in bg_local.h) and the head start every missile gets on
+// its first frame (MISSILE_PRESTEP_TIME in g_missile.c).
+#define STEPSIZE			18
+#define MISSILE_PRESTEP		0.05f
+
 /*
 =================
 CL_AimAssistWeaponName
@@ -618,55 +624,63 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 	const clSnapshot_t	*previous;
 	const entityState_t	*old;
 	vec3_t				change;
-	float				trust, speed, excess;
+	float				speed, spread, interval;
 	int					i;
 
-	// beyond half a second a straight line stops being an answer
-	excess = time - 0.5f;
-	if ( excess < 0.0f ) {
-		excess = 0.0f;
-	}
-	trust = 1.0f / ( 1.0f + excess * excess / 0.25f );
-
-	// A target in the air cannot change where it is going, and the falling
-	// part is modelled anyway, so its course is the surest one there is.
+	// A target in the air cannot change where it is going, and the falling part
+	// is modelled, so its course is the surest one there is.
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
-		return trust;
+		return 1.0f;
 	}
 
+	// A bot running its line holds its velocity to the unit: friction takes
+	// exactly as much as the acceleration puts back, so the straight line is
+	// not an approximation there and deserves the whole lead. What costs us is
+	// a target that is turning, and the longer we look ahead the more of its
+	// turn we are guessing at.
 	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
-	if ( previous->valid ) {
-		for ( i = 0; i < previous->numEntities; i++ ) {
-			old = &cl.parseEntities[( previous->parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
-			if ( old->number != entity->number ) {
-				continue;
-			}
-
-			// A target that just changed direction is not going anywhere we
-			// know. Only sideways counts: up and down is the gravity above.
-			VectorSubtract( entity->pos.trDelta, old->pos.trDelta, change );
-			change[2] = 0.0f;
-			speed = sqrt( entity->pos.trDelta[0] * entity->pos.trDelta[0]
-				+ entity->pos.trDelta[1] * entity->pos.trDelta[1] );
-			if ( speed > 1.0f ) {
-				trust *= Com_Clamp( 0.0f, 1.0f, 1.0f - VectorLength( change ) / speed );
-			}
-			break;
-		}
+	if ( !previous->valid || previous->serverTime >= cl.snap.serverTime ) {
+		return 1.0f;
 	}
 
-	return trust;
+	interval = ( cl.snap.serverTime - previous->serverTime ) * 0.001f;
+
+	for ( i = 0; i < previous->numEntities; i++ ) {
+		old = &cl.parseEntities[( previous->parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( old->number != entity->number ) {
+			continue;
+		}
+
+		// only sideways counts: up and down is the gravity above
+		VectorSubtract( entity->pos.trDelta, old->pos.trDelta, change );
+		change[2] = 0.0f;
+		speed = sqrt( entity->pos.trDelta[0] * entity->pos.trDelta[0]
+			+ entity->pos.trDelta[1] * entity->pos.trDelta[1] );
+		if ( speed < 1.0f ) {
+			return 1.0f;
+		}
+
+		// how far the course would wander over the whole lead at the rate it
+		// is wandering right now
+		spread = VectorLength( change ) / speed * ( time / interval );
+
+		return 1.0f / ( 1.0f + spread );
+	}
+
+	return 1.0f;
 }
 
 
 static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
-	// A hair above the player box: standing on a floor the position is snapped
-	// to whole units, which puts the bottom face exactly on the floor plane and
-	// makes the trace below start solid.
-	static vec3_t	mins = { -15, -15, -23 };
+	// The game lifts a walking player over anything up to STEPSIZE, so the box
+	// that clips the guess starts above that height: a curb, a stair riser or a
+	// ramp is no obstacle to the target and must not cut its lead short. Only
+	// what would stop the target itself may stop the prediction.
+	static vec3_t	stepMins = { -15, -15, -24 + STEPSIZE };
+	static vec3_t	groundMins = { -15, -15, -24 };
 	static vec3_t	maxs = { 15, 15, 32 };
-	vec3_t			end, velocity;
-	float			gravity, trust;
+	vec3_t			end, velocity, above, below;
+	float			gravity, trust, floor;
 	trace_t			trace;
 
 	// Only the sideways guess is damped. Falling is physics and stays whole.
@@ -675,15 +689,15 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 	velocity[2] = entity->pos.trDelta[2];
 	VectorMA( entity->pos.trBase, time, velocity, end );
 
+	// Gravity acts on anything off the floor, and trDelta[2] carries the rest:
+	// a ramp, a jump pad, the first moment of a jump. Pinning the height threw
+	// all of that away.
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
-		// players fall at the gravity the server hands out, not at the default
 		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
 		end[2] -= 0.5f * gravity * time * time;
-	} else {
-		end[2] = entity->pos.trBase[2];		// on its feet, it keeps its floor
 	}
 
-	CM_BoxTrace( &trace, entity->pos.trBase, end, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+	CM_BoxTrace( &trace, entity->pos.trBase, end, stepMins, maxs, 0, MASK_PLAYERSOLID, qfalse );
 
 	// A solid start says nothing about where the target can go, and taking the
 	// trace at its word there would throw the whole lead away.
@@ -691,6 +705,26 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 		VectorCopy( end, predicted );
 	} else {
 		VectorCopy( trace.endpos, predicted );
+	}
+
+	// Put the guess back on the ground it would be standing on: a target that
+	// runs up stairs rises with them, one that lands does not sink into the
+	// floor, and one high in the air finds nothing here and keeps its arc.
+	VectorCopy( predicted, above );
+	above[2] += STEPSIZE;
+	VectorCopy( predicted, below );
+	below[2] -= 8192.0f;
+	CM_BoxTrace( &trace, above, below, groundMins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+
+	if ( !trace.startsolid && !trace.allsolid && trace.fraction < 1.0f ) {
+		floor = trace.endpos[2];
+
+		if ( predicted[2] < floor ) {
+			predicted[2] = floor;					// landed, or walked up a step
+		} else if ( entity->groundEntityNum != ENTITYNUM_NONE
+			&& predicted[2] - floor <= STEPSIZE ) {
+			predicted[2] = floor;					// walked down a step
+		}
 	}
 }
 
@@ -723,7 +757,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 	travelTime = 0.0f;
 	for ( i = 0; i < 5; i++ ) {
 		CL_AimAssistPredict( entity, lag + travelTime, targetOrigin );
-		targetOrigin[2] += 20.0f;	// centre mass: reliable hits for the sound test
+		targetOrigin[2] += 8.0f;	// inside the box standing and crouched alike
 
 		// Grenades and proximity mines follow TR_GRAVITY.  Raise the aim point
 		// by their drop during the calculated flight time.
@@ -744,7 +778,11 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 		}
 
 		VectorSubtract( targetOrigin, viewOrigin, offset );
-		travelTime = Com_Clamp( 0.0f, 1.5f, VectorLength( offset ) / projectileSpeed );
+		// The shot does not start at the eye and does not start at rest: the
+		// muzzle sits 14 units ahead, and every missile is spawned a frame of
+		// flight early. Both make it arrive sooner than the plain distance says.
+		travelTime = ( VectorLength( offset ) - 14.0f ) / projectileSpeed - MISSILE_PRESTEP;
+		travelTime = Com_Clamp( 0.0f, 1.5f, travelTime );
 	}
 }
 
@@ -838,7 +876,7 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		}
 
 		VectorCopy( entity->pos.trBase, targetOrigin );
-		targetOrigin[2] += 20.0f;	// score the bot's current crosshair position
+		targetOrigin[2] += 8.0f;	// score the bot's current crosshair position
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SOLID, qfalse );
 		if ( trace.fraction < 1.0f ) {
@@ -879,7 +917,7 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		0, MASK_SHOT, qfalse );
 	if ( trace.fraction < 1.0f ) {
 		VectorCopy( entity->pos.trBase, targetOrigin );
-		targetOrigin[2] += 20.0f;
+		targetOrigin[2] += 8.0f;
 		lead = 0.0f;
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SHOT, qfalse );
