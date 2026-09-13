@@ -76,6 +76,7 @@ public class MainForm : Form, IMessageFilter {
 	string logPath = "";
 	string aimKeyBeforeCapture = "MOUSE4";
 	bool capturingAimKey;
+	string shotStamp = "";
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
@@ -140,28 +141,45 @@ public class MainForm : Form, IMessageFilter {
 	public bool PreFilterMessage( ref Message m ) {
 		if ( !capturingAimKey ) return false;
 
-		string? key = m.Msg switch {
-			WmLeftButtonDown => "MOUSE1",
-			WmRightButtonDown => "MOUSE2",
-			WmMiddleButtonDown => "MOUSE3",
-			WmMouseWheel => (short)( m.WParam.ToInt64() >> 16 ) > 0 ? "MWHEELUP" : "MWHEELDOWN",
-			WmXButtonDown => ( ( m.WParam.ToInt64() >> 16 ) & 0xffff ) == 1 ? "MOUSE4" : "MOUSE5",
-			WmKeyDown or WmSysKeyDown => QuakeKeyName( (Keys)(int)m.WParam ),
-			_ => null,
-		};
-
+		// Abbrechen zuerst, sonst waere Escape eine ganz normale Taste
 		if ( m.Msg is WmKeyDown or WmSysKeyDown && (Keys)(int)m.WParam == Keys.Escape ) {
 			FinishAimKeyCapture( aimKeyBeforeCapture );
 			return true;
 		}
+
+		// Das Mausrad kennt kein Gedrückthalten, als Haltetaste also unbrauchbar
+		if ( m.Msg == WmMouseWheel ) {
+			return true;
+		}
+
+		string? key = m.Msg switch {
+			WmLeftButtonDown => "MOUSE1",
+			WmRightButtonDown => "MOUSE2",
+			WmMiddleButtonDown => "MOUSE3",
+			WmXButtonDown => ( ( m.WParam.ToInt64() >> 16 ) & 0xffff ) == 1 ? "MOUSE4" : "MOUSE5",
+			WmKeyDown or WmSysKeyDown => QuakeKeyName( (Keys)(int)m.WParam, m.LParam.ToInt64() ),
+			_ => null,
+		};
+
 		if ( key is null ) return false;
 
 		FinishAimKeyCapture( key );
 		return true;
 	}
 
-	static string? QuakeKeyName( Keys key ) {
+	// Wer wegklickt, hat die Taste nicht gewaehlt: sonst schluckt das Feld
+	// den naechsten Klick irgendwo in der App.
+	protected override void OnDeactivate( EventArgs e ) {
+		if ( capturingAimKey ) FinishAimKeyCapture( aimKeyBeforeCapture );
+		base.OnDeactivate( e );
+	}
+
+	static string? QuakeKeyName( Keys key, long lParam ) {
+		// Bit 24 unterscheidet die Zusatztasten vom Ziffernblock
+		bool extended = ( lParam & ( 1L << 24 ) ) != 0;
+
 		key &= Keys.KeyCode;
+		if ( key == Keys.Enter ) return extended ? "KP_ENTER" : "ENTER";
 		if ( key >= Keys.A && key <= Keys.Z ) return ( (char)( 'a' + key - Keys.A ) ).ToString();
 		if ( key >= Keys.D0 && key <= Keys.D9 ) return ( (char)( '0' + key - Keys.D0 ) ).ToString();
 		if ( key >= Keys.F1 && key <= Keys.F15 ) return $"F{key - Keys.F1 + 1}";
@@ -405,7 +423,13 @@ public class MainForm : Form, IMessageFilter {
 			File.WriteAllText( Path.Combine( HomePath, CfgName ), BuildConfig() );
 
 			logPath = Path.Combine( HomePath, "qconsole.log" );
-			if ( File.Exists( logPath ) ) File.Delete( logPath );
+			// Haengt noch ein Spiel am Protokoll, bleibt es eben stehen
+			try {
+				if ( File.Exists( logPath ) ) File.Delete( logPath );
+			} catch ( IOException ) {
+			} catch ( UnauthorizedAccessException ) {
+			}
+			shotStamp = "";
 
 			Process.Start( new ProcessStartInfo {
 				FileName = exe,
@@ -437,7 +461,7 @@ public class MainForm : Form, IMessageFilter {
 		int hits = 0, sounds = 0;
 		var frames = new HashSet<string>();
 		var recent = new List<string>();
-		var damageFrames = new List<int>();
+		var damageFrames = new List<Damage>();
 		var shots = new List<Shot>();
 
 		foreach ( var line in text.Split( '\n' ) ) {
@@ -450,12 +474,18 @@ public class MainForm : Form, IMessageFilter {
 				var mark = trimmed.LastIndexOf( " frame ", StringComparison.Ordinal );
 				frames.Add( mark >= 0 ? trimmed[( mark + 7 )..] : "#" + hits );
 				if ( mark >= 0 && int.TryParse( trimmed[( mark + 7 )..], out int damageFrame ) ) {
-					damageFrames.Add( damageFrame );
+					// wer getroffen wurde, steht zwischen "hit on " und dem Doppelpunkt
+					var colon = trimmed.IndexOf( ':', 7 );
+					damageFrames.Add( new Damage {
+						Frame = damageFrame,
+						Victim = colon > 7 ? trimmed[7..colon] : "",
+					} );
 				}
 				recent.Add( trimmed );
 			} else if ( trimmed.StartsWith( "hit sound: " ) ) {
 				var rest = trimmed[11..];
-				if ( rest.Length > 0 && ( char.IsDigit( rest[0] ) || rest.StartsWith( "kill" ) ) ) {
+				// "playing ..." und "counter resync ..." sind keine abgespielten Toene
+				if ( rest.Length > 0 && !rest.StartsWith( "playing" ) && !rest.StartsWith( "counter" ) ) {
 					sounds++;
 					recent.Add( trimmed );
 				}
@@ -480,6 +510,12 @@ public class MainForm : Form, IMessageFilter {
 			logView.SelectionStart = logView.TextLength;
 			logView.ScrollToCaret();
 		}
+	}
+
+	// Eine Schadensmeldung des Servers
+	sealed class Damage {
+		public int Frame;
+		public string Victim = "";
 	}
 
 	// Eine Zeile "aim shot:" aus dem Protokoll
@@ -516,16 +552,29 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
-	// Ein Schuss gilt als getroffen, wenn im Fenster seiner Flugzeit Schaden
-	// gemeldet wurde. Bei Dauerfeuer kann das den Nachbarschuss mitzaehlen.
-	void UpdateShots( List<Shot> shots, List<int> damageFrames ) {
+	// Ein gemeldeter Schaden gehoert genau einem Schuss: dem ersten, der auf
+	// dasselbe Ziel ging und dessen Flugzeit passt. Sonst schreibt ein Treffer
+	// jedem Schuss gut, dessen Fenster ihn zufaellig enthaelt.
+	void UpdateShots( List<Shot> shots, List<Damage> damageFrames ) {
 		int hit = 0;
 		double errorSum = 0;
 		var rows = new List<ListViewItem>();
+		var claimed = new bool[damageFrames.Count];
 
 		foreach ( var shot in shots ) {
 			int until = shot.Frame + shot.Lead + 300;
-			bool landed = damageFrames.Any( f => f >= shot.Frame && f <= until );
+			bool landed = false;
+
+			for ( int i = 0; i < damageFrames.Count; i++ ) {
+				var damage = damageFrames[i];
+				if ( claimed[i] || damage.Victim != shot.Target ) continue;
+				if ( damage.Frame < shot.Frame || damage.Frame > until ) continue;
+
+				claimed[i] = true;
+				landed = true;
+				break;
+			}
+
 			if ( landed ) hit++;
 			errorSum += shot.Error;
 
@@ -549,7 +598,11 @@ public class MainForm : Form, IMessageFilter {
 		statShotError.Text = shots.Count > 0 ? ( errorSum / shots.Count ).ToString( "0.00" ) + "°" : "–";
 		statShotMiss.ForeColor = shots.Count > hit ? Color.Firebrick : Color.ForestGreen;
 
-		if ( shotView.Items.Count == rows.Count ) return;		// nichts Neues
+		// Neu zeichnen, sobald sich etwas geaendert hat: die Zeilenzahl allein
+		// bleibt gleich, wenn ein Schuss nachtraeglich zum Treffer wird.
+		var stamp = rows.Count + ":" + hit + ":" + ( shots.Count > 0 ? shots[^1].Frame : 0 );
+		if ( stamp == shotStamp ) return;
+		shotStamp = stamp;
 
 		shotView.BeginUpdate();
 		shotView.Items.Clear();
