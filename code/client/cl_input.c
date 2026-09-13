@@ -574,6 +574,27 @@ static const char *CL_AimAssistWeaponName( int weapon ) {
 
 /*
 =================
+CL_AimAssistLag
+
+How far behind the world the last snapshot is: its own age plus the way the
+command being built still has to travel to the server.
+=================
+*/
+static float CL_AimAssistLag( void ) {
+	float	lag;
+
+	// cl.serverTime runs behind the newest snapshot, not ahead of it: the client
+	// renders between the last two snapshots. The shot, however, is fired on the
+	// server after that snapshot was sent, so the target has moved on by the
+	// render lag plus the way the command still has to travel.
+	lag = ( cl.snap.serverTime - cl.serverTime + cl.snap.ping / 2 ) * 0.001f;
+
+	return Com_Clamp( 0.0f, 0.3f, lag );
+}
+
+
+/*
+=================
 CL_AimAssistPredict
 
 Where the target stands after the given time.  A player in the air is pulled
@@ -583,21 +604,34 @@ keeps the guess out of the floor and out of walls the target cannot pass.
 =================
 */
 static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
-	static vec3_t	mins = { -15, -15, -24 };
+	// A hair above the player box: standing on a floor the position is snapped
+	// to whole units, which puts the bottom face exactly on the floor plane and
+	// makes the trace below start solid.
+	static vec3_t	mins = { -15, -15, -23 };
 	static vec3_t	maxs = { 15, 15, 32 };
 	vec3_t			end;
+	float			gravity;
 	trace_t			trace;
 
 	VectorMA( entity->pos.trBase, time, entity->pos.trDelta, end );
 
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
-		end[2] -= 0.5f * DEFAULT_GRAVITY * time * time;
+		// players fall at the gravity the server hands out, not at the default
+		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+		end[2] -= 0.5f * gravity * time * time;
 	} else {
 		end[2] = entity->pos.trBase[2];		// on its feet, it keeps its floor
 	}
 
 	CM_BoxTrace( &trace, entity->pos.trBase, end, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
-	VectorCopy( trace.endpos, predicted );
+
+	// A solid start says nothing about where the target can go, and taking the
+	// trace at its word there would throw the whole lead away.
+	if ( trace.startsolid || trace.allsolid ) {
+		VectorCopy( end, predicted );
+	} else {
+		VectorCopy( trace.endpos, predicted );
+	}
 }
 
 
@@ -618,8 +652,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 	float	projectileSpeed, travelTime, lag;
 	int		i, weapon;
 
-	lag = ( cl.serverTime - cl.snap.serverTime + cl.snap.ping / 2 ) * 0.001f;
-	lag = Com_Clamp( 0.0f, 0.3f, lag );
+	lag = CL_AimAssistLag();
 
 	weapon = cl.cgameUserCmdValue;
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
@@ -667,6 +700,7 @@ only eligible targets are bots identified by the server's player configstring.
 */
 static void CL_AimAssist( usercmd_t *cmd ) {
 	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
+	int			previousButtons;
 	const char		*info;
 	entityState_t	*entity;
 	trace_t			trace;
@@ -674,6 +708,12 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	float			bestScore, score, pitchDelta, yawDelta, blend, lead;
 	int			bestEntity, i, key, localTeam, targetTeam, weapon;
 	qboolean		aimKeyHasAttack, otherAttackKey;
+
+	// Remember what the trigger did on every frame, not only on the frames that
+	// get as far as steering: otherwise the next shot after a missing target
+	// looks like the button was already down and goes unlogged.
+	previousButtons = aimAssistButtons;
+	aimAssistButtons = cmd->buttons;
 
 	if ( !cl_aimAssist->integer || clc.state != CA_ACTIVE || clc.demoplaying ||
 		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
@@ -708,7 +748,10 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		return;
 	}
 
-	VectorCopy( cl.snap.ps.origin, viewOrigin );
+	// The shooter has moved on since this snapshot too, so carry the eye
+	// forward as well; a strafing player would otherwise aim from beside
+	// the muzzle the server ends up firing from.
+	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, viewOrigin );
 	viewOrigin[2] += cl.snap.ps.viewheight;
 	bestEntity = -1;
 	// Consider every visible bot.  The angular score below still ensures that
@@ -784,7 +827,7 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	// prediction got right. What is left of the two deltas after the blend is
 	// how far the view still misses the predicted point.
 	if ( cl_aimAssistDebug->integer && ( cmd->buttons & BUTTON_ATTACK )
-		&& !( aimAssistButtons & BUTTON_ATTACK ) ) {
+		&& !( previousButtons & BUTTON_ATTACK ) ) {
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
 		VectorSubtract( targetOrigin, viewOrigin, direction );
 		Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i error %.2f at %.0f %.0f %.0f frame %i\n",
@@ -795,7 +838,6 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ),
 			targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
 	}
-	aimAssistButtons = cmd->buttons;
 }
 
 

@@ -829,6 +829,12 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 			if ( args[1] == hitSound ) {
 				sfx = CL_HitSoundHandle();
 
+				// still say that a hit was answered when the pitch is off,
+				// otherwise a test run reads as if every sound went missing
+				if ( !cl_hitPitch->integer && cl_hitSoundDebug->integer ) {
+					Com_Printf( "hit sound: unpitched (cgame)\n" );
+				}
+
 				if ( cl_hitPitch->integer ) {
 					// the hit sound is ours now: either it belongs to a hit
 					// that has not been played yet, or it is a repeat and
