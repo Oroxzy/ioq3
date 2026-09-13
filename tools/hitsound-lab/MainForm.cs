@@ -76,6 +76,7 @@ public class MainForm : Form, IMessageFilter {
 	};
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
+	readonly Button save = new() { Text = "Speichern", Width = 100, Height = 34 };
 	readonly Label status = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly System.Windows.Forms.Timer poll = new() { Interval = 500 };
@@ -134,10 +135,12 @@ public class MainForm : Form, IMessageFilter {
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
 		start.Click += ( _, _ ) => StartGame();
+		save.Click += ( _, _ ) => SaveSettings();
 		poll.Tick += ( _, _ ) => RefreshStats();
 
 		Controls.Add( BuildLayout() );
 		Application.AddMessageFilter( this );
+		LoadSettings();
 		poll.Start();
 	}
 
@@ -285,7 +288,7 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ),
-				Pad( start ), Pad( status ) ) );
+				Pad( start ), Pad( save ), Pad( status ) ) );
 	}
 
 	GroupBox BuildSoundBox() {
@@ -404,6 +407,92 @@ public class MainForm : Form, IMessageFilter {
 
 	static string HomePath =>
 		Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.ApplicationData ), "Quake3", "baseq3" );
+
+	static string SettingsPath =>
+		Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.ApplicationData ), "HitsoundLab", "settings.ini" );
+
+	static string Dec( decimal v ) => v.ToString( System.Globalization.CultureInfo.InvariantCulture );
+
+	// Alle Bedienelemente in eine schlichte Schluessel=Wert-Datei
+	void SaveSettings() {
+		var s = new StringBuilder();
+		s.AppendLine( "gameDir=" + gameDir.Text );
+		s.AppendLine( "map=" + map.Text );
+		s.AppendLine( "bots=" + (int)bots.Value );
+		s.AppendLine( "skill=" + (int)skill.Value );
+		s.AppendLine( "hitSound=" + hitSound.SelectedIndex );
+		s.AppendLine( "hitSoundFile=" + hitSoundFile.Text );
+		s.AppendLine( "hitPitch=" + hitPitch.Checked );
+		s.AppendLine( "pitchFull=" + Dec( pitchFull.Value ) );
+		s.AppendLine( "pitchEmpty=" + Dec( pitchEmpty.Value ) );
+		s.AppendLine( "pitchKill=" + Dec( pitchKill.Value ) );
+		s.AppendLine( "pitchStack=" + (int)pitchStack.Value );
+		s.AppendLine( "aimAssist=" + aimAssist.Checked );
+		s.AppendLine( "aimStrength=" + (int)aimStrength.Value );
+		s.AppendLine( "aimKey=" + aimKey.Text );
+		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
+		s.AppendLine( "aimPrefer=" + aimPrefer.Checked );
+		s.AppendLine( "botOutline=" + botOutline.Checked );
+		s.AppendLine( "itemOutline=" + itemOutline.Checked );
+		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
+
+		try {
+			Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath )! );
+			File.WriteAllText( SettingsPath, s.ToString() );
+			status.Text = "Einstellungen gespeichert";
+			status.ForeColor = Color.ForestGreen;
+		} catch ( Exception ex ) {
+			status.Text = "Speichern fehlgeschlagen: " + ex.Message;
+			status.ForeColor = Color.Firebrick;
+		}
+	}
+
+	void LoadSettings() {
+		if ( !File.Exists( SettingsPath ) ) return;
+
+		var v = new Dictionary<string, string>();
+		try {
+			foreach ( var line in File.ReadAllLines( SettingsPath ) ) {
+				var eq = line.IndexOf( '=' );
+				if ( eq > 0 ) v[line[..eq]] = line[( eq + 1 )..];
+			}
+		} catch ( IOException ) {
+			return;
+		}
+
+		if ( v.TryGetValue( "gameDir", out var g ) && g.Length > 0 ) gameDir.Text = g;
+		if ( v.TryGetValue( "map", out var m ) ) { int i = Array.IndexOf( Maps, m ); if ( i >= 0 ) map.SelectedIndex = i; }
+		SetNum( bots, v, "bots" );
+		SetNum( skill, v, "skill" );
+		if ( v.TryGetValue( "hitSound", out var hs ) && int.TryParse( hs, out int hsi ) && hsi >= 0 && hsi < HitSounds.Length )
+			hitSound.SelectedIndex = hsi;
+		if ( v.TryGetValue( "hitSoundFile", out var hf ) ) hitSoundFile.Text = hf;
+		SetBool( hitPitch, v, "hitPitch" );
+		SetNum( pitchFull, v, "pitchFull" );
+		SetNum( pitchEmpty, v, "pitchEmpty" );
+		SetNum( pitchKill, v, "pitchKill" );
+		SetNum( pitchStack, v, "pitchStack" );
+		SetBool( aimAssist, v, "aimAssist" );
+		SetNum( aimStrength, v, "aimStrength" );
+		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
+		SetBool( aimAttacker, v, "aimAttacker" );
+		SetBool( aimPrefer, v, "aimPrefer" );
+		SetBool( botOutline, v, "botOutline" );
+		SetBool( itemOutline, v, "itemOutline" );
+		SetBool( itemOutlineAll, v, "itemOutlineAll" );
+	}
+
+	static void SetBool( CheckBox box, Dictionary<string, string> v, string key ) {
+		if ( v.TryGetValue( key, out var s ) && bool.TryParse( s, out bool b ) ) box.Checked = b;
+	}
+
+	static void SetNum( NumericUpDown box, Dictionary<string, string> v, string key ) {
+		if ( v.TryGetValue( key, out var s )
+			&& decimal.TryParse( s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal d )
+			&& d >= box.Minimum && d <= box.Maximum ) {
+			box.Value = d;
+		}
+	}
 
 	string BuildConfig() {
 		var cfg = new StringBuilder();
