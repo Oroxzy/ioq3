@@ -424,9 +424,14 @@ extern	cvar_t	*cl_autoRecordDemo;
 extern	cvar_t	*cl_aimAssist;
 extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
+extern	cvar_t	*cl_aimAssistSmooth;
+extern	cvar_t	*cl_aimAssistExact;
+extern	cvar_t	*cl_aimAssistLead;
+extern	cvar_t	*cl_aimAssistLearn;
 extern	cvar_t	*cl_aimAssistPrefer;
 
-void CL_AimAssistSnapshot( void );	// cl_input.c, records impacts for the test bench
+void CL_AimAssistSnapshot( void );
+qboolean CL_AimAssistCrouched( const entityState_t *entity );	// cl_input.c, records impacts for the test bench
 extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;
 extern	cvar_t	*cl_itemOutline;

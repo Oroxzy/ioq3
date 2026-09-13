@@ -1381,6 +1381,7 @@ static void CL_AddBotOutlines( void ) {
 	trace_t				trace;
 	vec3_t				origin, corner[8], near[8], eye;
 	qboolean			ahead;
+	float				top;
 	int					i, j;
 
 	if ( !cl_botOutline->integer || clc.state != CA_ACTIVE || clc.demoplaying
@@ -1408,10 +1409,13 @@ static void CL_AddBotOutlines( void ) {
 			continue;
 		}
 
+		// a ducked bot is half as tall, and so is its box
+		top = CL_AimAssistCrouched( entity ) ? CROUCH_HEIGHT : DEFAULT_HEIGHT;
+
 		for ( j = 0; j < 8; j++ ) {
 			corner[j][0] = origin[0] + ( ( j & 1 ) ? maxs[0] : mins[0] );
 			corner[j][1] = origin[1] + ( ( j & 2 ) ? maxs[1] : mins[1] );
-			corner[j][2] = origin[2] + ( ( j & 4 ) ? maxs[2] : mins[2] );
+			corner[j][2] = origin[2] + ( ( j & 4 ) ? top : mins[2] );
 		}
 
 		ahead = qtrue;

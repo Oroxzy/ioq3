@@ -609,61 +609,163 @@ static const char *CL_AimAssistWeaponName( int weapon ) {
 }
 
 
-static float CL_AimAssistLag( void );
+/*
+=================
+CL_AimAssistCrouched
+
+Whether a player entity is ducked. The player state's own flag never leaves
+the server, but the legs animation does, and the game picks a crouching one
+for every ducked player whether it stands, walks or backs up.
+=================
+*/
+qboolean CL_AimAssistCrouched( const entityState_t *entity ) {
+	int	anim;
+
+	anim = entity->legsAnim & ~ANIM_TOGGLEBIT;
+	return anim == LEGS_WALKCR || anim == LEGS_IDLECR || anim == LEGS_BACKCR;
+}
+
+
+/*
+=================
+CL_AimAssistHull
+
+The box the server hits for this player: the full one, or the ducked one
+that is half as tall.
+=================
+*/
+static void CL_AimAssistHull( const entityState_t *entity, vec3_t mins, vec3_t maxs ) {
+	VectorSet( mins, -15, -15, MINS_Z );
+	VectorSet( maxs, 15, 15, CL_AimAssistCrouched( entity ) ? CROUCH_HEIGHT : DEFAULT_HEIGHT );
+}
+
+
+/*
+=================
+CL_AimAssistBodyHeight
+
+Where in the box to aim, above the origin: a little over the middle whether
+the target stands or ducks.
+=================
+*/
+static float CL_AimAssistBodyHeight( const entityState_t *entity ) {
+	return CL_AimAssistCrouched( entity ) ? 0.0f : 8.0f;
+}
+
+
+/*
+=================
+CL_AimAssistFloats
+
+A target that swims or flies is off the ground without falling, and can turn
+at will: neither the gravity nor the sure course of a jump applies to it. The
+game has a player swimming once the water reaches the middle of its body,
+which is a unit above its origin.
+=================
+*/
+static qboolean CL_AimAssistFloats( const entityState_t *entity ) {
+	vec3_t	point;
+
+	if ( entity->powerups & ( 1 << PW_FLIGHT ) ) {
+		return qtrue;
+	}
+
+	VectorCopy( entity->pos.trBase, point );
+	point[2] += 1.0f;
+	return ( CM_PointContents( point, 0 ) & MASK_WATER ) != 0;
+}
+
+
+/*
+=================
+CL_AimAssistFrameTime
+
+The server's frame, in seconds. On a listen server the game runs in this
+process, so its cvar is ours to read. The world moves in these steps and
+nothing in it moves between them.
+=================
+*/
+static float CL_AimAssistFrameTime( void ) {
+	int	fps;
+
+	fps = Cvar_VariableIntegerValue( "sv_fps" );
+	if ( fps < 1 ) {
+		fps = 20;
+	}
+	return ( 1000 / fps ) * 0.001f;
+}
+
+
+/*
+=================
+CL_AimAssistPhase
+
+Where the picture stands between two snapshots, as a zero-mean time.
+
+The snapshot's age, cl.snap.serverTime - cl.serverTime, is a sawtooth: about
+55 ms right after a snapshot arrives, sliding down to about 5 ms before the
+next one, then up again. Anything read straight from the snapshot steps once
+per snapshot. What the steering wants is a lead that changes as smoothly as
+the view does, and this is the correction that gives it: the sawtooth less
+its own running mean. Added to a lead it cancels the step the target makes
+when a snapshot lands, because the target moves one frame forward exactly as
+this drops by one frame. Its mean is zero, so on average it changes nothing,
+and on the frame a shot is fired it is left out altogether.
+=================
+*/
+static float	aimPhaseMean = 0.03f;		// running mean of the snapshot age, seconds
+
+static void CL_AimAssistPhaseUpdate( void ) {
+	float	age;
+
+	age = ( cl.snap.serverTime - cl.serverTime ) * 0.001f;
+	aimPhaseMean += ( age - aimPhaseMean ) * Com_Clamp( 0.0f, 1.0f, frame_msec / 1000.0f );
+}
+
+static float CL_AimAssistPhase( void ) {
+	float	age;
+
+	age = ( cl.snap.serverTime - cl.serverTime ) * 0.001f;
+	return Com_Clamp( -0.1f, 0.1f, aimPhaseMean - age );
+}
+
 
 /*
 =================
 CL_AimAssistEye
 
-The eye to aim from: the latest snapshot position carried forward to when the
-shot fires. Anchoring on the newest snapshot keeps a moving railgun shot
-accurate - a strafing player fires from a muzzle well ahead of where the last
-snapshot put it, and the forward carry is that lead.
+Where the shot leaves from: the player's position at the time of the command
+being built, which is what the server computes before it fires. The snapshot
+holds the position as of its commandTime and the command carries
+cl.serverTime; the player has moved between the two by its velocity, and
+fallen by gravity if it was in the air. This is continuous across snapshots
+- a new one moves both the base and its commandTime forward together - so
+the aim does not step while the player runs, and it is where the server puts
+the muzzle, so it is also right.
 
-A smoother base was tried, read from between the last two snapshots. It looked
-smoother while running but it lost the forward carry and set the eye behind
-where the shot leaves from, which cost about a body width of accuracy at
-running speed - the railgun fell from three in four to one in five. The
-snapshot anchor stays; the jerk is the lesser price.
+What went wrong before: the base was carried forward by the snapshot's age
+instead, which runs the other way - largest right after a snapshot, when the
+player has barely moved on from it, and smallest just before the next, when
+it has moved the most. That made the eye slide backwards through every
+interval and leap two frames forward at each snapshot: a jerk while moving,
+and up to a body width of error at running speed.
 =================
 */
 static void CL_AimAssistEye( vec3_t eye ) {
-	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, eye );
+	float	dt, gravity;
+
+	dt = ( cl.serverTime - cl.snap.ps.commandTime ) * 0.001f;
+	dt = Com_Clamp( 0.0f, 0.2f, dt );
+
+	VectorMA( cl.snap.ps.origin, dt, cl.snap.ps.velocity, eye );
+	if ( cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ) {
+		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+		eye[2] -= 0.5f * gravity * dt * dt;
+	}
 	eye[2] += cl.snap.ps.viewheight;
 }
 
 
-/*
-=================
-CL_AimAssistLag
-
-How far behind the world the last snapshot is: its own age plus the way the
-command being built still has to travel to the server.
-=================
-*/
-static float CL_AimAssistLag( void ) {
-	float	lag;
-
-	// cl.serverTime runs behind the newest snapshot, not ahead of it: the client
-	// renders between the last two snapshots. The shot, however, is fired on the
-	// server after that snapshot was sent, so the target has moved on by the
-	// render lag plus the way the command still has to travel.
-	lag = ( cl.snap.serverTime - cl.serverTime + cl.snap.ping / 2 ) * 0.001f;
-
-	return Com_Clamp( 0.0f, 0.3f, lag );
-}
-
-
-/*
-=================
-CL_AimAssistPredict
-
-Where the target stands after the given time.  A player in the air is pulled
-down by the same gravity the game uses, so carrying its upward speed on in a
-straight line would aim high above a bot that merely jumped.  The box trace
-keeps the guess out of the floor and out of walls the target cannot pass.
-=================
-*/
 /*
 =================
 CL_AimAssistVelocity
@@ -723,13 +825,16 @@ last two snapshots.
 static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 	const clSnapshot_t	*previous;
 	const entityState_t	*old;
-	vec3_t				change;
+	vec3_t				change, heading;
 	float				speed, spread, interval;
 	int					i;
 
+	time = fabs( time );
+
 	// A target in the air cannot change where it is going, and the falling part
-	// is modelled, so its course is the surest one there is.
-	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
+	// is modelled, so its course is the surest one there is. Swimming and
+	// flying are not falling.
+	if ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) ) {
 		return 1.0f;
 	}
 
@@ -751,7 +856,9 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 			continue;
 		}
 
-		// only sideways counts: up and down is the gravity above
+		// Only a change of course counts. Up and down is the gravity above,
+		// and speeding up or slowing down along the line it already runs is
+		// no reason to doubt the line: a bot setting off keeps its heading.
 		VectorSubtract( entity->pos.trDelta, old->pos.trDelta, change );
 		change[2] = 0.0f;
 		speed = sqrt( entity->pos.trDelta[0] * entity->pos.trDelta[0]
@@ -759,10 +866,16 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 		if ( speed < 1.0f ) {
 			return 1.0f;
 		}
+		heading[0] = entity->pos.trDelta[0] / speed;
+		heading[1] = entity->pos.trDelta[1] / speed;
+		heading[2] = 0.0f;
+		VectorMA( change, -DotProduct( change, heading ), heading, change );
 
-		// how far the course would wander over the whole lead at the rate it
-		// is wandering right now
-		spread = VectorLength( change ) / speed * ( time / interval );
+		// How far the course would wander over the whole lead. One interval's
+		// turn does not go on in the same direction for twenty more: the
+		// turns come and go, and what they add up to grows with the square
+		// root of the time, as a random walk does.
+		spread = VectorLength( change ) / speed * sqrt( time / interval );
 
 		return 1.0f / ( 1.0f + spread );
 	}
@@ -771,33 +884,100 @@ static float CL_AimAssistTrust( const entityState_t *entity, float time ) {
 }
 
 
-static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
-	// The game lifts a walking player over anything up to STEPSIZE, so the box
-	// that clips the guess starts above that height: a curb, a stair riser or a
-	// ramp is no obstacle to the target and must not cut its lead short. Only
-	// what would stop the target itself may stop the prediction.
-	static vec3_t	stepMins = { -15, -15, -24 + STEPSIZE };
-	static vec3_t	groundMins = { -15, -15, -24 };
-	static vec3_t	maxs = { 15, 15, 32 };
-	vec3_t			end, velocity, motion, above, below;
-	float			gravity, trust, floor;
-	trace_t			trace;
+/*
+=================
+CL_AimAssistSideways
 
-	// Only the sideways guess is damped. Falling is physics and stays whole.
+How far along its line a target is expected to get in the given time, as a
+time. A straight line is right for a moment and wrong for a second, because
+bots change direction: a target expected to hold its course for T seconds
+on average gets T(1 - e^(-t/T)) of straight running out of t, which is t for
+a short flight and never more than T for a long one. T is cl_aimAssistLead,
+in seconds, and the learner tunes it from what the bots really do.
+=================
+*/
+static float	aimHold = -1.0f;		// the hold time in use, seconds
+static int		aimHoldModCount = -1;	// modification count of the cvar it was read from
+static int		aimHoldWritten;			// server time the learner last wrote it back
+
+/*
+=================
+CL_AimAssistHold
+
+The hold time in use: the cvar's value whenever the cvar was set from
+outside, otherwise what the learner has made of it since. The learner keeps
+its running value here and writes the cvar back only now and then, because
+the cvar is archived and every write of it has the engine save q3config.cfg
+at once - a file written on every learned shot is a hitch on every shot.
+=================
+*/
+static float CL_AimAssistHold( void ) {
+	if ( cl_aimAssistLead->modificationCount != aimHoldModCount ) {
+		aimHold = cl_aimAssistLead->value;
+		aimHoldModCount = cl_aimAssistLead->modificationCount;
+	}
+
+	return aimHold;
+}
+
+static float CL_AimAssistSideways( float time ) {
+	float	hold;
+
+	hold = CL_AimAssistHold();
+	if ( time <= 0.0f || hold <= 0.0f ) {
+		return time;
+	}
+
+	return hold * ( 1.0f - exp( -time / hold ) );
+}
+
+
+/*
+=================
+CL_AimAssistPredict
+
+Where the target stands after the given time.  A player in the air is pulled
+down by the same gravity the game uses, so carrying its upward speed on in a
+straight line would aim high above a bot that merely jumped.  The box trace
+keeps the guess out of the floor and out of walls the target cannot pass.
+A negative time is a moment back along its line, wanted only for the smooth
+picture between snapshots: nothing to clip and nothing to drop there.
+=================
+*/
+static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
+	vec3_t		mins, maxs, stepMins, end, motion, above, below;
+	float		gravity, sideways, floor;
+	trace_t		trace;
+
+	// Only the sideways guess is damped, in two ways: by how long bots hold a
+	// direction at all, and by how much this one is turning right now.
+	// Falling is physics and stays whole.
 	CL_AimAssistVelocity( entity, motion );
-	trust = CL_AimAssistTrust( entity, time );
-	VectorScale( motion, trust, velocity );
-	velocity[2] = motion[2];
-	VectorMA( entity->pos.trBase, time, velocity, end );
+	sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time );
+	end[0] = entity->pos.trBase[0] + motion[0] * sideways;
+	end[1] = entity->pos.trBase[1] + motion[1] * sideways;
+	end[2] = entity->pos.trBase[2] + motion[2] * time;
+
+	if ( time <= 0.0f ) {
+		VectorCopy( end, predicted );
+		return;
+	}
 
 	// Gravity acts on anything off the floor, and trDelta[2] carries the rest:
 	// a ramp, a jump pad, the first moment of a jump. Pinning the height threw
-	// all of that away.
-	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
+	// all of that away. In water and in flight there is no falling.
+	if ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) ) {
 		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
 		end[2] -= 0.5f * gravity * time * time;
 	}
 
+	// The game lifts a walking player over anything up to STEPSIZE, so the box
+	// that clips the guess starts above that height: a curb, a stair riser or a
+	// ramp is no obstacle to the target and must not cut its lead short. Only
+	// what would stop the target itself may stop the prediction.
+	CL_AimAssistHull( entity, mins, maxs );
+	VectorCopy( mins, stepMins );
+	stepMins[2] += STEPSIZE;
 	CM_BoxTrace( &trace, entity->pos.trBase, end, stepMins, maxs, 0, MASK_PLAYERSOLID, qfalse );
 
 	// A solid start says nothing about where the target can go, and taking the
@@ -815,7 +995,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 	above[2] += STEPSIZE;
 	VectorCopy( predicted, below );
 	below[2] -= 8192.0f;
-	CM_BoxTrace( &trace, above, below, groundMins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+	CM_BoxTrace( &trace, above, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
 
 	if ( !trace.startsolid && !trace.allsolid && trace.fraction < 1.0f ) {
 		floor = trace.endpos[2];
@@ -832,32 +1012,78 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 
 /*
 =================
-CL_AimAssistTargetPoint
+CL_AimAssistLeadTime
 
-Predicts where the target will be when the shot reaches it.  Even a hitscan
-weapon has to lead a little: the snapshot the position comes from is already
-a frame old, and the command being built still has to travel to the server.
-A projectile adds its own flight time on top, which is solved by repeating
-the distance over speed until it settles.
+How long after the snapshot's world the shot meets the target, given the
+distance it has to cover.
+
+A hitscan shot resolves against exactly the world the snapshot shows: on a
+listen server the command runs before the next game frame, and nothing in the
+world moves between game frames. Its lead is zero - not the snapshot's age,
+which is what used to be added and which over-led every railgun shot by up to
+a frame.
+
+A missile is different only because the world does move while it flies, and
+it moves in frames. The missile is spawned a prestep ahead and is then traced
+one frame's flight at a time, against the targets as they stand at the end of
+that frame; the frame whose segment reaches the target is the frame whose
+target position counts. That is the lead, and it is a whole number of frames.
+For the steering between shots the unrounded time is used instead, centred
+on the same average, so the aim does not tick every time the distance
+crosses a frame boundary; the rounded one is applied on the frame the shot
+is actually fired.
 =================
 */
-static void CL_AimAssistTargetPoint( const entityState_t *entity,
-		const vec3_t viewOrigin, vec3_t targetOrigin, float *leadOut ) {
-	vec3_t	offset;
-	float	projectileSpeed, travelTime, lag;
-	int		i, weapon;
+static float CL_AimAssistLeadTime( float projectileSpeed, float distance, qboolean exact ) {
+	float	frame, flight;
+	int		j;
 
-	lag = CL_AimAssistLag();
-
-	weapon = cl.cgameUserCmdValue;
-	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
-		weapon = cl.snap.ps.weapon;
+	if ( projectileSpeed <= 0.0f ) {
+		return 0.0f;
 	}
-	projectileSpeed = CL_AimAssistProjectileSpeed( weapon );
 
-	travelTime = 0.0f;
+	frame = CL_AimAssistFrameTime();
+
+	// the missile starts at the muzzle and meets the box at its near face
+	flight = ( distance - 14.0f - 15.0f ) / projectileSpeed - MISSILE_PRESTEP;
+
+	if ( !exact ) {
+		return Com_Clamp( 0.0f, 3.0f, flight + frame * 0.5f );
+	}
+
+	// the first segment covers the prestep and the first frame together;
+	// every later one covers a frame, ending j frames plus the prestep out
+	if ( flight <= frame ) {
+		j = 1;
+	} else {
+		j = (int)( flight / frame ) + 1;
+	}
+
+	return Com_Clamp( 0.0f, 3.0f, j * frame );
+}
+
+
+/*
+=================
+CL_AimAssistTargetPoint
+
+Predicts where the target will be when the shot reaches it, and how long that
+takes. With exact set the point is the one the server will really test the
+shot against; otherwise it is the smooth one for steering between shots.
+=================
+*/
+static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t viewOrigin,
+		int weapon, qboolean exact, vec3_t targetOrigin, float *leadOut ) {
+	vec3_t	offset;
+	float	projectileSpeed, lead, phase, drop;
+	int		i;
+
+	projectileSpeed = CL_AimAssistProjectileSpeed( weapon );
+	phase = exact ? 0.0f : CL_AimAssistPhase();
+
+	lead = 0.0f;
 	for ( i = 0; i < 5; i++ ) {
-		CL_AimAssistPredict( entity, lag + travelTime, targetOrigin );
+		CL_AimAssistPredict( entity, lead + phase, targetOrigin );
 
 		// A splash weapon at a target on the floor goes for the feet: a near
 		// miss still bursts on the ground under it, where a miss past the body
@@ -866,11 +1092,11 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 			&& entity->groundEntityNum != ENTITYNUM_NONE ) {
 			targetOrigin[2] -= 20.0f;
 		} else {
-			targetOrigin[2] += 8.0f;	// inside the box standing and crouched alike
+			targetOrigin[2] += CL_AimAssistBodyHeight( entity );
 		}
 
-		// Grenades and proximity mines follow TR_GRAVITY.  Raise the aim point
-		// by their drop during the calculated flight time - less the lift the
+		// Grenades and proximity mines follow TR_GRAVITY from the prestep on.
+		// Raise the aim point by their drop over the flight - less the lift the
 		// game gives them for free, a fifth of the forward vector tipped up
 		// (g_weapon.c), which lifts the arc by that share of the range.
 		if ( weapon == WP_GRENADE_LAUNCHER
@@ -879,24 +1105,21 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 #endif
 		) {
 			VectorSubtract( targetOrigin, viewOrigin, offset );
-			targetOrigin[2] += 0.5f * DEFAULT_GRAVITY * travelTime * travelTime
+			drop = lead + MISSILE_PRESTEP;
+			targetOrigin[2] += 0.5f * DEFAULT_GRAVITY * drop * drop
 				- 0.2f * sqrt( offset[0] * offset[0] + offset[1] * offset[1] );
 		}
 
 		if ( leadOut ) {
-			*leadOut = lag + travelTime;
+			*leadOut = lead;
 		}
 
 		if ( projectileSpeed <= 0.0f ) {
-			return;			// hitscan, the lag above is the whole lead
+			return;			// hitscan: the world the snapshot shows is the one hit
 		}
 
 		VectorSubtract( targetOrigin, viewOrigin, offset );
-		// The shot does not start at the eye and does not start at rest: the
-		// muzzle sits 14 units ahead, and every missile is spawned a frame of
-		// flight early. Both make it arrive sooner than the plain distance says.
-		travelTime = ( VectorLength( offset ) - 14.0f ) / projectileSpeed - MISSILE_PRESTEP;
-		travelTime = Com_Clamp( 0.0f, 1.5f, travelTime );
+		lead = CL_AimAssistLeadTime( projectileSpeed, VectorLength( offset ), exact );
 	}
 }
 
@@ -907,12 +1130,12 @@ static int	aimAssistTarget = -1;		// who the assist steered at last frame
 =================
 CL_AimAssistPickTarget
 
-The bot to steer at: visible, an enemy, within the weapon's reach, and by
-preference the one nearest the crosshair - or, for a short weapon with
-cl_aimAssistPrefer, the nearest one outright. The target we already had
-keeps a head start so the aim does not hop between two bots running side by
-side, and whoever is hurting us comes first when cl_aimAssistAttacker says so.
-With sticky off it is a plain pick, used for the record of unassisted shots.
+The bot to steer at: visible, an enemy, and by preference the one nearest the
+crosshair - or, for a short weapon with cl_aimAssistPrefer, the nearest one
+outright. The target we already had keeps a head start so the aim does not
+hop between two bots running side by side, and whoever is hurting us comes
+first when cl_aimAssistAttacker says so. With sticky off it is a plain pick,
+used for the record of unassisted shots.
 =================
 */
 static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam,
@@ -943,7 +1166,7 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		}
 
 		VectorCopy( entity->pos.trBase, targetOrigin );
-		targetOrigin[2] += 8.0f;	// score the bot's current crosshair position
+		targetOrigin[2] += CL_AimAssistBodyHeight( entity );	// score the bot's current crosshair position
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SOLID, qfalse );
 		if ( trace.fraction < 1.0f ) {
@@ -992,17 +1215,113 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 
 /*
 =================
+CL_AimAssistFireDelay
+
+The weapon's time between shots (PM_Weapon in bg_pmove.c), in milliseconds,
+shortened by haste the way the game does it.
+=================
+*/
+static int CL_AimAssistFireDelay( int weapon ) {
+	int	delay;
+
+	switch ( weapon ) {
+	case WP_LIGHTNING:			delay = 50; break;
+	case WP_SHOTGUN:			delay = 1000; break;
+	case WP_MACHINEGUN:			delay = 100; break;
+	case WP_GRENADE_LAUNCHER:	delay = 800; break;
+	case WP_ROCKET_LAUNCHER:	delay = 800; break;
+	case WP_PLASMAGUN:			delay = 100; break;
+	case WP_RAILGUN:			delay = 1500; break;
+	case WP_BFG:				delay = 200; break;
+#ifdef MISSIONPACK
+	case WP_NAILGUN:			delay = 1000; break;
+	case WP_PROX_LAUNCHER:		delay = 800; break;
+	case WP_CHAINGUN:			delay = 30; break;
+#endif
+	default:					delay = 400; break;
+	}
+
+	if ( cl.snap.ps.powerups[PW_HASTE] ) {
+		delay /= 1.3;
+	}
+
+	return delay;
+}
+
+
+/*
+=================
+CL_AimAssistSingleShot
+
+The weapons where one pull is one shot, and the shot is worth placing exactly.
+=================
+*/
+static qboolean CL_AimAssistSingleShot( int weapon ) {
+	return weapon == WP_SHOTGUN || weapon == WP_GRENADE_LAUNCHER
+		|| weapon == WP_ROCKET_LAUNCHER || weapon == WP_RAILGUN || weapon == WP_BFG;
+}
+
+
+/*
+=================
+CL_AimAssistFiring
+
+Whether the command being built is the one the server will fire on. The
+weapon fires when its timer has run out while the trigger is held, and the
+timer is in the snapshot: what is left of it now is what it was, less the
+time of every command since. A shot predicted here restarts the timer locally
+until a snapshot that has seen that command takes over.
+
+Mirrors PM_Weapon: no shot while respawning, dead, changing weapon, or out of
+ammo. Call it once per command, it keeps the timer.
+=================
+*/
+static int	aimFireTime = -1;		// serverTime of the command we last predicted a shot on
+static int	aimFireDelay;
+
+static qboolean CL_AimAssistFiring( const usercmd_t *cmd, int weapon ) {
+	const playerState_t	*ps = &cl.snap.ps;
+	int					weaponTime, local;
+
+	if ( !( cmd->buttons & BUTTON_ATTACK ) || ( ps->pm_flags & PMF_RESPAWNED )
+		|| ps->stats[STAT_HEALTH] <= 0 || weapon != ps->weapon || ps->ammo[weapon] == 0
+		|| ( ps->weaponstate != WEAPON_READY && ps->weaponstate != WEAPON_FIRING ) ) {
+		return qfalse;
+	}
+
+	weaponTime = ps->weaponTime - ( cl.serverTime - ps->commandTime );
+
+	// a shot of ours the snapshot has not caught up with yet
+	if ( aimFireTime > ps->commandTime ) {
+		local = aimFireDelay - ( cl.serverTime - aimFireTime );
+		if ( local > weaponTime ) {
+			weaponTime = local;
+		}
+	}
+
+	if ( weaponTime > 0 ) {
+		return qfalse;
+	}
+
+	aimFireTime = cl.serverTime;
+	aimFireDelay = CL_AimAssistFireDelay( weapon );
+	return qtrue;
+}
+
+
+/*
+=================
 CL_AimAssistLogShot
 
-One line per trigger pull, so the test bench can tell which shots the
+One line per shot fired, so the test bench can tell which shots the
 prediction got right. What is left of the two deltas after the blend is how
-far the view still misses the predicted point. Unassisted pulls are written
+far the view still misses the predicted point. Unassisted shots are written
 too, against the bot nearest the crosshair, which gives the bench a rate to
 hold the assisted one against.
 =================
 */
 static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
-		const vec3_t targetOrigin, float lead, float error, qboolean assisted ) {
+		const vec3_t targetOrigin, float lead, float error, qboolean assisted, qboolean exact ) {
 	const char	*info;
 	vec3_t		direction, motion;
 
@@ -1014,7 +1333,8 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	// and "vel" what it was doing - the applied lead is the difference. "me"
 	// and "eye" let the impact lines be matched to the shooter.
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f assist %i"
-		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f speed %.0f me %i frame %i\n",
+		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f speed %.0f me %i"
+		" exact %i phase %i hold %.2f crouch %i frame %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
 		entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
@@ -1025,7 +1345,139 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
 		motion[0], motion[1], motion[2],
 		viewOrigin[0], viewOrigin[1], viewOrigin[2],
-		VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum, cl.serverTime );
+		VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum,
+		exact ? 1 : 0, exact ? 0 : (int)( CL_AimAssistPhase() * 1000.0f ),
+		cl_aimAssistLead->value, CL_AimAssistCrouched( entity ) ? 1 : 0,
+		cl.serverTime );
+}
+
+
+/*
+=================
+CL_AimAssistRemember / CL_AimAssistLearn
+
+Learns how long bots hold a direction, from what they actually do. Every
+assisted projectile shot is written down with where the target stood, which
+way it ran and how far the prediction expected it to get by the time the shot
+arrives; when the snapshot of that arrival frame comes in, the target's real
+distance along that line is compared with the expected one. Ran further: the
+hold time grows; fell short or came back: it shrinks. Each step is bounded,
+and a shot whose target mostly went sideways - a jump pad, a dodge - says
+little about holding a line and counts for less. The result lives in
+cl_aimAssistLead, in seconds, which is what the prediction reads.
+=================
+*/
+#define AIM_PENDING		16
+
+typedef struct {
+	int		target;			// client number of the bot aimed at
+	int		arrival;		// server time whose snapshot decides the shot, 0 when done
+	int		weapon;
+	vec3_t	origin;			// where the target stood at the shot
+	vec3_t	along;			// unit vector of its sideways motion then
+	float	straight;		// sideways distance a straight line gives it by arrival
+	float	rate;			// its sideways speed after the trust of the moment
+	float	lead;			// flight time, a whole number of frames
+} aimPending_t;
+
+static aimPending_t	aimPending[AIM_PENDING];
+static int			aimPendingNum;
+static int			aimLearned;		// shots learned from so far
+
+static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float lead ) {
+	aimPending_t	*p;
+	vec3_t			motion;
+	float			speed, frame;
+
+	if ( !cl_aimAssistLearn->integer || CL_AimAssistProjectileSpeed( weapon ) <= 0.0f || lead <= 0.0f ) {
+		return;
+	}
+
+	// the arrival is a game frame, whichever lead was steered with
+	frame = CL_AimAssistFrameTime();
+	lead = (int)( lead / frame + 0.5f ) * frame;
+	if ( lead <= 0.0f ) {
+		return;
+	}
+
+	CL_AimAssistVelocity( entity, motion );
+	motion[2] = 0.0f;
+	speed = VectorLength( motion );
+	if ( speed * lead < 40.0f ) {
+		return;		// too little motion to learn anything from
+	}
+
+	p = &aimPending[aimPendingNum++ & ( AIM_PENDING - 1 )];
+	p->target = entity->clientNum;
+	p->arrival = cl.snap.serverTime + (int)( lead * 1000.0f + 0.5f );
+	p->weapon = weapon;
+	VectorCopy( entity->pos.trBase, p->origin );
+	VectorScale( motion, 1.0f / speed, p->along );
+	p->straight = speed * lead;
+	p->rate = speed * CL_AimAssistTrust( entity, lead );
+	p->lead = lead;
+}
+
+static void CL_AimAssistLearn( void ) {
+	aimPending_t		*p;
+	const entityState_t	*entity, *found;
+	const char			*info;
+	vec3_t				moved;
+	float				actual, lateral, expected, error, weight, hold;
+	int					i, j;
+
+	for ( i = 0; i < AIM_PENDING; i++ ) {
+		p = &aimPending[i];
+		if ( !p->arrival || cl.snap.serverTime < p->arrival ) {
+			continue;
+		}
+		p->arrival = 0;
+
+		found = NULL;
+		for ( j = 0; j < cl.snap.numEntities; j++ ) {
+			entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + j ) & ( MAX_PARSE_ENTITIES - 1 )];
+			if ( entity->eType == ET_PLAYER && entity->clientNum == p->target
+				&& !( entity->eFlags & EF_DEAD ) ) {
+				found = entity;
+				break;
+			}
+		}
+		if ( !found || p->straight < 1.0f ) {
+			continue;
+		}
+
+		VectorSubtract( found->pos.trBase, p->origin, moved );
+		moved[2] = 0.0f;
+		if ( VectorLength( moved ) > 1500.0f ) {
+			continue;		// teleported, nothing to learn from
+		}
+
+		actual = DotProduct( moved, p->along );
+		lateral = sqrt( fabs( DotProduct( moved, moved ) - actual * actual ) );
+
+		// How far short of or beyond the expectation the target got, as a share
+		// of the straight run, moves the hold time by a bounded step; a target
+		// that mostly went sideways counts for less.
+		expected = p->rate * CL_AimAssistSideways( p->lead );
+		error = Com_Clamp( -1.0f, 1.0f, ( actual - expected ) / p->straight );
+		weight = p->straight / ( p->straight + lateral );
+		hold = CL_AimAssistHold() * exp( 0.2f * error * weight );
+		hold = Com_Clamp( 0.1f, 5.0f, hold );
+		aimHold = hold;
+		aimLearned++;
+
+		// the cvar follows now and then, not on every shot: see CL_AimAssistHold
+		if ( cl.snap.serverTime - aimHoldWritten > 5000 || aimHoldWritten > cl.snap.serverTime ) {
+			Cvar_SetValue( "cl_aimAssistLead", hold );
+			aimHoldModCount = cl_aimAssistLead->modificationCount;
+			aimHoldWritten = cl.snap.serverTime;
+		}
+
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
+		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f hold %.2f n %i frame %i\n",
+			CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
+			actual, p->straight, expected, lateral, hold, aimLearned, cl.snap.serverTime );
+	}
 }
 
 
@@ -1033,12 +1485,13 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 =================
 CL_AimAssistSnapshot
 
-Called once for every snapshot that arrives. Writes down where shots really
-ended up, which is the one thing the shot line cannot know: every impact
-event with its position and whoever it belongs to, every missile the moment
-it first appears (its entity number ties the launch to the explosion later),
-and with each impact where every bot stood at that moment - so a miss can be
-measured in units and in direction, not only counted.
+Called once for every snapshot that arrives. Feeds the lead learner, and with
+cl_aimAssistDebug writes down where shots really ended up, which is the one
+thing the shot line cannot know: every impact event with its position and
+whoever it belongs to, every missile the moment it first appears (its entity
+number ties the launch to the explosion later), and with each impact where
+every bot stood at that moment - so a miss can be measured in units and in
+direction, not only counted.
 =================
 */
 void CL_AimAssistSnapshot( void ) {
@@ -1052,10 +1505,20 @@ void CL_AimAssistSnapshot( void ) {
 	const entityState_t	*entity;
 	const char			*info;
 	char				bots[1024];
+	vec3_t				far;
 	int					i, j, event, kind, present;
 
-	if ( !cl_aimAssistDebug->integer || !cl.snap.valid || clc.demoplaying
-		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || cl.snap.messageNum == lastMessage ) {
+	if ( !cl.snap.valid || clc.demoplaying || clc.netchan.remoteAddress.type != NA_LOOPBACK
+		|| cl.snap.messageNum == lastMessage ) {
+		return;
+	}
+
+	if ( cl_aimAssistLearn->integer ) {
+		CL_AimAssistLearn();
+	}
+
+	if ( !cl_aimAssistDebug->integer ) {
+		lastMessage = cl.snap.messageNum;
 		return;
 	}
 
@@ -1121,13 +1584,16 @@ void CL_AimAssistSnapshot( void ) {
 		}
 		lastEvent[entity->number] = event + 1;
 
-		// The shotgun event sits at the muzzle and keeps the far end of its
-		// centre ray in origin2; every other impact is where it happened.
+		// The shotgun event sits at the muzzle and carries the direction of its
+		// centre ray in origin2, scaled to 4096 units; the pellets themselves
+		// are traced on the client and never reported. The far end of that ray
+		// is the one point that puts the shot on a line. Every other impact is
+		// where it happened.
 		if ( event == EV_SHOTGUN ) {
+			VectorAdd( entity->pos.trBase, entity->origin2, far );
 			Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
 				names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
-				entity->origin2[0], entity->origin2[1], entity->origin2[2],
-				cl.snap.serverTime, bots );
+				far[0], far[1], far[2], cl.snap.serverTime, bots );
 		} else {
 			Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
 				names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
@@ -1165,42 +1631,48 @@ CL_AimAssist
 Helps the hit-sound lab produce repeatable hits.  This deliberately does not
 use sv_cheats: the safety boundary is the loopback connection itself, and the
 only eligible targets are bots identified by the server's player configstring.
+
+Two points are computed for the target. The smooth one moves the way the
+picture moves and is what the view is steered towards between shots. The
+exact one is where the server will really test the shot, and on the command
+the shot fires on - which is predicted from the weapon timer - the view is put
+on it outright, when cl_aimAssistExact says so. That is how the follow can be
+smooth without the shot paying for it. cl_aimAssistSmooth adds a low pass on
+top for anyone who wants the follow softer still.
 =================
 */
+static float	aimSmooth[2];			// the filtered desired pitch and yaw
+static int		aimSmoothTarget = -1;	// who the filter was following
+
 static void CL_AimAssist( usercmd_t *cmd ) {
-	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
-	int				previousButtons;
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			pitchDelta, yawDelta, blend, lead, reach;
+	float			pitchDelta, yawDelta, blend, lead, reach, k;
 	int				i, key, localTeam, weapon;
-	qboolean		aimKeyHasAttack, otherAttackKey, pulled, steering;
+	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact;
 
-	// Remember what the trigger did on every frame, not only on the frames that
-	// get as far as steering: otherwise the next shot after a missing target
-	// looks like the button was already down and goes unlogged.
-	previousButtons = aimAssistButtons;
-	aimAssistButtons = cmd->buttons;
-	pulled = ( cmd->buttons & BUTTON_ATTACK ) && !( previousButtons & BUTTON_ATTACK );
-
-	if ( clc.state != CA_ACTIVE || clc.demoplaying ||
+	if ( clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
 		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
-		 cl.snap.ps.pm_type == PM_INTERMISSION ||
+		 cl.snap.ps.pm_type == PM_INTERMISSION || cl.snap.ps.pm_type == PM_DEAD ||
 		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ) {
+		aimAssistTarget = -1;
+		aimSmoothTarget = -1;
 		return;
 	}
 
 	localTeam = cl.snap.ps.persistant[PERS_TEAM];
 	if ( localTeam == TEAM_SPECTATOR ) {
+		aimAssistTarget = -1;
+		aimSmoothTarget = -1;
 		return;
 	}
+
+	CL_AimAssistPhaseUpdate();
 
 	key = Key_StringToKeynum( cl_aimAssistKey->string );
 	steering = cl_aimAssist->integer && key >= 0 && Key_IsDown( key );
 
-	// The eye, moved smoothly the way the picture moves so the aim does not
-	// jerk while the player runs.
 	CL_AimAssistEye( viewOrigin );
 	weapon = cl.cgameUserCmdValue;
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
@@ -1209,12 +1681,12 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	reach = CL_AimAssistReach( weapon );
 
 	if ( !steering ) {
-		// no help this frame, but a pull is still worth a line for the record
-		if ( pulled && cl_aimAssistDebug->integer ) {
+		// no help this frame, but a shot is still worth a line for the record
+		firing = CL_AimAssistFiring( cmd, weapon );
+		if ( firing && cl_aimAssistDebug->integer ) {
 			entity = CL_AimAssistPickTarget( viewOrigin, localTeam, 0.0f, qfalse, qfalse );
 			if ( entity ) {
-				lead = 0.0f;
-				CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
+				CL_AimAssistTargetPoint( entity, viewOrigin, weapon, qtrue, targetOrigin, &lead );
 				VectorSubtract( targetOrigin, viewOrigin, direction );
 				vectoangles( direction, desired );
 				desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
@@ -1222,10 +1694,11 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 				pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 				yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 				CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
-					sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ), qfalse );
+					sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ), qfalse, qtrue );
 			}
 		}
 		aimAssistTarget = -1;
+		aimSmoothTarget = -1;
 		return;
 	}
 
@@ -1243,19 +1716,22 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	}
 	if ( aimKeyHasAttack && !otherAttackKey ) {
 		cmd->buttons &= ~BUTTON_ATTACK;
-		pulled = qfalse;
 	}
 
 	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, reach,
 		cl_aimAssistPrefer->integer != 0, qtrue );
 	if ( !entity ) {
 		aimAssistTarget = -1;
+		aimSmoothTarget = -1;
 		return;
 	}
 	aimAssistTarget = entity->clientNum;
 
-	lead = 0.0f;
-	CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
+	firing = CL_AimAssistFiring( cmd, weapon );
+	exact = firing && ( cl_aimAssistExact->integer == 2
+		|| ( cl_aimAssistExact->integer == 1 && CL_AimAssistSingleShot( weapon ) ) );
+
+	CL_AimAssistTargetPoint( entity, viewOrigin, weapon, exact, targetOrigin, &lead );
 
 	// The shot has to be able to get there. A led point can end up behind a
 	// corner or below an edge, and steering a rocket into the floor in front
@@ -1266,27 +1742,45 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		0, MASK_SHOT, qfalse );
 	if ( trace.fraction < 1.0f ) {
 		VectorCopy( entity->pos.trBase, targetOrigin );
-		targetOrigin[2] += 8.0f;
+		targetOrigin[2] += CL_AimAssistBodyHeight( entity );
 		lead = 0.0f;
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SHOT, qfalse );
 		if ( trace.fraction < 1.0f ) {
+			aimSmoothTarget = -1;
 			return;
 		}
 	}
 
 	VectorSubtract( targetOrigin, viewOrigin, direction );
 	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f && VectorLength( direction ) < 160.0f ) {
+		aimSmoothTarget = -1;
 		return;			// inside our own splash, the player aims this one alone
 	}
 	vectoangles( direction, desired );
 	desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 	desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
 
-	// Level 10 snaps directly onto the closest crosshair target.  Lower
-	// levels retain the same target choice but ease towards it.
-	// The one hurting us is snapped onto at once, that is the point of it
-	blend = ( cl_aimAssist->integer == 10
+	// The optional low pass on the point followed. It starts afresh on a new
+	// target, so the view does not swing over from where the last one was,
+	// and it is skipped on the firing command, which takes the exact point.
+	if ( cl_aimAssistSmooth->value > 0.0f && !exact && aimSmoothTarget == entity->clientNum ) {
+		k = frame_msec / ( cl_aimAssistSmooth->value + frame_msec );
+		aimSmooth[0] += AngleNormalize180( desired[PITCH] - aimSmooth[0] ) * k;
+		aimSmooth[1] += AngleNormalize180( desired[YAW] - aimSmooth[1] ) * k;
+		desired[PITCH] = aimSmooth[0];
+		desired[YAW] = aimSmooth[1];
+	} else {
+		aimSmooth[0] = desired[PITCH];
+		aimSmooth[1] = desired[YAW];
+	}
+	aimSmoothTarget = entity->clientNum;
+
+	// Level 10 snaps directly onto the target.  Lower levels retain the same
+	// target choice but ease towards it. The one hurting us is snapped onto
+	// at once, that is the point of it; and so is the exact point on the
+	// command the shot goes out on.
+	blend = ( exact || cl_aimAssist->integer == 10
 		|| ( cl_aimAssistAttacker->integer
 			&& entity->clientNum == cl.snap.ps.persistant[PERS_ATTACKER] ) )
 		? 1.0f : cl_aimAssist->value * frame_msec / 200.0f;
@@ -1296,9 +1790,12 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	cl.viewangles[PITCH] += pitchDelta * blend;
 	cl.viewangles[YAW] += yawDelta * blend;
 
-	if ( pulled && cl_aimAssistDebug->integer ) {
-		CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
-			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ), qtrue );
+	if ( firing ) {
+		CL_AimAssistRemember( entity, weapon, lead );
+		if ( cl_aimAssistDebug->integer ) {
+			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
+				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ), qtrue, exact );
+		}
 	}
 }
 

@@ -57,6 +57,11 @@ public class MainForm : Form, IMessageFilter {
 		Text = "MOUSE4", Width = 110, ReadOnly = true,
 		BackColor = SystemColors.Window, Cursor = Cursors.Hand,
 	};
+	readonly NumericUpDown aimSmooth = new() { Minimum = 0, Maximum = 300, Increment = 10, Value = 0, Width = 60 };
+	readonly NumericUpDown aimLead = new() { DecimalPlaces = 1, Increment = 0.1m, Minimum = 0.1m, Maximum = 5.0m, Value = 1.5m, Width = 70 };
+	readonly CheckBox aimExact = new() { Text = "exakt im Schussmoment", Checked = true, AutoSize = true };
+	readonly CheckBox aimLearn = new() { Text = "Vorhalt automatisch optimieren", Checked = true, AutoSize = true };
+	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
 	readonly Label statHits = Number();
 	readonly Label statFrames = Number();
@@ -84,6 +89,7 @@ public class MainForm : Form, IMessageFilter {
 	string aimKeyBeforeCapture = "MOUSE4";
 	bool capturingAimKey;
 	string shotStamp = "";
+	Process? game;					// das von hier gestartete Spiel, solange es laeuft
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
@@ -100,19 +106,12 @@ public class MainForm : Form, IMessageFilter {
 		hitSound.SelectedIndexChanged += ( _, _ ) => hitSoundFile.Enabled = hitSound.SelectedIndex == 2;
 		hitSoundFile.Enabled = false;
 		aimKey.Click += ( _, _ ) => BeginAimKeyCapture();
-		aimAssist.CheckedChanged += ( _, _ ) => {
-			aimStrength.Enabled = aimAssist.Checked;
-			aimKey.Enabled = aimAssist.Checked;
-			aimAttacker.Enabled = aimAssist.Checked;
-			aimPrefer.Enabled = aimAssist.Checked;
-		};
+		aimAssist.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
+		aimLearn.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		itemOutline.CheckedChanged += ( _, _ ) => itemOutlineAll.Enabled = itemOutline.Checked;
 		// die Folge-Felder auf den Standard-Hakenstand bringen
 		itemOutlineAll.Enabled = itemOutline.Checked;
-		aimAttacker.Enabled = aimAssist.Checked;
-		aimPrefer.Enabled = aimAssist.Checked;
-		aimStrength.Enabled = aimAssist.Checked;
-		aimKey.Enabled = aimAssist.Checked;
+		UpdateAimEnabled();
 
 		// das eigene Icon der App, auch in der Titelleiste und der Taskleiste
 		try {
@@ -147,6 +146,20 @@ public class MainForm : Form, IMessageFilter {
 	protected override void OnFormClosed( FormClosedEventArgs e ) {
 		Application.RemoveMessageFilter( this );
 		base.OnFormClosed( e );
+	}
+
+	// Ohne Zielhilfe ist der Rest der Gruppe grau; der Vorhalt-Regler gehoert
+	// dem Spiel, solange es ihn selbst optimiert
+	void UpdateAimEnabled() {
+		bool on = aimAssist.Checked;
+		aimStrength.Enabled = on;
+		aimKey.Enabled = on;
+		aimAttacker.Enabled = on;
+		aimPrefer.Enabled = on;
+		aimSmooth.Enabled = on;
+		aimExact.Enabled = on;
+		aimLearn.Enabled = on;
+		aimLead.Enabled = on && !aimLearn.Checked;
 	}
 
 	void BeginAimKeyCapture() {
@@ -302,7 +315,8 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
-			Row( Pad( aimAttacker ), Pad( aimPrefer ) ),
+			Row( Pad( aimAttacker ), Pad( aimPrefer ), Pad( aimExact ) ),
+			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ), Pad( aimLearn ), Pad( aimLearned ) ),
 			Row( Pad( botOutline ) ),
 			Row( Pad( itemOutline ), Pad( itemOutlineAll ) ),
 			Row( new Label {
@@ -431,6 +445,10 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimStrength=" + (int)aimStrength.Value );
 		s.AppendLine( "aimKey=" + aimKey.Text );
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
+		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
+		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
+		s.AppendLine( "aimExact=" + aimExact.Checked );
+		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimPrefer=" + aimPrefer.Checked );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
@@ -476,6 +494,10 @@ public class MainForm : Form, IMessageFilter {
 		SetNum( aimStrength, v, "aimStrength" );
 		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
 		SetBool( aimAttacker, v, "aimAttacker" );
+		SetNum( aimSmooth, v, "aimSmooth" );
+		SetNum( aimLead, v, "aimLead" );
+		SetBool( aimExact, v, "aimExact" );
+		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimPrefer, v, "aimPrefer" );
 		SetBool( botOutline, v, "botOutline" );
 		SetBool( itemOutline, v, "itemOutline" );
@@ -513,6 +535,10 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
+		cfg.AppendLine( $"seta cl_aimAssistSmooth {(int)aimSmooth.Value}" );
+		cfg.AppendLine( $"seta cl_aimAssistLead {Dec( aimLead.Value )}" );
+		cfg.AppendLine( $"seta cl_aimAssistExact {( aimExact.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( "set logfile 2" );
 		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf lokale Bot-Partien. Der
@@ -548,8 +574,9 @@ public class MainForm : Form, IMessageFilter {
 			} catch ( UnauthorizedAccessException ) {
 			}
 			shotStamp = "";
+			aimLearned.Text = "";
 
-			Process.Start( new ProcessStartInfo {
+			game = Process.Start( new ProcessStartInfo {
 				FileName = exe,
 				Arguments = $"+exec {CfgName}",
 				WorkingDirectory = gameDir.Text,
@@ -583,6 +610,7 @@ public class MainForm : Form, IMessageFilter {
 		var shots = new List<Shot>();
 		var impacts = new List<Impact>();
 		var missiles = new List<Missile>();
+		var learned = "";
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
@@ -618,10 +646,13 @@ public class MainForm : Form, IMessageFilter {
 			} else if ( trimmed.StartsWith( "aim missile: " ) ) {
 				var missile = Missile.Parse( trimmed );
 				if ( missile is not null ) missiles.Add( missile );
+			} else if ( trimmed.StartsWith( "aim learn: " ) ) {
+				learned = trimmed;
 			}
 		}
 
 		UpdateShots( shots, damageFrames, impacts, missiles );
+		ShowLearned( learned );
 
 		int missed = Math.Max( 0, frames.Count - sounds );
 		statHits.Text = hits.ToString();
@@ -714,6 +745,38 @@ public class MainForm : Form, IMessageFilter {
 	sealed class Damage {
 		public int Frame;
 		public string Victim = "";
+	}
+
+	// Die letzte Zeile "aim learn:" - der Vorhalt, den das Spiel gerade gelernt
+	// hat. Solange das Spiel ihn selbst optimiert, folgt der Regler dem Spiel,
+	// und beim naechsten Start geht der gelernte Wert wieder mit hinein.
+	void ShowLearned( string line ) {
+		if ( line.Length == 0 ) return;
+
+		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+		decimal hold = 0;
+		int count = 0;
+		for ( int i = 0; i < f.Length - 1; i++ ) {
+			if ( f[i] == "hold" ) {
+				decimal.TryParse( f[i + 1], System.Globalization.NumberStyles.Any,
+					System.Globalization.CultureInfo.InvariantCulture, out hold );
+			} else if ( f[i] == "n" ) {
+				int.TryParse( f[i + 1], out count );
+			}
+		}
+		if ( hold <= 0 ) return;
+
+		// Nur das Spiel, das von hier laeuft, darf den Regler bewegen: ein altes
+		// Protokoll wuerde sonst beim Start den gespeicherten Wert ueberschreiben
+		bool running;
+		try { running = game is { HasExited: false }; } catch ( InvalidOperationException ) { running = false; }
+		if ( !running ) return;
+
+		aimLearned.Text = $"gelernt: {hold.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture )} s aus {count} Schüssen";
+		var rounded = Math.Round( hold, 1 );
+		if ( aimLearn.Checked && rounded >= aimLead.Minimum && rounded <= aimLead.Maximum && aimLead.Value != rounded ) {
+			aimLead.Value = rounded;
+		}
 	}
 
 	// Eine Zeile "aim shot:" aus dem Protokoll
