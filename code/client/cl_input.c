@@ -929,13 +929,6 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		VectorSubtract( targetOrigin, viewOrigin, direction );
 		distance = VectorLength( direction );
 
-		// A weapon that cannot reach the target has no business steering
-		// towards it: a rocket at fourteen hundred units hits nothing, and
-		// pulling the aim there only costs the shot at whoever is close.
-		if ( reach > 0.0f && distance > reach ) {
-			continue;
-		}
-
 		vectoangles( direction, desired );
 		desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 		desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
@@ -1104,10 +1097,19 @@ void CL_AimAssistSnapshot( void ) {
 		}
 		lastEvent[entity->number] = event + 1;
 
-		Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
-			names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
-			entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
-			cl.snap.serverTime, bots );
+		// The shotgun event sits at the muzzle and keeps the far end of its
+		// centre ray in origin2; every other impact is where it happened.
+		if ( event == EV_SHOTGUN ) {
+			Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
+				names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
+				entity->origin2[0], entity->origin2[1], entity->origin2[2],
+				cl.snap.serverTime, bots );
+		} else {
+			Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
+				names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
+				entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
+				cl.snap.serverTime, bots );
+		}
 	}
 
 	// forget the events of entities that are gone, so a number reused later

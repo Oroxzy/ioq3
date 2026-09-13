@@ -9,6 +9,7 @@
     <AssemblyName>HitsoundLab</AssemblyName>
     <RootNamespace>HitsoundLab</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

@@ -682,26 +682,35 @@ public class MainForm : Form, IMessageFilter {
 			&& ( x.Kind == "rail" ? x.Client == shot.Me : ( !x.Kind.StartsWith( "missile" ) && x.Other == shot.Me ) ) );
 	}
 
-	// Fehlweite und Richtung, aus Sicht des Schuetzen: kurz/lang entlang der
-	// Schusslinie, links/rechts quer dazu, hoch/tief in der Hoehe
+	// Fehlweite und Richtung: wie weit das Ziel neben der Schusslinie (Auge bis
+	// Einschlag) lag, gemessen auf Hoehe des Ziels. Ein Fehlschuss fliegt
+	// vorbei und schlaegt irgendwo dahinter ein - der Einschlag selbst sagt
+	// nichts, der Abstand der Linie zum Ziel dagegen alles. "kurz" heisst, der
+	// Schuss ist vor dem Ziel im Boden oder einer Wand geblieben.
 	static string DescribeMiss( Shot shot, Impact impact, out double units ) {
 		units = 0;
 		if ( !impact.Bots.TryGetValue( shot.Target, out var bot ) ) return "";
 
-		double dx = impact.At[0] - bot[0], dy = impact.At[1] - bot[1], dz = impact.At[2] - bot[2];
-		units = Math.Sqrt( dx * dx + dy * dy + dz * dz );
-
-		double fx = shot.Plain[0] - shot.Eye[0], fy = shot.Plain[1] - shot.Eye[1];
-		double len = Math.Sqrt( fx * fx + fy * fy );
+		double ux = impact.At[0] - shot.Eye[0], uy = impact.At[1] - shot.Eye[1], uz = impact.At[2] - shot.Eye[2];
+		double len = Math.Sqrt( ux * ux + uy * uy + uz * uz );
 		if ( len < 1 ) return "";
-		fx /= len; fy /= len;
+		ux /= len; uy /= len; uz /= len;
 
-		double along = dx * fx + dy * fy;			// vor oder hinter dem Ziel
-		double side = dx * fy - dy * fx;			// rechts positiv
+		// Koerpermitte des Ziels, und ihr naechster Punkt auf der Linie
+		double tx = bot[0] - shot.Eye[0], ty = bot[1] - shot.Eye[1], tz = bot[2] + 8 - shot.Eye[2];
+		double along = tx * ux + ty * uy + tz * uz;
+		double ox = tx - ux * along, oy = ty - uy * along, oz = tz - uz * along;
+		units = Math.Sqrt( ox * ox + oy * oy + oz * oz );
+
+		// rechts von der Schusslinie aus gesehen
+		double rx = uy, ry = -ux, rl = Math.Sqrt( rx * rx + ry * ry );
+		if ( rl < 0.001 ) { rx = 1; ry = 0; } else { rx /= rl; ry /= rl; }
+		double side = ox * rx + oy * ry;			// Ziel rechts der Linie: Schuss ging links
+
 		var parts = new List<string>();
-		if ( Math.Abs( along ) > 16 ) parts.Add( along < 0 ? "kurz" : "lang" );
-		if ( Math.Abs( side ) > 16 ) parts.Add( side > 0 ? "rechts" : "links" );
-		if ( Math.Abs( dz ) > 16 ) parts.Add( dz > 0 ? "hoch" : "tief" );
+		if ( len < along - 30 ) parts.Add( "kurz" );
+		if ( Math.Abs( side ) > 16 ) parts.Add( side > 0 ? "links" : "rechts" );
+		if ( Math.Abs( oz ) > 16 ) parts.Add( oz > 0 ? "tief" : "hoch" );
 		return parts.Count > 0 ? string.Join( "+", parts ) : "dran";
 	}
 
