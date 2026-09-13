@@ -69,6 +69,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label statShotMiss = Number();
 	readonly Label statShotRate = Number();
 	readonly Label statShotError = Number();
+	readonly Label statShotRateOff = Number();
 	readonly ListView shotView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ),
@@ -119,6 +120,7 @@ public class MainForm : Form, IMessageFilter {
 		shotView.Columns.Add( "Fehler", 70, HorizontalAlignment.Right );
 		shotView.Columns.Add( "Zielpunkt", 150 );
 		shotView.Columns.Add( "Ergebnis", 80 );
+		shotView.Columns.Add( "Hilfe", 60 );
 
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
@@ -346,7 +348,7 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Zielhilfe",
 			Row( Counter( "Schüsse:", statShots ), Counter( "getroffen:", statShotHits ),
 				Counter( "daneben:", statShotMiss ), Counter( "Quote:", statShotRate ),
-				Counter( "Fehler ø:", statShotError ) ),
+				Counter( "ohne Hilfe:", statShotRateOff ), Counter( "Fehler ø:", statShotError ) ),
 			shotView ) );
 		return tabs;
 	}
@@ -540,6 +542,7 @@ public class MainForm : Form, IMessageFilter {
 	sealed class Shot {
 		public int Frame, Lead, Distance;
 		public bool InAir;
+		public bool Assisted = true;	// aeltere Protokolle kennen das Feld nicht
 		public double Error;
 		public string Weapon = "", Target = "", Position = "";
 
@@ -555,6 +558,7 @@ public class MainForm : Form, IMessageFilter {
 					case "target": shot.Target = f[i + 1]; break;
 					case "dist": int.TryParse( f[i + 1], out shot.Distance ); break;
 					case "air": shot.InAir = f[i + 1] == "1"; break;
+				case "assist": shot.Assisted = f[i + 1] == "1"; break;
 					case "lead": int.TryParse( f[i + 1], out shot.Lead ); break;
 					case "error":
 						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Error );
@@ -574,7 +578,7 @@ public class MainForm : Form, IMessageFilter {
 	// dasselbe Ziel ging und dessen Flugzeit passt. Sonst schreibt ein Treffer
 	// jedem Schuss gut, dessen Fenster ihn zufaellig enthaelt.
 	void UpdateShots( List<Shot> shots, List<Damage> damageFrames ) {
-		int hit = 0;
+		int hit = 0, assisted = 0, assistedHit = 0, unassisted = 0, unassistedHit = 0;
 		double errorSum = 0;
 		var rows = new List<ListViewItem>();
 		var claimed = new bool[damageFrames.Count];
@@ -596,6 +600,10 @@ public class MainForm : Form, IMessageFilter {
 			if ( landed ) hit++;
 			errorSum += shot.Error;
 
+			// die Quote mit Hilfe sagt erst etwas, wenn die ohne daneben steht
+			if ( shot.Assisted ) { assisted++; if ( landed ) assistedHit++; }
+			else { unassisted++; if ( landed ) unassistedHit++; }
+
 			rows.Add( new ListViewItem( new[] {
 				shot.Frame.ToString(),
 				shot.Weapon,
@@ -606,13 +614,15 @@ public class MainForm : Form, IMessageFilter {
 				shot.Error.ToString( "0.00" ) + "°",
 				shot.Position,
 				landed ? "Treffer" : "daneben",
+				shot.Assisted ? "ja" : "nein",
 			} ) { ForeColor = landed ? Color.ForestGreen : Color.Firebrick } );
 		}
 
 		statShots.Text = shots.Count.ToString();
 		statShotHits.Text = hit.ToString();
 		statShotMiss.Text = ( shots.Count - hit ).ToString();
-		statShotRate.Text = shots.Count > 0 ? ( 100 * hit / shots.Count ) + "%" : "–";
+		statShotRate.Text = assisted > 0 ? ( 100 * assistedHit / assisted ) + "%" : "–";
+		statShotRateOff.Text = unassisted > 0 ? ( 100 * unassistedHit / unassisted ) + "%" : "–";
 		statShotError.Text = shots.Count > 0 ? ( errorSum / shots.Count ).ToString( "0.00" ) + "°" : "–";
 		statShotMiss.ForeColor = shots.Count > hit ? Color.Firebrick : Color.ForestGreen;
 

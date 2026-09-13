@@ -642,6 +642,51 @@ keeps the guess out of the floor and out of walls the target cannot pass.
 */
 /*
 =================
+CL_AimAssistVelocity
+
+What the target is really doing. A player standing on a lift or a platform
+reports no velocity of its own while the mover carries it along, so when the
+reported velocity is nothing and the position still moved between the last
+two snapshots, the movement seen is the one to trust.
+=================
+*/
+static void CL_AimAssistVelocity( const entityState_t *entity, vec3_t velocity ) {
+	const clSnapshot_t	*previous;
+	const entityState_t	*old;
+	vec3_t				seen;
+	float				interval, speed;
+	int					i;
+
+	VectorCopy( entity->pos.trDelta, velocity );
+
+	previous = &cl.snapshots[( cl.snap.messageNum - 1 ) & PACKET_MASK];
+	if ( !previous->valid || previous->serverTime >= cl.snap.serverTime ) {
+		return;
+	}
+	interval = ( cl.snap.serverTime - previous->serverTime ) * 0.001f;
+
+	for ( i = 0; i < previous->numEntities; i++ ) {
+		old = &cl.parseEntities[( previous->parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( old->number != entity->number ) {
+			continue;
+		}
+
+		VectorSubtract( entity->pos.trBase, old->pos.trBase, seen );
+		VectorScale( seen, 1.0f / interval, seen );
+		speed = VectorLength( seen );
+
+		// carried along: nothing reported, yet it moved - and not by the
+		// thousands of units a teleporter would show
+		if ( VectorLength( velocity ) < 10.0f && speed > 30.0f && speed < 1500.0f ) {
+			VectorCopy( seen, velocity );
+		}
+		return;
+	}
+}
+
+
+/*
+=================
 CL_AimAssistTrust
 
 How much of the sideways lead is worth using. A straight line is a good guess
@@ -710,14 +755,15 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 	static vec3_t	stepMins = { -15, -15, -24 + STEPSIZE };
 	static vec3_t	groundMins = { -15, -15, -24 };
 	static vec3_t	maxs = { 15, 15, 32 };
-	vec3_t			end, velocity, above, below;
+	vec3_t			end, velocity, motion, above, below;
 	float			gravity, trust, floor;
 	trace_t			trace;
 
 	// Only the sideways guess is damped. Falling is physics and stays whole.
+	CL_AimAssistVelocity( entity, motion );
 	trust = CL_AimAssistTrust( entity, time );
-	VectorScale( entity->pos.trDelta, trust, velocity );
-	velocity[2] = entity->pos.trDelta[2];
+	VectorScale( motion, trust, velocity );
+	velocity[2] = motion[2];
 	VectorMA( entity->pos.trBase, time, velocity, end );
 
 	// Gravity acts on anything off the floor, and trDelta[2] carries the rest:
@@ -788,16 +834,29 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 	travelTime = 0.0f;
 	for ( i = 0; i < 5; i++ ) {
 		CL_AimAssistPredict( entity, lag + travelTime, targetOrigin );
-		targetOrigin[2] += 8.0f;	// inside the box standing and crouched alike
+
+		// A splash weapon at a target on the floor goes for the feet: a near
+		// miss still bursts on the ground under it, where a miss past the body
+		// would fly on. In the air only the body itself can be hit.
+		if ( ( weapon == WP_ROCKET_LAUNCHER || weapon == WP_GRENADE_LAUNCHER || weapon == WP_BFG )
+			&& entity->groundEntityNum != ENTITYNUM_NONE ) {
+			targetOrigin[2] -= 20.0f;
+		} else {
+			targetOrigin[2] += 8.0f;	// inside the box standing and crouched alike
+		}
 
 		// Grenades and proximity mines follow TR_GRAVITY.  Raise the aim point
-		// by their drop during the calculated flight time.
+		// by their drop during the calculated flight time - less the lift the
+		// game gives them for free, a fifth of the forward vector tipped up
+		// (g_weapon.c), which lifts the arc by that share of the range.
 		if ( weapon == WP_GRENADE_LAUNCHER
 #ifdef MISSIONPACK
 			 || weapon == WP_PROX_LAUNCHER
 #endif
 		) {
-			targetOrigin[2] += 0.5f * DEFAULT_GRAVITY * travelTime * travelTime;
+			VectorSubtract( targetOrigin, viewOrigin, offset );
+			targetOrigin[2] += 0.5f * DEFAULT_GRAVITY * travelTime * travelTime
+				- 0.2f * sqrt( offset[0] * offset[0] + offset[1] * offset[1] );
 		}
 
 		if ( leadOut ) {
@@ -827,73 +886,28 @@ use sv_cheats: the safety boundary is the loopback connection itself, and the
 only eligible targets are bots identified by the server's player configstring.
 =================
 */
-static void CL_AimAssist( usercmd_t *cmd ) {
-	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
-	static int		aimAssistTarget = -1;	// who we steered at last frame
-	int			previousButtons;
+static int	aimAssistTarget = -1;		// who the assist steered at last frame
+
+/*
+=================
+CL_AimAssistPickTarget
+
+The bot to steer at: visible, an enemy, within the weapon's reach, and by
+preference the one nearest the crosshair - or, for a short weapon with
+cl_aimAssistPrefer, the nearest one outright. The target we already had
+keeps a head start so the aim does not hop between two bots running side by
+side, and whoever is hurting us comes first when cl_aimAssistAttacker says so.
+With sticky off it is a plain pick, used for the record of unassisted shots.
+=================
+*/
+static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam,
+		float reach, qboolean prefer, qboolean sticky ) {
+	entityState_t	*entity, *best = NULL;
 	const char		*info;
-	entityState_t	*entity;
 	trace_t			trace;
-	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			bestScore, score, pitchDelta, yawDelta, blend, lead, distance, reach;
-	int			bestEntity, i, key, localTeam, targetTeam, weapon;
-	qboolean		aimKeyHasAttack, otherAttackKey;
-
-	// Remember what the trigger did on every frame, not only on the frames that
-	// get as far as steering: otherwise the next shot after a missing target
-	// looks like the button was already down and goes unlogged.
-	previousButtons = aimAssistButtons;
-	aimAssistButtons = cmd->buttons;
-
-	if ( !cl_aimAssist->integer || clc.state != CA_ACTIVE || clc.demoplaying ||
-		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
-		 cl.snap.ps.pm_type == PM_INTERMISSION ||
-		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ) {
-		return;
-	}
-
-	key = Key_StringToKeynum( cl_aimAssistKey->string );
-	if ( key < 0 || !Key_IsDown( key ) ) {
-		return;
-	}
-
-	// The hold key may already be bound to +attack in q3config.cfg.  Do not
-	// let that binding turn aim activation into automatic fire; preserve an
-	// attack only when a separate fire key is held as well.
-	aimKeyHasAttack = qfalse;
-	otherAttackKey = qfalse;
-	for ( i = 0; i < 2; i++ ) {
-		if ( in_buttons[0].down[i] == key ) {
-			aimKeyHasAttack = qtrue;
-		} else if ( in_buttons[0].down[i] ) {
-			otherAttackKey = qtrue;
-		}
-	}
-	if ( aimKeyHasAttack && !otherAttackKey ) {
-		cmd->buttons &= ~BUTTON_ATTACK;
-	}
-
-	localTeam = cl.snap.ps.persistant[PERS_TEAM];
-	if ( localTeam == TEAM_SPECTATOR ) {
-		return;
-	}
-
-	// The shooter has moved on since this snapshot too, so carry the eye
-	// forward as well; a strafing player would otherwise aim from beside
-	// the muzzle the server ends up firing from.
-	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, viewOrigin );
-	viewOrigin[2] += cl.snap.ps.viewheight;
-	weapon = cl.cgameUserCmdValue;
-	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
-		weapon = cl.snap.ps.weapon;
-	}
-	reach = CL_AimAssistReach( weapon );
-
-	bestEntity = -1;
-	// Consider every visible bot.  The angular score below still ensures that
-	// the one nearest to the crosshair wins, even when none starts inside a
-	// narrow acquisition cone.
-	bestScore = 999999.0f;
+	vec3_t			targetOrigin, direction, desired;
+	float			bestScore = 999999.0f, score, pitchDelta, yawDelta, distance;
+	int				i, targetTeam;
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
 		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
@@ -937,7 +951,7 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 
-		if ( reach > 0.0f && cl_aimAssistPrefer->integer ) {
+		if ( reach > 0.0f && prefer ) {
 			// short weapon: the closest target first, the crosshair only
 			// decides between two at the same range
 			score = distance + sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
@@ -945,33 +959,156 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 			score = pitchDelta * pitchDelta + yawDelta * yawDelta;
 		}
 
-		// Stay with the target we already have unless another is clearly
-		// better, or the aim hops between two bots running side by side.
-		if ( entity->clientNum == aimAssistTarget ) {
-			score *= 0.6f;
-		}
+		if ( sticky ) {
+			if ( entity->clientNum == aimAssistTarget ) {
+				score *= 0.6f;
+			}
 
-		// Whoever is hurting us comes first, however far from the crosshair it
-		// is. The server names it in the player state, so this needs nothing
-		// the client would not already know.
-		if ( cl_aimAssistAttacker->integer
-			&& entity->clientNum == cl.snap.ps.persistant[PERS_ATTACKER] ) {
-			score = -1.0f;
+			// The server names whoever hurt us last in the player state, so
+			// this needs nothing the client would not already know.
+			if ( cl_aimAssistAttacker->integer
+				&& entity->clientNum == cl.snap.ps.persistant[PERS_ATTACKER] ) {
+				score = -1.0f;
+			}
 		}
 
 		if ( score < bestScore ) {
 			bestScore = score;
-			bestEntity = i;
+			best = entity;
 		}
 	}
 
-	if ( bestEntity < 0 ) {
+	return best;
+}
+
+
+/*
+=================
+CL_AimAssistLogShot
+
+One line per trigger pull, so the test bench can tell which shots the
+prediction got right. What is left of the two deltas after the blend is how
+far the view still misses the predicted point. Unassisted pulls are written
+too, against the bot nearest the crosshair, which gives the bench a rate to
+hold the assisted one against.
+=================
+*/
+static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
+		const vec3_t targetOrigin, float lead, float error, qboolean assisted ) {
+	const char	*info;
+	vec3_t		direction;
+
+	info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+	VectorSubtract( targetOrigin, viewOrigin, direction );
+	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f assist %i at %.0f %.0f %.0f frame %i\n",
+		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
+		VectorLength( direction ),
+		entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
+		(int)( lead * 1000.0f ),
+		CL_AimAssistTrust( entity, lead ),
+		error, assisted ? 1 : 0,
+		targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
+}
+
+
+/*
+=================
+CL_AimAssist
+
+Helps the hit-sound lab produce repeatable hits.  This deliberately does not
+use sv_cheats: the safety boundary is the loopback connection itself, and the
+only eligible targets are bots identified by the server's player configstring.
+=================
+*/
+static void CL_AimAssist( usercmd_t *cmd ) {
+	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
+	int				previousButtons;
+	entityState_t	*entity;
+	trace_t			trace;
+	vec3_t			viewOrigin, targetOrigin, direction, desired;
+	float			pitchDelta, yawDelta, blend, lead, reach;
+	int				i, key, localTeam, weapon;
+	qboolean		aimKeyHasAttack, otherAttackKey, pulled, steering;
+
+	// Remember what the trigger did on every frame, not only on the frames that
+	// get as far as steering: otherwise the next shot after a missing target
+	// looks like the button was already down and goes unlogged.
+	previousButtons = aimAssistButtons;
+	aimAssistButtons = cmd->buttons;
+	pulled = ( cmd->buttons & BUTTON_ATTACK ) && !( previousButtons & BUTTON_ATTACK );
+
+	if ( clc.state != CA_ACTIVE || clc.demoplaying ||
+		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
+		 cl.snap.ps.pm_type == PM_INTERMISSION ||
+		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ) {
+		return;
+	}
+
+	localTeam = cl.snap.ps.persistant[PERS_TEAM];
+	if ( localTeam == TEAM_SPECTATOR ) {
+		return;
+	}
+
+	key = Key_StringToKeynum( cl_aimAssistKey->string );
+	steering = cl_aimAssist->integer && key >= 0 && Key_IsDown( key );
+
+	// The shooter has moved on since this snapshot too, so carry the eye
+	// forward as well; a strafing player would otherwise aim from beside
+	// the muzzle the server ends up firing from.
+	VectorMA( cl.snap.ps.origin, CL_AimAssistLag(), cl.snap.ps.velocity, viewOrigin );
+	viewOrigin[2] += cl.snap.ps.viewheight;
+	weapon = cl.cgameUserCmdValue;
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		weapon = cl.snap.ps.weapon;
+	}
+	reach = CL_AimAssistReach( weapon );
+
+	if ( !steering ) {
+		// no help this frame, but a pull is still worth a line for the record
+		if ( pulled && cl_aimAssistDebug->integer ) {
+			entity = CL_AimAssistPickTarget( viewOrigin, localTeam, 0.0f, qfalse, qfalse );
+			if ( entity ) {
+				lead = 0.0f;
+				CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
+				VectorSubtract( targetOrigin, viewOrigin, direction );
+				vectoangles( direction, desired );
+				desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
+				desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
+				pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
+				yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
+				CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
+					sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ), qfalse );
+			}
+		}
 		aimAssistTarget = -1;
 		return;
 	}
 
-	entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + bestEntity ) & ( MAX_PARSE_ENTITIES - 1 )];
+	// The hold key may already be bound to +attack in q3config.cfg.  Do not
+	// let that binding turn aim activation into automatic fire; preserve an
+	// attack only when a separate fire key is held as well.
+	aimKeyHasAttack = qfalse;
+	otherAttackKey = qfalse;
+	for ( i = 0; i < 2; i++ ) {
+		if ( in_buttons[0].down[i] == key ) {
+			aimKeyHasAttack = qtrue;
+		} else if ( in_buttons[0].down[i] ) {
+			otherAttackKey = qtrue;
+		}
+	}
+	if ( aimKeyHasAttack && !otherAttackKey ) {
+		cmd->buttons &= ~BUTTON_ATTACK;
+		pulled = qfalse;
+	}
+
+	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, reach,
+		cl_aimAssistPrefer->integer != 0, qtrue );
+	if ( !entity ) {
+		aimAssistTarget = -1;
+		return;
+	}
 	aimAssistTarget = entity->clientNum;
+
 	lead = 0.0f;
 	CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
 
@@ -1014,21 +1151,9 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	cl.viewangles[PITCH] += pitchDelta * blend;
 	cl.viewangles[YAW] += yawDelta * blend;
 
-	// One line per trigger pull, so the test bench can tell which shots the
-	// prediction got right. What is left of the two deltas after the blend is
-	// how far the view still misses the predicted point.
-	if ( cl_aimAssistDebug->integer && ( cmd->buttons & BUTTON_ATTACK )
-		&& !( previousButtons & BUTTON_ATTACK ) ) {
-		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
-		VectorSubtract( targetOrigin, viewOrigin, direction );
-		Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f at %.0f %.0f %.0f frame %i\n",
-			CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
-			VectorLength( direction ),
-			entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
-			(int)( lead * 1000.0f ),
-			CL_AimAssistTrust( entity, lead ),
-			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ),
-			targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
+	if ( pulled && cl_aimAssistDebug->integer ) {
+		CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
+			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ), qtrue );
 	}
 }
 
