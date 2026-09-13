@@ -6,8 +6,15 @@ namespace HitsoundLab;
 // Bedienoberflaeche fuer die Trefferton-Tests: schreibt eine Config, startet das
 // Spiel damit und liest waehrenddessen dessen Konsolenprotokoll mit. Kein Zugriff
 // auf den laufenden Prozess.
-public class MainForm : Form {
+public class MainForm : Form, IMessageFilter {
 	const string CfgName = "hitsoundlab.cfg";
+	const int WmKeyDown = 0x0100;
+	const int WmSysKeyDown = 0x0104;
+	const int WmLeftButtonDown = 0x0201;
+	const int WmRightButtonDown = 0x0204;
+	const int WmMiddleButtonDown = 0x0207;
+	const int WmMouseWheel = 0x020A;
+	const int WmXButtonDown = 0x020B;
 
 	static readonly string[] Maps = {
 		"q3dm1", "q3dm2", "q3dm3", "q3dm4", "q3dm5", "q3dm6", "q3dm7", "q3dm8",
@@ -39,8 +46,12 @@ public class MainForm : Form {
 	readonly NumericUpDown pitchKill = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0.5m, Maximum = 2.0m, Value = 0.70m, Width = 70 };
 	readonly NumericUpDown pitchStack = new() { Minimum = 1, Maximum = 999, Value = 200, Width = 70 };
 
-	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots (nur mit Server-Cheats)", AutoSize = true };
-	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 5, Width = 60 };
+	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", AutoSize = true };
+	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
+	readonly TextBox aimKey = new() {
+		Text = "MOUSE4", Width = 110, ReadOnly = true,
+		BackColor = SystemColors.Window, Cursor = Cursors.Hand,
+	};
 
 	readonly Label statHits = Number();
 	readonly Label statFrames = Number();
@@ -48,11 +59,23 @@ public class MainForm : Form {
 	readonly Label statMissed = Number();
 	readonly TextBox logView = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font( "Consolas", 9 ), Dock = DockStyle.Fill };
 
+	readonly Label statShots = Number();
+	readonly Label statShotHits = Number();
+	readonly Label statShotMiss = Number();
+	readonly Label statShotRate = Number();
+	readonly Label statShotError = Number();
+	readonly ListView shotView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+		GridLines = true, Font = new Font( "Consolas", 9 ),
+	};
+
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
 	readonly Label status = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly System.Windows.Forms.Timer poll = new() { Interval = 500 };
 	string logPath = "";
+	string aimKeyBeforeCapture = "MOUSE4";
+	bool capturingAimKey;
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
@@ -68,13 +91,130 @@ public class MainForm : Form {
 
 		hitSound.SelectedIndexChanged += ( _, _ ) => hitSoundFile.Enabled = hitSound.SelectedIndex == 2;
 		hitSoundFile.Enabled = false;
+		aimKey.Click += ( _, _ ) => BeginAimKeyCapture();
+		aimAssist.CheckedChanged += ( _, _ ) => {
+			aimStrength.Enabled = aimAssist.Checked;
+			aimKey.Enabled = aimAssist.Checked;
+		};
+		aimStrength.Enabled = false;
+		aimKey.Enabled = false;
+		shotView.Columns.Add( "Frame", 70 );
+		shotView.Columns.Add( "Waffe", 90 );
+		shotView.Columns.Add( "Ziel", 90 );
+		shotView.Columns.Add( "Entfernung", 80, HorizontalAlignment.Right );
+		shotView.Columns.Add( "in der Luft", 80 );
+		shotView.Columns.Add( "Vorhalt", 70, HorizontalAlignment.Right );
+		shotView.Columns.Add( "Fehler", 70, HorizontalAlignment.Right );
+		shotView.Columns.Add( "Zielpunkt", 150 );
+		shotView.Columns.Add( "Ergebnis", 80 );
+
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
 		start.Click += ( _, _ ) => StartGame();
 		poll.Tick += ( _, _ ) => RefreshStats();
 
 		Controls.Add( BuildLayout() );
+		Application.AddMessageFilter( this );
 		poll.Start();
+	}
+
+	protected override void OnFormClosed( FormClosedEventArgs e ) {
+		Application.RemoveMessageFilter( this );
+		base.OnFormClosed( e );
+	}
+
+	void BeginAimKeyCapture() {
+		if ( capturingAimKey ) return;
+		aimKeyBeforeCapture = aimKey.Text;
+		aimKey.Text = "Taste drücken …";
+		aimKey.SelectAll();
+		capturingAimKey = true;
+	}
+
+	void FinishAimKeyCapture( string key ) {
+		aimKey.Text = key;
+		aimKey.SelectionLength = 0;
+		capturingAimKey = false;
+	}
+
+	public bool PreFilterMessage( ref Message m ) {
+		if ( !capturingAimKey ) return false;
+
+		string? key = m.Msg switch {
+			WmLeftButtonDown => "MOUSE1",
+			WmRightButtonDown => "MOUSE2",
+			WmMiddleButtonDown => "MOUSE3",
+			WmMouseWheel => (short)( m.WParam.ToInt64() >> 16 ) > 0 ? "MWHEELUP" : "MWHEELDOWN",
+			WmXButtonDown => ( ( m.WParam.ToInt64() >> 16 ) & 0xffff ) == 1 ? "MOUSE4" : "MOUSE5",
+			WmKeyDown or WmSysKeyDown => QuakeKeyName( (Keys)(int)m.WParam ),
+			_ => null,
+		};
+
+		if ( m.Msg is WmKeyDown or WmSysKeyDown && (Keys)(int)m.WParam == Keys.Escape ) {
+			FinishAimKeyCapture( aimKeyBeforeCapture );
+			return true;
+		}
+		if ( key is null ) return false;
+
+		FinishAimKeyCapture( key );
+		return true;
+	}
+
+	static string? QuakeKeyName( Keys key ) {
+		key &= Keys.KeyCode;
+		if ( key >= Keys.A && key <= Keys.Z ) return ( (char)( 'a' + key - Keys.A ) ).ToString();
+		if ( key >= Keys.D0 && key <= Keys.D9 ) return ( (char)( '0' + key - Keys.D0 ) ).ToString();
+		if ( key >= Keys.F1 && key <= Keys.F15 ) return $"F{key - Keys.F1 + 1}";
+
+		return key switch {
+			Keys.Back => "BACKSPACE",
+			Keys.Tab => "TAB",
+			Keys.Enter => "ENTER",
+			Keys.Space => "SPACE",
+			Keys.Up => "UPARROW",
+			Keys.Down => "DOWNARROW",
+			Keys.Left => "LEFTARROW",
+			Keys.Right => "RIGHTARROW",
+			Keys.Menu => "ALT",
+			Keys.ControlKey => "CTRL",
+			Keys.ShiftKey => "SHIFT",
+			Keys.CapsLock => "CAPSLOCK",
+			Keys.Insert => "INS",
+			Keys.Delete => "DEL",
+			Keys.PageDown => "PGDN",
+			Keys.PageUp => "PGUP",
+			Keys.Home => "HOME",
+			Keys.End => "END",
+			Keys.Pause => "PAUSE",
+			Keys.NumPad0 => "KP_INS",
+			Keys.NumPad1 => "KP_END",
+			Keys.NumPad2 => "KP_DOWNARROW",
+			Keys.NumPad3 => "KP_PGDN",
+			Keys.NumPad4 => "KP_LEFTARROW",
+			Keys.NumPad5 => "KP_5",
+			Keys.NumPad6 => "KP_RIGHTARROW",
+			Keys.NumPad7 => "KP_HOME",
+			Keys.NumPad8 => "KP_UPARROW",
+			Keys.NumPad9 => "KP_PGUP",
+			Keys.Decimal => "KP_DEL",
+			Keys.Divide => "KP_SLASH",
+			Keys.Subtract => "KP_MINUS",
+			Keys.Add => "KP_PLUS",
+			Keys.Multiply => "KP_STAR",
+			Keys.NumLock => "KP_NUMLOCK",
+			Keys.OemSemicolon => "SEMICOLON",
+			Keys.Oemplus => "=",
+			Keys.Oemcomma => ",",
+			Keys.OemMinus => "-",
+			Keys.OemPeriod => ".",
+			Keys.OemQuestion => "/",
+			Keys.Oemtilde => "`",
+			Keys.OemOpenBrackets => "[",
+			Keys.OemPipe => "\\",
+			Keys.OemCloseBrackets => "]",
+			Keys.OemQuotes => "'",
+			_ => null,
+		};
 	}
 
 	Control BuildLayout() {
@@ -118,9 +258,9 @@ public class MainForm : Form {
 
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
-			Row( Pad( aimAssist ), Labelled( "Stärke:", aimStrength ) ),
+			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
 			Row( new Label {
-				Text = "greift nur auf Gegner, die der Server als Bot meldet, und nur wenn der Server Cheats erlaubt",
+				Text = "Hold-Key zielt nur; geschossen wird separat mit der Feuertaste (10 = sofort)",
 				AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 0, 2, 0, 0 ),
 			} ) );
 	}
@@ -165,20 +305,31 @@ public class MainForm : Form {
 		return flow;
 	}
 
-	GroupBox BuildStatsBox() {
-		var box = new GroupBox { Text = "Mitschrift", Dock = DockStyle.Fill, Padding = new Padding( 10 ) };
+	Control BuildStatsBox() {
+		var tabs = new TabControl { Dock = DockStyle.Fill };
+		tabs.TabPages.Add( Page( "Trefferton",
+			Row( Counter( "Schaden:", statHits ), Counter( "Treffer:", statFrames ),
+				Counter( "Sounds:", statSounds ), Counter( "ohne Ton:", statMissed ) ),
+			logView ) );
+		tabs.TabPages.Add( Page( "Zielhilfe",
+			Row( Counter( "Schüsse:", statShots ), Counter( "getroffen:", statShotHits ),
+				Counter( "daneben:", statShotMiss ), Counter( "Quote:", statShotRate ),
+				Counter( "Fehler ø:", statShotError ) ),
+			shotView ) );
+		return tabs;
+	}
+
+	// Karteikarte: eine Zeile Zaehler oben, darunter die Liste
+	static TabPage Page( string title, Control counters, Control body ) {
+		var page = new TabPage( title ) { Padding = new Padding( 10 ), BackColor = SystemColors.Control };
 		var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
 		grid.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
 		grid.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
 		grid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
-
-		// eine Zeile statt Spalten: bleibt auch in einem schmalen Fenster lesbar
-		grid.Controls.Add( Row(
-			Counter( "Schaden:", statHits ), Counter( "Treffer:", statFrames ),
-			Counter( "Sounds:", statSounds ), Counter( "ohne Ton:", statMissed ) ), 0, 0 );
-		grid.Controls.Add( logView, 0, 1 );
-		box.Controls.Add( grid );
-		return box;
+		grid.Controls.Add( counters, 0, 0 );
+		grid.Controls.Add( body, 0, 1 );
+		page.Controls.Add( grid );
+		return page;
 	}
 
 	static Control Labelled( string text, Control inner ) {
@@ -196,9 +347,9 @@ public class MainForm : Form {
 	// Suchreihenfolge: der installierte Build, dann der uebliche Spielordner
 	static string FindGameDir() {
 		string[] candidates = {
-			Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), "ioQuake3" ),
 			Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ),
 				"GitHub", "ioq3", "build", "release-mingw64-x86_64" ),
+			Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), "ioQuake3" ),
 		};
 
 		foreach ( var dir in candidates ) {
@@ -224,11 +375,13 @@ public class MainForm : Form {
 		cfg.AppendLine( "seta cl_hitSoundDebug 1" );
 		cfg.AppendLine( "seta g_hitSoundDebug 1" );
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( "set logfile 2" );
 		cfg.AppendLine( "set bot_nochat 1" );
-		// devmap statt map: nur so erlaubt der eigene Server Cheats, und nur dann
-		// laesst die Engine die Zielhilfe ueberhaupt zu
-		cfg.AppendLine( $"devmap {map.Text}" );
+		// Die Engine begrenzt die Zielhilfe selbst auf lokale Bot-Partien. Der
+		// Trefferton-Test braucht deshalb keine allgemeinen Server-Cheats.
+		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
 
 		for ( int i = 0; i < (int)bots.Value; i++ ) {
@@ -284,6 +437,8 @@ public class MainForm : Form {
 		int hits = 0, sounds = 0;
 		var frames = new HashSet<string>();
 		var recent = new List<string>();
+		var damageFrames = new List<int>();
+		var shots = new List<Shot>();
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
@@ -294,6 +449,9 @@ public class MainForm : Form {
 				// deshalb zaehlen die Frames und nicht die einzelnen Schadensereignisse
 				var mark = trimmed.LastIndexOf( " frame ", StringComparison.Ordinal );
 				frames.Add( mark >= 0 ? trimmed[( mark + 7 )..] : "#" + hits );
+				if ( mark >= 0 && int.TryParse( trimmed[( mark + 7 )..], out int damageFrame ) ) {
+					damageFrames.Add( damageFrame );
+				}
 				recent.Add( trimmed );
 			} else if ( trimmed.StartsWith( "hit sound: " ) ) {
 				var rest = trimmed[11..];
@@ -301,8 +459,13 @@ public class MainForm : Form {
 					sounds++;
 					recent.Add( trimmed );
 				}
+			} else if ( trimmed.StartsWith( "aim shot: " ) ) {
+				var shot = Shot.Parse( trimmed );
+				if ( shot is not null ) shots.Add( shot );
 			}
 		}
+
+		UpdateShots( shots, damageFrames );
 
 		int missed = Math.Max( 0, frames.Count - sounds );
 		statHits.Text = hits.ToString();
@@ -317,5 +480,81 @@ public class MainForm : Form {
 			logView.SelectionStart = logView.TextLength;
 			logView.ScrollToCaret();
 		}
+	}
+
+	// Eine Zeile "aim shot:" aus dem Protokoll
+	sealed class Shot {
+		public int Frame, Lead, Distance;
+		public bool InAir;
+		public double Error;
+		public string Weapon = "", Target = "", Position = "";
+
+		public static Shot? Parse( string line ) {
+			// aim shot: rocket target Sarge dist 612 air 1 lead 680 error 0.42 at 10 20 30 frame 16900
+			var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			var shot = new Shot();
+			var ok = false;
+
+			for ( int i = 0; i < f.Length - 1; i++ ) {
+				switch ( f[i] ) {
+					case "shot:": shot.Weapon = f[i + 1]; break;
+					case "target": shot.Target = f[i + 1]; break;
+					case "dist": int.TryParse( f[i + 1], out shot.Distance ); break;
+					case "air": shot.InAir = f[i + 1] == "1"; break;
+					case "lead": int.TryParse( f[i + 1], out shot.Lead ); break;
+					case "error":
+						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Error );
+						break;
+					case "at":
+						if ( i + 3 < f.Length ) shot.Position = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
+						break;
+					case "frame": ok = int.TryParse( f[i + 1], out shot.Frame ); break;
+				}
+			}
+
+			return ok ? shot : null;
+		}
+	}
+
+	// Ein Schuss gilt als getroffen, wenn im Fenster seiner Flugzeit Schaden
+	// gemeldet wurde. Bei Dauerfeuer kann das den Nachbarschuss mitzaehlen.
+	void UpdateShots( List<Shot> shots, List<int> damageFrames ) {
+		int hit = 0;
+		double errorSum = 0;
+		var rows = new List<ListViewItem>();
+
+		foreach ( var shot in shots ) {
+			int until = shot.Frame + shot.Lead + 300;
+			bool landed = damageFrames.Any( f => f >= shot.Frame && f <= until );
+			if ( landed ) hit++;
+			errorSum += shot.Error;
+
+			rows.Add( new ListViewItem( new[] {
+				shot.Frame.ToString(),
+				shot.Weapon,
+				shot.Target,
+				shot.Distance.ToString(),
+				shot.InAir ? "ja" : "nein",
+				shot.Lead + " ms",
+				shot.Error.ToString( "0.00" ) + "°",
+				shot.Position,
+				landed ? "Treffer" : "daneben",
+			} ) { ForeColor = landed ? Color.ForestGreen : Color.Firebrick } );
+		}
+
+		statShots.Text = shots.Count.ToString();
+		statShotHits.Text = hit.ToString();
+		statShotMiss.Text = ( shots.Count - hit ).ToString();
+		statShotRate.Text = shots.Count > 0 ? ( 100 * hit / shots.Count ) + "%" : "–";
+		statShotError.Text = shots.Count > 0 ? ( errorSum / shots.Count ).ToString( "0.00" ) + "°" : "–";
+		statShotMiss.ForeColor = shots.Count > hit ? Color.Firebrick : Color.ForestGreen;
+
+		if ( shotView.Items.Count == rows.Count ) return;		// nichts Neues
+
+		shotView.BeginUpdate();
+		shotView.Items.Clear();
+		shotView.Items.AddRange( rows.TakeLast( 300 ).ToArray() );
+		if ( shotView.Items.Count > 0 ) shotView.EnsureVisible( shotView.Items.Count - 1 );
+		shotView.EndUpdate();
 	}
 }

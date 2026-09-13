@@ -518,6 +518,288 @@ void CL_MouseMove(usercmd_t *cmd)
 
 
 /*
+=================
+CL_AimAssistProjectileSpeed
+
+Keep these values in sync with the missile launch speeds in g_missile.c.
+Zero means that the current weapon is hitscan and needs no lead.
+=================
+*/
+static float CL_AimAssistProjectileSpeed( int weapon ) {
+	switch ( weapon ) {
+	case WP_GRENADE_LAUNCHER:
+		return 700.0f;
+	case WP_ROCKET_LAUNCHER:
+		return 900.0f;
+	case WP_PLASMAGUN:
+	case WP_BFG:
+		return 2000.0f;
+	case WP_GRAPPLING_HOOK:
+		return 800.0f;
+#ifdef MISSIONPACK
+	case WP_NAILGUN:
+		return 1455.0f;	// random 555..2355, use its mean speed
+	case WP_PROX_LAUNCHER:
+		return 700.0f;
+#endif
+	default:
+		return 0.0f;
+	}
+}
+
+
+/*
+=================
+CL_AimAssistWeaponName
+
+Short names for the shot log, in the order of weapon_t.
+=================
+*/
+static const char *CL_AimAssistWeaponName( int weapon ) {
+	static const char *names[WP_NUM_WEAPONS] = {
+		"none", "gauntlet", "machinegun", "shotgun", "grenade", "rocket",
+		"lightning", "railgun", "plasma", "bfg", "hook",
+#ifdef MISSIONPACK
+		"nailgun", "prox", "chaingun",
+#endif
+	};
+
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || !names[weapon] ) {
+		return "unknown";
+	}
+
+	return names[weapon];
+}
+
+
+/*
+=================
+CL_AimAssistPredict
+
+Where the target stands after the given time.  A player in the air is pulled
+down by the same gravity the game uses, so carrying its upward speed on in a
+straight line would aim high above a bot that merely jumped.  The box trace
+keeps the guess out of the floor and out of walls the target cannot pass.
+=================
+*/
+static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
+	static vec3_t	mins = { -15, -15, -24 };
+	static vec3_t	maxs = { 15, 15, 32 };
+	vec3_t			end;
+	trace_t			trace;
+
+	VectorMA( entity->pos.trBase, time, entity->pos.trDelta, end );
+
+	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
+		end[2] -= 0.5f * DEFAULT_GRAVITY * time * time;
+	} else {
+		end[2] = entity->pos.trBase[2];		// on its feet, it keeps its floor
+	}
+
+	CM_BoxTrace( &trace, entity->pos.trBase, end, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+	VectorCopy( trace.endpos, predicted );
+}
+
+
+/*
+=================
+CL_AimAssistTargetPoint
+
+Predicts where the target will be when the shot reaches it.  Even a hitscan
+weapon has to lead a little: the snapshot the position comes from is already
+a frame old, and the command being built still has to travel to the server.
+A projectile adds its own flight time on top, which is solved by repeating
+the distance over speed until it settles.
+=================
+*/
+static void CL_AimAssistTargetPoint( const entityState_t *entity,
+		const vec3_t viewOrigin, vec3_t targetOrigin, float *leadOut ) {
+	vec3_t	offset;
+	float	projectileSpeed, travelTime, lag;
+	int		i, weapon;
+
+	lag = ( cl.serverTime - cl.snap.serverTime + cl.snap.ping / 2 ) * 0.001f;
+	lag = Com_Clamp( 0.0f, 0.3f, lag );
+
+	weapon = cl.cgameUserCmdValue;
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		weapon = cl.snap.ps.weapon;
+	}
+	projectileSpeed = CL_AimAssistProjectileSpeed( weapon );
+
+	travelTime = 0.0f;
+	for ( i = 0; i < 5; i++ ) {
+		CL_AimAssistPredict( entity, lag + travelTime, targetOrigin );
+		targetOrigin[2] += 20.0f;	// centre mass: reliable hits for the sound test
+
+		// Grenades and proximity mines follow TR_GRAVITY.  Raise the aim point
+		// by their drop during the calculated flight time.
+		if ( weapon == WP_GRENADE_LAUNCHER
+#ifdef MISSIONPACK
+			 || weapon == WP_PROX_LAUNCHER
+#endif
+		) {
+			targetOrigin[2] += 0.5f * DEFAULT_GRAVITY * travelTime * travelTime;
+		}
+
+		if ( leadOut ) {
+			*leadOut = lag + travelTime;
+		}
+
+		if ( projectileSpeed <= 0.0f ) {
+			return;			// hitscan, the lag above is the whole lead
+		}
+
+		VectorSubtract( targetOrigin, viewOrigin, offset );
+		travelTime = Com_Clamp( 0.0f, 1.5f, VectorLength( offset ) / projectileSpeed );
+	}
+}
+
+
+/*
+=================
+CL_AimAssist
+
+Helps the hit-sound lab produce repeatable hits.  This deliberately does not
+use sv_cheats: the safety boundary is the loopback connection itself, and the
+only eligible targets are bots identified by the server's player configstring.
+=================
+*/
+static void CL_AimAssist( usercmd_t *cmd ) {
+	static int		aimAssistButtons;	// buttons of the previous command, to spot a trigger pull
+	const char		*info;
+	entityState_t	*entity;
+	trace_t			trace;
+	vec3_t			viewOrigin, targetOrigin, direction, desired;
+	float			bestScore, score, pitchDelta, yawDelta, blend, lead;
+	int			bestEntity, i, key, localTeam, targetTeam, weapon;
+	qboolean		aimKeyHasAttack, otherAttackKey;
+
+	if ( !cl_aimAssist->integer || clc.state != CA_ACTIVE || clc.demoplaying ||
+		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
+		 cl.snap.ps.pm_type == PM_INTERMISSION ||
+		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ) {
+		return;
+	}
+
+	key = Key_StringToKeynum( cl_aimAssistKey->string );
+	if ( key < 0 || !Key_IsDown( key ) ) {
+		return;
+	}
+
+	// The hold key may already be bound to +attack in q3config.cfg.  Do not
+	// let that binding turn aim activation into automatic fire; preserve an
+	// attack only when a separate fire key is held as well.
+	aimKeyHasAttack = qfalse;
+	otherAttackKey = qfalse;
+	for ( i = 0; i < 2; i++ ) {
+		if ( in_buttons[0].down[i] == key ) {
+			aimKeyHasAttack = qtrue;
+		} else if ( in_buttons[0].down[i] ) {
+			otherAttackKey = qtrue;
+		}
+	}
+	if ( aimKeyHasAttack && !otherAttackKey ) {
+		cmd->buttons &= ~BUTTON_ATTACK;
+	}
+
+	localTeam = cl.snap.ps.persistant[PERS_TEAM];
+	if ( localTeam == TEAM_SPECTATOR ) {
+		return;
+	}
+
+	VectorCopy( cl.snap.ps.origin, viewOrigin );
+	viewOrigin[2] += cl.snap.ps.viewheight;
+	bestEntity = -1;
+	// Consider every visible bot.  The angular score below still ensures that
+	// the one nearest to the crosshair wins, even when none starts inside a
+	// narrow acquisition cone.
+	bestScore = 999999.0f;
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->eType != ET_PLAYER || entity->clientNum == cl.snap.ps.clientNum ||
+			 entity->clientNum < 0 || entity->clientNum >= MAX_CLIENTS ||
+			 ( entity->eFlags & EF_DEAD ) ) {
+			continue;
+		}
+
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+		if ( !*Info_ValueForKey( info, "skill" ) ) {
+			continue;	// human player
+		}
+
+		targetTeam = atoi( Info_ValueForKey( info, "t" ) );
+		if ( localTeam != TEAM_FREE && targetTeam == localTeam ) {
+			continue;
+		}
+
+		VectorCopy( entity->pos.trBase, targetOrigin );
+		targetOrigin[2] += 20.0f;	// score the bot's current crosshair position
+		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
+			0, MASK_SOLID, qfalse );
+		if ( trace.fraction < 1.0f ) {
+			continue;
+		}
+
+		VectorSubtract( targetOrigin, viewOrigin, direction );
+		vectoangles( direction, desired );
+		desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
+		desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
+		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
+		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
+		score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+		if ( score < bestScore ) {
+			bestScore = score;
+			bestEntity = i;
+		}
+	}
+
+	if ( bestEntity < 0 ) {
+		return;
+	}
+
+	entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + bestEntity ) & ( MAX_PARSE_ENTITIES - 1 )];
+	lead = 0.0f;
+	CL_AimAssistTargetPoint( entity, viewOrigin, targetOrigin, &lead );
+	weapon = cl.cgameUserCmdValue;
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		weapon = cl.snap.ps.weapon;
+	}
+	VectorSubtract( targetOrigin, viewOrigin, direction );
+	vectoangles( direction, desired );
+	desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
+	desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
+
+	// Level 10 snaps directly onto the closest crosshair target.  Lower
+	// levels retain the same target choice but ease towards it.
+	blend = cl_aimAssist->integer == 10 ? 1.0f : cl_aimAssist->value * frame_msec / 200.0f;
+	blend = Com_Clamp( 0.0f, 1.0f, blend );
+	pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
+	yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
+	cl.viewangles[PITCH] += pitchDelta * blend;
+	cl.viewangles[YAW] += yawDelta * blend;
+
+	// One line per trigger pull, so the test bench can tell which shots the
+	// prediction got right. What is left of the two deltas after the blend is
+	// how far the view still misses the predicted point.
+	if ( cl_aimAssistDebug->integer && ( cmd->buttons & BUTTON_ATTACK )
+		&& !( aimAssistButtons & BUTTON_ATTACK ) ) {
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+		VectorSubtract( targetOrigin, viewOrigin, direction );
+		Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i error %.2f at %.0f %.0f %.0f frame %i\n",
+			CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
+			VectorLength( direction ),
+			entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
+			(int)( lead * 1000.0f ),
+			sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ) * ( 1.0f - blend ),
+			targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
+	}
+	aimAssistButtons = cmd->buttons;
+}
+
+
+/*
 ==============
 CL_CmdButtons
 ==============
@@ -596,6 +878,9 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+	// local bot-only helper used by the hit-sound test bench
+	CL_AimAssist( &cmd );
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {

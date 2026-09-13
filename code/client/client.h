@@ -421,6 +421,10 @@ extern	cvar_t	*cl_inGameVideo;
 extern	cvar_t	*cl_lanForcePackets;
 extern	cvar_t	*cl_autoRecordDemo;
 
+extern	cvar_t	*cl_aimAssist;
+extern	cvar_t	*cl_aimAssistKey;
+extern	cvar_t	*cl_aimAssistDebug;
+
 extern	cvar_t	*cl_hitPitch;
 extern	cvar_t	*cl_hitPitchFull;
 extern	cvar_t	*cl_hitPitchEmpty;
