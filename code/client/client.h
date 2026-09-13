@@ -425,6 +425,8 @@ extern	cvar_t	*cl_aimAssist;
 extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
 extern	cvar_t	*cl_aimAssistPrefer;
+
+void CL_AimAssistSnapshot( void );	// cl_input.c, records impacts for the test bench
 extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;
 extern	cvar_t	*cl_itemOutline;

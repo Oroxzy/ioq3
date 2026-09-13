@@ -121,6 +121,8 @@ public class MainForm : Form, IMessageFilter {
 		shotView.Columns.Add( "Zielpunkt", 150 );
 		shotView.Columns.Add( "Ergebnis", 80 );
 		shotView.Columns.Add( "Hilfe", 60 );
+		shotView.Columns.Add( "Fehlweite", 70, HorizontalAlignment.Right );
+		shotView.Columns.Add( "Richtung", 110 );
 
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
@@ -483,6 +485,8 @@ public class MainForm : Form, IMessageFilter {
 		var recent = new List<string>();
 		var damageFrames = new List<Damage>();
 		var shots = new List<Shot>();
+		var impacts = new List<Impact>();
+		var missiles = new List<Missile>();
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
@@ -512,10 +516,16 @@ public class MainForm : Form, IMessageFilter {
 			} else if ( trimmed.StartsWith( "aim shot: " ) ) {
 				var shot = Shot.Parse( trimmed );
 				if ( shot is not null ) shots.Add( shot );
+			} else if ( trimmed.StartsWith( "aim impact: " ) ) {
+				var impact = Impact.Parse( trimmed );
+				if ( impact is not null ) impacts.Add( impact );
+			} else if ( trimmed.StartsWith( "aim missile: " ) ) {
+				var missile = Missile.Parse( trimmed );
+				if ( missile is not null ) missiles.Add( missile );
 			}
 		}
 
-		UpdateShots( shots, damageFrames );
+		UpdateShots( shots, damageFrames, impacts, missiles );
 
 		int missed = Math.Max( 0, frames.Count - sounds );
 		statHits.Text = hits.ToString();
@@ -532,6 +542,78 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
+	static void ReadPoint( string[] f, int at, double[] point ) {
+		for ( int k = 0; k < 3 && at + k < f.Length; k++ ) {
+			double.TryParse( f[at + k], System.Globalization.CultureInfo.InvariantCulture, out point[k] );
+		}
+	}
+
+	// Ein Einschlag, wie ihn der Client im Snapshot sieht, samt der Bots in
+	// dem Moment - daraus wird die Fehlweite
+	sealed class Impact {
+		public string Kind = "";
+		public int Num, Other, Client, Frame;
+		public double[] At = new double[3];
+		public Dictionary<string, double[]> Bots = new();
+
+		public static Impact? Parse( string line ) {
+			// aim impact: rail num 12 other 3 client 0 at 1 2 3 frame 555 | Sarge 10 20 30 air 0 | ...
+			var parts = line.Split( " | " );
+			var f = parts[0].Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			var impact = new Impact();
+			var ok = false;
+
+			for ( int i = 0; i < f.Length - 1; i++ ) {
+				switch ( f[i] ) {
+					case "impact:": impact.Kind = f[i + 1]; break;
+					case "num": int.TryParse( f[i + 1], out impact.Num ); break;
+					case "other": int.TryParse( f[i + 1], out impact.Other ); break;
+					case "client": int.TryParse( f[i + 1], out impact.Client ); break;
+					case "at": ReadPoint( f, i + 1, impact.At ); break;
+					case "frame": ok = int.TryParse( f[i + 1], out impact.Frame ); break;
+				}
+			}
+
+			for ( int p = 1; p < parts.Length; p++ ) {
+				var b = parts[p].Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+				if ( b.Length < 4 ) continue;
+				var pos = new double[3];
+				ReadPoint( b, 1, pos );
+				impact.Bots[b[0]] = pos;
+			}
+
+			return ok ? impact : null;
+		}
+	}
+
+	// Eine Rakete beim ersten Auftauchen: die Nummer verbindet sie mit ihrem Einschlag
+	sealed class Missile {
+		public int Num, Frame;
+		public double[] At = new double[3];
+
+		public static Missile? Parse( string line ) {
+			var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			var missile = new Missile();
+			var ok = false;
+
+			for ( int i = 0; i < f.Length - 1; i++ ) {
+				switch ( f[i] ) {
+					case "num": int.TryParse( f[i + 1], out missile.Num ); break;
+					case "at": ReadPoint( f, i + 1, missile.At ); break;
+					case "frame": ok = int.TryParse( f[i + 1], out missile.Frame ); break;
+				}
+			}
+
+			return ok ? missile : null;
+		}
+	}
+
+	static double Distance( double[] a, double[] b ) =>
+		Math.Sqrt( ( a[0] - b[0] ) * ( a[0] - b[0] ) + ( a[1] - b[1] ) * ( a[1] - b[1] ) + ( a[2] - b[2] ) * ( a[2] - b[2] ) );
+
+	static bool IsProjectile( string weapon ) =>
+		weapon is "rocket" or "grenade" or "plasma" or "bfg" or "hook" or "nailgun" or "prox";
+
 	// Eine Schadensmeldung des Servers
 	sealed class Damage {
 		public int Frame;
@@ -541,9 +623,11 @@ public class MainForm : Form, IMessageFilter {
 	// Eine Zeile "aim shot:" aus dem Protokoll
 	sealed class Shot {
 		public int Frame, Lead, Distance;
+		public int Me = -1;				// eigene Client-Nummer, um Einschlaege zuzuordnen
 		public bool InAir;
 		public bool Assisted = true;	// aeltere Protokolle kennen das Feld nicht
 		public double Error;
+		public double[] Eye = new double[3], Plain = new double[3];
 		public string Weapon = "", Target = "", Position = "";
 
 		public static Shot? Parse( string line ) {
@@ -559,6 +643,9 @@ public class MainForm : Form, IMessageFilter {
 					case "dist": int.TryParse( f[i + 1], out shot.Distance ); break;
 					case "air": shot.InAir = f[i + 1] == "1"; break;
 				case "assist": shot.Assisted = f[i + 1] == "1"; break;
+				case "me": int.TryParse( f[i + 1], out shot.Me ); break;
+				case "eye": ReadPoint( f, i + 1, shot.Eye ); break;
+				case "plain": ReadPoint( f, i + 1, shot.Plain ); break;
 					case "lead": int.TryParse( f[i + 1], out shot.Lead ); break;
 					case "error":
 						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Error );
@@ -577,7 +664,48 @@ public class MainForm : Form, IMessageFilter {
 	// Ein gemeldeter Schaden gehoert genau einem Schuss: dem ersten, der auf
 	// dasselbe Ziel ging und dessen Flugzeit passt. Sonst schreibt ein Treffer
 	// jedem Schuss gut, dessen Fenster ihn zufaellig enthaelt.
-	void UpdateShots( List<Shot> shots, List<Damage> damageFrames ) {
+	// Wo der eigene Schuss wirklich eingeschlagen ist: bei Hitscan der erste
+	// Einschlag danach, den der Server mir zuschreibt (Kugeln nennen den
+	// Schuetzen in "other", die Rail in "client"); bei Geschossen die Rakete,
+	// die gleich nach dem Abzug neben meinem Auge auftaucht, und dann ihr
+	// Einschlag unter derselben Nummer.
+	static Impact? FindImpact( Shot shot, List<Impact> impacts, List<Missile> missiles ) {
+		if ( IsProjectile( shot.Weapon ) ) {
+			var mine = missiles.FirstOrDefault( m => m.Frame >= shot.Frame && m.Frame <= shot.Frame + 200
+				&& Distance( m.At, shot.Eye ) < 150 );
+			if ( mine is null ) return null;
+			return impacts.FirstOrDefault( x => x.Num == mine.Num && x.Frame >= mine.Frame
+				&& x.Kind.StartsWith( "missile" ) );
+		}
+
+		return impacts.FirstOrDefault( x => x.Frame >= shot.Frame && x.Frame <= shot.Frame + 300
+			&& ( x.Kind == "rail" ? x.Client == shot.Me : ( !x.Kind.StartsWith( "missile" ) && x.Other == shot.Me ) ) );
+	}
+
+	// Fehlweite und Richtung, aus Sicht des Schuetzen: kurz/lang entlang der
+	// Schusslinie, links/rechts quer dazu, hoch/tief in der Hoehe
+	static string DescribeMiss( Shot shot, Impact impact, out double units ) {
+		units = 0;
+		if ( !impact.Bots.TryGetValue( shot.Target, out var bot ) ) return "";
+
+		double dx = impact.At[0] - bot[0], dy = impact.At[1] - bot[1], dz = impact.At[2] - bot[2];
+		units = Math.Sqrt( dx * dx + dy * dy + dz * dz );
+
+		double fx = shot.Plain[0] - shot.Eye[0], fy = shot.Plain[1] - shot.Eye[1];
+		double len = Math.Sqrt( fx * fx + fy * fy );
+		if ( len < 1 ) return "";
+		fx /= len; fy /= len;
+
+		double along = dx * fx + dy * fy;			// vor oder hinter dem Ziel
+		double side = dx * fy - dy * fx;			// rechts positiv
+		var parts = new List<string>();
+		if ( Math.Abs( along ) > 16 ) parts.Add( along < 0 ? "kurz" : "lang" );
+		if ( Math.Abs( side ) > 16 ) parts.Add( side > 0 ? "rechts" : "links" );
+		if ( Math.Abs( dz ) > 16 ) parts.Add( dz > 0 ? "hoch" : "tief" );
+		return parts.Count > 0 ? string.Join( "+", parts ) : "dran";
+	}
+
+	void UpdateShots( List<Shot> shots, List<Damage> damageFrames, List<Impact> impacts, List<Missile> missiles ) {
 		int hit = 0, assisted = 0, assistedHit = 0, unassisted = 0, unassistedHit = 0;
 		double errorSum = 0;
 		var rows = new List<ListViewItem>();
@@ -600,6 +728,11 @@ public class MainForm : Form, IMessageFilter {
 			if ( landed ) hit++;
 			errorSum += shot.Error;
 
+			var impact = FindImpact( shot, impacts, missiles );
+			string missText = "";
+			double missUnits = 0;
+			if ( impact is not null ) missText = DescribeMiss( shot, impact, out missUnits );
+
 			// die Quote mit Hilfe sagt erst etwas, wenn die ohne daneben steht
 			if ( shot.Assisted ) { assisted++; if ( landed ) assistedHit++; }
 			else { unassisted++; if ( landed ) unassistedHit++; }
@@ -615,6 +748,8 @@ public class MainForm : Form, IMessageFilter {
 				shot.Position,
 				landed ? "Treffer" : "daneben",
 				shot.Assisted ? "ja" : "nein",
+				missText.Length > 0 ? missUnits.ToString( "0" ) : "",
+				missText,
 			} ) { ForeColor = landed ? Color.ForestGreen : Color.Firebrick } );
 		}
 

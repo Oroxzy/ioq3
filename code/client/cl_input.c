@@ -877,15 +877,6 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity,
 }
 
 
-/*
-=================
-CL_AimAssist
-
-Helps the hit-sound lab produce repeatable hits.  This deliberately does not
-use sv_cheats: the safety boundary is the loopback connection itself, and the
-only eligible targets are bots identified by the server's player configstring.
-=================
-*/
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
 
 /*
@@ -996,18 +987,148 @@ hold the assisted one against.
 static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
 		const vec3_t targetOrigin, float lead, float error, qboolean assisted ) {
 	const char	*info;
-	vec3_t		direction;
+	vec3_t		direction, motion;
 
 	info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
 	VectorSubtract( targetOrigin, viewOrigin, direction );
-	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f assist %i at %.0f %.0f %.0f frame %i\n",
+	CL_AimAssistVelocity( entity, motion );
+
+	// "at" is where the aim was put, "plain" where the target really stood
+	// and "vel" what it was doing - the applied lead is the difference. "me"
+	// and "eye" let the impact lines be matched to the shooter.
+	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f assist %i"
+		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f speed %.0f me %i frame %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
 		entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		(int)( lead * 1000.0f ),
 		CL_AimAssistTrust( entity, lead ),
 		error, assisted ? 1 : 0,
-		targetOrigin[0], targetOrigin[1], targetOrigin[2], cl.serverTime );
+		targetOrigin[0], targetOrigin[1], targetOrigin[2],
+		entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
+		motion[0], motion[1], motion[2],
+		viewOrigin[0], viewOrigin[1], viewOrigin[2],
+		VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum, cl.serverTime );
+}
+
+
+/*
+=================
+CL_AimAssistSnapshot
+
+Called once for every snapshot that arrives. Writes down where shots really
+ended up, which is the one thing the shot line cannot know: every impact
+event with its position and whoever it belongs to, every missile the moment
+it first appears (its entity number ties the launch to the explosion later),
+and with each impact where every bot stood at that moment - so a miss can be
+measured in units and in direction, not only counted.
+=================
+*/
+void CL_AimAssistSnapshot( void ) {
+	static const char	*names[] = {
+		"bullet-flesh", "bullet-wall", "missile-hit", "missile-miss",
+		"missile-metal", "rail", "shotgun",
+	};
+	static int			missileSeen[MAX_GENTITIES];	// message number a missile was last in
+	static int			lastEvent[MAX_GENTITIES];	// event an entity carried in the previous snapshot
+	static int			lastMessage;
+	const entityState_t	*entity;
+	const char			*info;
+	char				bots[1024];
+	int					i, j, event, kind, present;
+
+	if ( !cl_aimAssistDebug->integer || !cl.snap.valid || clc.demoplaying
+		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || cl.snap.messageNum == lastMessage ) {
+		return;
+	}
+
+	bots[0] = '\0';
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->number < 0 || entity->number >= MAX_GENTITIES ) {
+			continue;
+		}
+
+		// the bots, for the line that needs them
+		if ( entity->eType == ET_PLAYER && !( entity->eFlags & EF_DEAD )
+			&& entity->clientNum >= 0 && entity->clientNum < MAX_CLIENTS ) {
+			info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+			if ( *Info_ValueForKey( info, "skill" ) ) {
+				Q_strcat( bots, sizeof( bots ), va( " | %s %.0f %.0f %.0f air %i",
+					Info_ValueForKey( info, "n" ),
+					entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
+					entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0 ) );
+			}
+		}
+
+		// a missile that was not there a snapshot ago has just been fired
+		if ( entity->eType == ET_MISSILE ) {
+			if ( missileSeen[entity->number] != lastMessage ) {
+				Com_Printf( "aim missile: num %i at %.0f %.0f %.0f frame %i\n",
+					entity->number, entity->pos.trBase[0], entity->pos.trBase[1],
+					entity->pos.trBase[2], cl.snap.serverTime );
+			}
+			missileSeen[entity->number] = cl.snap.messageNum;
+		}
+	}
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->number < 0 || entity->number >= MAX_GENTITIES ) {
+			continue;
+		}
+
+		if ( entity->eType >= ET_EVENTS ) {
+			event = entity->eType - ET_EVENTS;
+		} else {
+			event = entity->event;
+		}
+		event &= ~EV_EVENT_BITS;
+
+		switch ( event ) {
+		case EV_BULLET_HIT_FLESH:	kind = 0; break;
+		case EV_BULLET_HIT_WALL:	kind = 1; break;
+		case EV_MISSILE_HIT:		kind = 2; break;
+		case EV_MISSILE_MISS:		kind = 3; break;
+		case EV_MISSILE_MISS_METAL:	kind = 4; break;
+		case EV_RAILTRAIL:			kind = 5; break;
+		case EV_SHOTGUN:			kind = 6; break;
+		default:					kind = -1; break;
+		}
+
+		// the same event on the same entity as last time is the same event
+		if ( kind < 0 || lastEvent[entity->number] == event + 1 ) {
+			lastEvent[entity->number] = kind < 0 ? 0 : event + 1;
+			continue;
+		}
+		lastEvent[entity->number] = event + 1;
+
+		Com_Printf( "aim impact: %s num %i other %i client %i at %.0f %.0f %.0f frame %i%s\n",
+			names[kind], entity->number, entity->otherEntityNum, entity->clientNum,
+			entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
+			cl.snap.serverTime, bots );
+	}
+
+	// forget the events of entities that are gone, so a number reused later
+	// is not mistaken for a repeat
+	for ( i = 0; i < MAX_GENTITIES; i++ ) {
+		if ( !lastEvent[i] ) {
+			continue;
+		}
+		present = 0;
+		for ( j = 0; j < cl.snap.numEntities; j++ ) {
+			if ( cl.parseEntities[( cl.snap.parseEntitiesNum + j ) & ( MAX_PARSE_ENTITIES - 1 )].number == i ) {
+				present = 1;
+				break;
+			}
+		}
+		if ( !present ) {
+			lastEvent[i] = 0;
+		}
+	}
+
+	lastMessage = cl.snap.messageNum;
 }
 
 

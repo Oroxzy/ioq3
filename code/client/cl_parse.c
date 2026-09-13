@@ -322,6 +322,9 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	}
 
 	cl.newSnapshots = qtrue;
+
+	// the test bench wants to know where the shots ended up
+	CL_AimAssistSnapshot();
 }
 
 
