@@ -90,6 +90,7 @@ public class MainForm : Form, IMessageFilter {
 	bool capturingAimKey;
 	string shotStamp = "";
 	Process? game;					// das von hier gestartete Spiel, solange es laeuft
+	decimal leadAtStart;			// der Vorhalt, mit dem es gestartet wurde
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
@@ -575,6 +576,7 @@ public class MainForm : Form, IMessageFilter {
 			}
 			shotStamp = "";
 			aimLearned.Text = "";
+			leadAtStart = aimLead.Value;
 
 			game = Process.Start( new ProcessStartInfo {
 				FileName = exe,
@@ -590,8 +592,29 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
+	// Nur den gelernten Vorhalt in die gespeicherten Einstellungen schreiben,
+	// alles andere so lassen, wie es zuletzt gespeichert wurde
+	void PersistLearnedLead() {
+		try {
+			if ( !File.Exists( SettingsPath ) ) return;
+			var lines = File.ReadAllLines( SettingsPath ).Where( l => !l.StartsWith( "aimLead=" ) ).ToList();
+			lines.Add( "aimLead=" + Dec( aimLead.Value ) );
+			File.WriteAllLines( SettingsPath, lines );
+		} catch ( IOException ) {
+		}
+	}
+
 	// Das Spiel schreibt die Debug-Zeilen in qconsole.log, hier werden sie nur gelesen
 	void RefreshStats() {
+		// Das Spiel ist zu Ende: was es an Vorhalt gelernt hat, festhalten,
+		// sonst waere die Optimierung beim naechsten Start der App wieder weg
+		bool exited;
+		try { exited = game is { HasExited: true }; } catch ( InvalidOperationException ) { exited = false; }
+		if ( exited ) {
+			game = null;
+			if ( aimLearn.Checked && aimLead.Value != leadAtStart ) PersistLearnedLead();
+		}
+
 		if ( logPath.Length == 0 || !File.Exists( logPath ) ) return;
 
 		string text;

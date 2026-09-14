@@ -1397,6 +1397,9 @@ void CL_Disconnect( qboolean showMainMenu ) {
 		return;
 	}
 
+	// what the aim assist learned this game goes into the config
+	CL_AimAssistFlush();
+
 	// shutting down the client so enter full screen ui mode
 	Cvar_Set("r_uiFullScreen", "1");
 
