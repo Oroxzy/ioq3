@@ -125,6 +125,12 @@ public class MainForm : Form, IMessageFilter {
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
 
+	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
+	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
+	// und dann soll das dastehen statt still falsch gerechnet zu werden.
+	const int LogVersion = 1;
+	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
+
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
 	readonly Button save = new() { Text = "Speichern", Width = 100, Height = 34 };
 	readonly Label status = new() { AutoSize = true, ForeColor = Color.DimGray };
@@ -444,7 +450,8 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
-			Row( Pad( start ), Pad( save ), Pad( status ) ) );
+			Row( Pad( start ), Pad( save ), Pad( status ) ),
+			Row( logVersion ) );
 	}
 
 	GroupBox BuildSoundBox() {
@@ -907,6 +914,7 @@ public class MainForm : Form, IMessageFilter {
 		var missiles = new List<Missile>();
 		var tunes = new Dictionary<string, Tune>();
 		var learned = "";
+		var stamp = "";
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
@@ -944,6 +952,8 @@ public class MainForm : Form, IMessageFilter {
 				if ( missile is not null ) missiles.Add( missile );
 			} else if ( trimmed.StartsWith( "aim learn: " ) ) {
 				learned = trimmed;
+			} else if ( trimmed.StartsWith( "aim log: " ) ) {
+				stamp = trimmed;
 			} else if ( trimmed.StartsWith( "aim tune: " ) ) {
 				var tune = Tune.Parse( trimmed );
 				// je Waffe und Flugzeitband zaehlt der zuletzt gemessene Stand
@@ -951,6 +961,7 @@ public class MainForm : Form, IMessageFilter {
 			}
 		}
 
+		ShowLogVersion( stamp );
 		UpdateShots( shots, damageFrames, impacts, missiles );
 		UpdateTune( tunes );
 		ShowLearned( learned );
@@ -1054,6 +1065,34 @@ public class MainForm : Form, IMessageFilter {
 	sealed class Damage {
 		public int Frame;
 		public string Victim = "";
+	}
+
+	// Ob das Protokoll von einem Spiel stammt, dessen Zeilen dieses Werkzeug
+	// kennt. Ohne Stempel ist es aelter als diese Pruefung.
+	void ShowLogVersion( string line ) {
+		if ( line.Length == 0 ) {
+			logVersion.Text = "Protokoll ohne Fassungsangabe – älter als dieses Werkzeug";
+			logVersion.ForeColor = Color.DarkGoldenrod;
+			return;
+		}
+
+		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+		int found = 0;
+		string built = "";
+		for ( int i = 0; i < f.Length - 1; i++ ) {
+			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
+			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
+		}
+
+		if ( found == LogVersion ) {
+			logVersion.Text = $"Protokoll Fassung {found}, Spiel vom {built}";
+			logVersion.ForeColor = Color.DimGray;
+		} else {
+			logVersion.Text = found < LogVersion
+				? $"Protokoll Fassung {found} – dieses Werkzeug erwartet {LogVersion}, bitte das Spiel neu bauen"
+				: $"Protokoll Fassung {found} – neuer als dieses Werkzeug ({LogVersion}), bitte die App neu bauen";
+			logVersion.ForeColor = Color.Firebrick;
+		}
 	}
 
 	// Die letzte Zeile "aim learn:" - der Vorhalt, den das Spiel gerade gelernt

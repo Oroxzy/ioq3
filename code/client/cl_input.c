@@ -868,6 +868,11 @@ a short flight and never more than T for a long one. T is cl_aimAssistLead,
 in seconds, and the learner tunes it from what the bots really do.
 =================
 */
+// Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
+// verschwindet oder seine Bedeutung wechselt.
+#define AIM_LOG_VERSION	1
+
+static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 static int		aimHoldMarked = -1;		// server time the learned value was last marked for q3config.cfg
 static qboolean	aimHoldPending;			// a learned step the config has not been marked for yet
 
@@ -929,6 +934,7 @@ void CL_AimAssistTuneDump( void );
 static void CL_AimAssistPriorityDump( void );
 
 void CL_AimAssistFlush( void ) {
+	aimLogStamped = qfalse;			// die naechste Sitzung stempelt neu
 	CL_AimAssistTuneSave();
 	CL_AimAssistTuneDump();
 
@@ -1779,6 +1785,7 @@ static void CL_AimAssistPriorities( void ) {
 
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
 static int	aimAttacker = -1;			// the bot that last hurt us, if any
+static int	aimPickLast = -1;			// who the record last named as the pick
 
 // what the weights were understood as, so a typo in the string shows up
 static void CL_AimAssistPriorityDump( void ) {
@@ -1900,8 +1907,13 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	vec3_t			targetOrigin, direction, desired;
 	float			bestScore = -1.0f, score, angle, pitchDelta, yawDelta, distance;
 	float			speed, scatter, weight[AIM_PRIO_COUNT];
-	int				i, targetTeam;
+	float			part[AIM_PRIO_COUNT], bestPart[AIM_PRIO_COUNT];
+	char			others[768];
+	int				i, k, targetTeam;
 	qboolean		visible;
+
+	others[0] = '\0';
+	Com_Memset( bestPart, 0, sizeof( bestPart ) );
 
 	CL_AimAssistPriorities();
 	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
@@ -1952,42 +1964,90 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 		angle = sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
 
-		score = weight[AIM_PRIO_SIGHT] * ( visible ? 1.0f : 0.0f );
-		score += weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
-		score += weight[AIM_PRIO_NEAR] / ( 1.0f + distance / 500.0f );
-		score += weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum );
-
-		if ( entity->clientNum == aimAttacker ) {
-			score += weight[AIM_PRIO_ATTACKER];
-		}
-		if ( entity->clientNum == aimAssistTarget ) {
-			score += weight[AIM_PRIO_KEEP];
-		}
-		if ( CL_AimAssistAirborne( entity ) ) {
-			score += weight[AIM_PRIO_AIR];
-		}
-		if ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
-			| ( 1 << PW_BATTLESUIT ) | ( 1 << PW_HASTE ) | ( 1 << PW_INVIS ) ) ) {
-			score += weight[AIM_PRIO_POWERUP];
-		}
+		part[AIM_PRIO_SIGHT] = weight[AIM_PRIO_SIGHT] * ( visible ? 1.0f : 0.0f );
+		part[AIM_PRIO_CURSOR] = weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
+		part[AIM_PRIO_NEAR] = weight[AIM_PRIO_NEAR] / ( 1.0f + distance / 500.0f );
+		part[AIM_PRIO_WOUNDED] = weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum );
+		part[AIM_PRIO_ATTACKER] = entity->clientNum == aimAttacker ? weight[AIM_PRIO_ATTACKER] : 0.0f;
+		part[AIM_PRIO_KEEP] = entity->clientNum == aimAssistTarget ? weight[AIM_PRIO_KEEP] : 0.0f;
+		part[AIM_PRIO_AIR] = CL_AimAssistAirborne( entity ) ? weight[AIM_PRIO_AIR] : 0.0f;
+		part[AIM_PRIO_POWERUP] = ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
+			| ( 1 << PW_BATTLESUIT ) | ( 1 << PW_HASTE ) | ( 1 << PW_INVIS ) ) )
+			? weight[AIM_PRIO_POWERUP] : 0.0f;
 
 		// How well this weapon does at that range is measured, not guessed;
 		// a shot that scatters wider than it reaches counts for little.
 		speed = CL_AimAssistProjectileSpeed( weapon );
 		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, distance / speed ) : -1.0f;
-		if ( scatter >= 0.0f ) {
-			score += weight[AIM_PRIO_SURE] / ( 1.0f + scatter / CL_AimAssistHitRadius( weapon ) );
-		} else {
-			score += weight[AIM_PRIO_SURE] * 0.5f;		// nothing measured yet
+		part[AIM_PRIO_SURE] = scatter >= 0.0f
+			? weight[AIM_PRIO_SURE] / ( 1.0f + scatter / CL_AimAssistHitRadius( weapon ) )
+			: weight[AIM_PRIO_SURE] * 0.5f;		// nothing measured yet
+
+		score = 0.0f;
+		for ( k = 0; k < AIM_PRIO_COUNT; k++ ) {
+			score += part[k];
+		}
+
+		// for the record: every candidate with what it came to
+		if ( sticky && cl_aimAssistDebug->integer ) {
+			info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+			Q_strcat( others, sizeof( others ), va( " | %s %.0f",
+				Info_ValueForKey( info, "n" ), score ) );
 		}
 
 		if ( score > bestScore ) {
 			bestScore = score;
 			best = entity;
+			for ( k = 0; k < AIM_PRIO_COUNT; k++ ) {
+				bestPart[k] = part[k];
+			}
 		}
 	}
 
+	// Why this one and not the others: printed when the choice changes, which
+	// is when it is worth knowing. Every candidate's total is on the line, and
+	// the winner's is broken down into what each priority contributed.
+	if ( sticky && cl_aimAssistDebug->integer && best && best->clientNum != aimPickLast ) {
+		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + best->clientNum];
+		Com_Printf( "aim pick: %s took %s %.0f (", CL_AimAssistWeaponName( weapon ),
+			Info_ValueForKey( info, "n" ), bestScore );
+		for ( k = 0; k < AIM_PRIO_COUNT; k++ ) {
+			Com_Printf( " %s %.0f", aimPriorityName[k], bestPart[k] );
+		}
+		Com_Printf( " ) alle%s frame %i\n", others, cl.snap.serverTime );
+	}
+	if ( sticky ) {
+		aimPickLast = best ? best->clientNum : -1;
+	}
+
 	return best;
+}
+
+
+/*
+=================
+CL_AimAssistSkip
+
+Why the assist did nothing this frame. A miss the player blames on the aim is
+often a frame in which there was no aim at all - nothing in sight, everything
+behind cover, or the target so close that the shot would come back. Written
+when the reason changes, not every frame, because the reason lasts.
+=================
+*/
+static int	aimSkipLast = -1;
+
+static void CL_AimAssistSkip( int reason, int weapon ) {
+	static const char	*names[] = { "no target", "behind cover", "own splash" };
+
+	if ( reason == aimSkipLast ) {
+		return;
+	}
+	aimSkipLast = reason;
+
+	if ( reason >= 0 && cl_aimAssistDebug->integer ) {
+		Com_Printf( "aim skip: %s %s frame %i\n",
+			CL_AimAssistWeaponName( weapon ), names[reason], cl.snap.serverTime );
+	}
 }
 
 
@@ -2268,7 +2328,8 @@ hold the assisted one against.
 =================
 */
 static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
-		const vec3_t targetOrigin, float lead, float error, qboolean assisted, qboolean exact ) {
+		const vec3_t targetOrigin, float lead, float error, qboolean assisted, qboolean exact,
+		qboolean fallback ) {
 	const char	*info;
 	vec3_t		direction, motion;
 
@@ -2281,7 +2342,8 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	// and "eye" let the impact lines be matched to the shooter.
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f speed %.0f me %i"
-		" exact %i phase %i hold %.2f crouch %i world %i frame %i\n",
+		" exact %i phase %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i myair %i"
+		" world %i frame %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
 		entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
@@ -2295,6 +2357,8 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum,
 		exact ? 1 : 0, exact ? 0 : (int)( CL_AimAssistPhase() * 1000.0f ),
 		CL_AimAssistHold(), CL_AimAssistCrouched( entity ) ? 1 : 0,
+		CL_AimAssistTune( weapon, lead ), CL_AimAssistScatter( weapon, lead ),
+		fallback ? 1 : 0, cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		cl.snap.serverTime, cl.serverTime );
 }
 
@@ -2332,6 +2396,15 @@ static aimPending_t	aimPending[AIM_PENDING];
 static int			aimPendingNum;
 static int			aimLearned;		// shots learned from so far
 
+// Warum ein Schuss dem Lerner nichts beibringt. Fuellt sich die Tabelle nicht,
+// steht hier, woran es liegt.
+static void CL_AimAssistDrop( int weapon, const char *why ) {
+	if ( cl_aimAssistDebug->integer ) {
+		Com_Printf( "aim drop: %s %s frame %i\n",
+			CL_AimAssistWeaponName( weapon ), why, cl.snap.serverTime );
+	}
+}
+
 static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float lead,
 		const vec3_t aimed, qboolean exact ) {
 	aimPending_t	*p;
@@ -2346,6 +2419,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	// A jump says nothing about how long a bot holds a line on the ground,
 	// and its course is not damped by the hold time in the first place.
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
+		CL_AimAssistDrop( weapon, "target in the air" );
 		return;
 	}
 
@@ -2353,7 +2427,8 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	motion[2] = 0.0f;
 	speed = VectorLength( motion );
 	if ( speed * lead < 40.0f ) {
-		return;		// too little motion to learn anything from
+		CL_AimAssistDrop( weapon, "target barely moving" );
+		return;
 	}
 	VectorScale( motion, 1.0f / speed, along );
 
@@ -2368,6 +2443,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 		unclipped += speed * CL_AimAssistPhase();
 	}
 	if ( used < unclipped - 2.0f ) {
+		CL_AimAssistDrop( weapon, "prediction cut short by geometry" );
 		return;
 	}
 
@@ -2377,6 +2453,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	for ( i = 0; i < AIM_PENDING; i++ ) {
 		if ( aimPending[i].arrival && aimPending[i].target == entity->clientNum
 			&& aimPending[i].arrival - cl.snap.serverTime <= 5000 ) {
+			CL_AimAssistDrop( weapon, "already watching this target" );
 			return;
 		}
 	}
@@ -2427,6 +2504,7 @@ static void CL_AimAssistLearn( void ) {
 		// only ever say the target ran further.
 		if ( cl.snap.serverTime > p->arrival ) {
 			p->arrival = 0;
+			CL_AimAssistDrop( p->weapon, "no snapshot at the arrival frame" );
 			continue;
 		}
 		p->arrival = 0;
@@ -2441,13 +2519,15 @@ static void CL_AimAssistLearn( void ) {
 			}
 		}
 		if ( !found || p->straight < 1.0f ) {
+			CL_AimAssistDrop( p->weapon, "target gone before the shot arrived" );
 			continue;
 		}
 
 		VectorSubtract( found->pos.trBase, p->origin, moved );
 		moved[2] = 0.0f;
 		if ( VectorLength( moved ) > 1500.0f ) {
-			continue;		// teleported, nothing to learn from
+			CL_AimAssistDrop( p->weapon, "target teleported" );
+			continue;
 		}
 
 		actual = DotProduct( moved, p->along );
@@ -2596,6 +2676,15 @@ void CL_AimAssistSnapshot( void ) {
 	if ( !cl.snap.valid || clc.demoplaying || clc.netchan.remoteAddress.type != NA_LOOPBACK
 		|| cl.snap.messageNum == lastMessage ) {
 		return;
+	}
+
+	// Womit dieses Protokoll geschrieben wurde. Die Zahl steigt, sobald sich
+	// eine der Zeilen aendert, damit eine Auswertung nicht stillschweigend
+	// Felder liest, die es damals noch nicht gab.
+	if ( !aimLogStamped ) {
+		aimLogStamped = qtrue;
+		Com_Printf( "aim log: version %i built %s %s frame %i\n",
+			AIM_LOG_VERSION, __DATE__, __TIME__, cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();
@@ -2762,7 +2851,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 			yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
-				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ), qfalse, qtrue );
+				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ), qfalse, qtrue, qfalse );
 		}
 		aimAssistTarget = -1;
 		aimSmoothTarget = -1;
@@ -2797,6 +2886,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	firing = CL_AimAssistFiring( cmd, weapon, viewOrigin, entity );
 
 	if ( !entity ) {
+		CL_AimAssistSkip( 0, weapon );
 		aimAssistTarget = -1;
 		aimSmoothTarget = -1;
 		return;
@@ -2830,6 +2920,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SHOT, qfalse );
 		if ( trace.fraction < 1.0f ) {
+			CL_AimAssistSkip( 1, weapon );
 			aimSmoothTarget = -1;
 			return;
 		}
@@ -2837,9 +2928,11 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 
 	VectorSubtract( targetOrigin, viewOrigin, direction );
 	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f && VectorLength( direction ) < 160.0f ) {
+		CL_AimAssistSkip( 2, weapon );
 		aimSmoothTarget = -1;
 		return;			// inside our own splash, the player aims this one alone
 	}
+	CL_AimAssistSkip( -1, weapon );			// steering again
 	vectoangles( direction, desired );
 	desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 	desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
@@ -2890,7 +2983,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, flight,
 				sqrt( ( pitchDelta - pitchStep ) * ( pitchDelta - pitchStep )
 					+ yawDelta * yawDelta * ( 1.0f - blend ) * ( 1.0f - blend ) ),
-				qtrue, exact && !plain );
+				qtrue, exact && !plain, plain );
 		}
 	}
 }
