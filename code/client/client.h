@@ -429,6 +429,8 @@ extern	cvar_t	*cl_aimAssistExact;
 extern	cvar_t	*cl_aimAssistLead;
 extern	cvar_t	*cl_aimAssistLearn;
 extern	cvar_t	*cl_aimAssistPrefer;
+extern	cvar_t	*cl_aimAssistPriority;
+extern	cvar_t	*cl_aimAssistHoldFire;
 
 void CL_AimAssistSnapshot( void );
 void CL_AimAssistFlush( void );		// cl_input.c, marks the learned lead for q3config.cfg

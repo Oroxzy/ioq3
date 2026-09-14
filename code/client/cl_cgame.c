@@ -1672,8 +1672,36 @@ CL_DrawItemTimers
 The countdowns over the finished picture.
 ====================
 */
+static void CL_ItemTimerColour( int seconds, vec4_t out ) {
+	// Red while it is a long way off, through orange and yellow into green as
+	// it is about to come back, so a glance at the number is enough.
+	static const float	stop[4] = { 0.0f, 3.0f, 8.0f, 20.0f };
+	static const vec3_t	shade[4] = {
+		{ 0.35f, 1.00f, 0.40f },		// back any moment
+		{ 1.00f, 0.90f, 0.25f },
+		{ 1.00f, 0.55f, 0.15f },
+		{ 1.00f, 0.25f, 0.25f },		// a long way off
+	};
+	float	part;
+	int		i;
+
+	out[3] = 1.0f;
+	for ( i = 1; i < 4; i++ ) {
+		if ( seconds < stop[i] ) {
+			part = ( seconds - stop[i - 1] ) / ( stop[i] - stop[i - 1] );
+			part = Com_Clamp( 0.0f, 1.0f, part );
+			out[0] = shade[i - 1][0] + ( shade[i][0] - shade[i - 1][0] ) * part;
+			out[1] = shade[i - 1][1] + ( shade[i][1] - shade[i - 1][1] ) * part;
+			out[2] = shade[i - 1][2] + ( shade[i][2] - shade[i - 1][2] ) * part;
+			return;
+		}
+	}
+
+	VectorCopy( shade[3], out );
+}
+
 static void CL_DrawItemTimers( void ) {
-	static const vec4_t	colour = { 0.35f, 0.65f, 1.0f, 1.0f };
+	vec4_t				colour;
 	itemTimer_t			*timer;
 	float				size, x, y;
 	int					i;
@@ -1697,8 +1725,9 @@ static void CL_DrawItemTimers( void ) {
 		x = timer->x * 640.0f / cls.glconfig.vidWidth;
 		y = timer->y * 480.0f / cls.glconfig.vidHeight;
 
+		CL_ItemTimerColour( atoi( timer->label ), colour );
 		SCR_DrawStringExt( (int)( x - strlen( timer->label ) * size * 0.5f ),
-			(int)( y - size ), size, timer->label, (float *)colour, qtrue, qfalse );
+			(int)( y - size ), size, timer->label, colour, qtrue, qfalse );
 	}
 }
 

@@ -957,6 +957,7 @@ follows a quit. So the file is written here as well.
 */
 static void CL_AimAssistTuneSave( void );
 void CL_AimAssistTuneDump( void );
+static void CL_AimAssistPriorityDump( void );
 
 void CL_AimAssistFlush( void ) {
 	CL_AimAssistTuneSave();
@@ -1256,6 +1257,10 @@ void CL_AimAssistTuneDump( void ) {
 	if ( !boxes ) {
 		Com_Printf( "aim tune: nothing measured yet\n" );
 	}
+
+	// and what the priorities were understood as, so a typo in the string is
+	// visible instead of quietly leaving a default in place
+	CL_AimAssistPriorityDump();
 }
 
 
@@ -1714,19 +1719,208 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 }
 
 
+/*
+=================
+What makes one bot a better target than another.
+
+Nine things can speak for a target, and which of them counts how much is the
+player's to decide: cl_aimAssistPriority carries a weight for each, and the
+bench lets them be dragged into order. Every one of them answers with a value
+between nothing and one, the weights are what turn those into a single number,
+and the highest wins. A weight of zero takes the question out of the running
+altogether.
+
+They are deliberately smooth. A target does not stop counting because it is a
+few degrees further from the crosshair or a hundred units further away, it
+just counts a little less, so the pick does not flap between two bots standing
+next to each other.
+=================
+*/
+typedef enum {
+	AIM_PRIO_SIGHT,			// can be shot at at all
+	AIM_PRIO_CURSOR,		// near where the player is already pointing
+	AIM_PRIO_ATTACKER,		// whoever is hurting us
+	AIM_PRIO_SURE,			// the shot this weapon can actually make at that range
+	AIM_PRIO_NEAR,			// near in the world
+	AIM_PRIO_WOUNDED,		// already hurt, as far as we can tell
+	AIM_PRIO_KEEP,			// the one we were already on
+	AIM_PRIO_POWERUP,		// carrying quad, regeneration, and the like
+	AIM_PRIO_AIR,			// off the ground and on a path it cannot change
+	AIM_PRIO_COUNT
+} aimPriority_t;
+
+static const char	*aimPriorityName[AIM_PRIO_COUNT] = {
+	"sight", "cursor", "attacker", "sure", "near", "wounded", "keep", "powerup", "air"
+};
+
+// what each is worth when nothing has been said about it
+static const float	aimPriorityDefault[AIM_PRIO_COUNT] = {
+	100.0f, 80.0f, 100.0f, 60.0f, 40.0f, 40.0f, 30.0f, 20.0f, 0.0f
+};
+
+static float	aimPriorityWeight[AIM_PRIO_COUNT];
+static int		aimPriorityCount = -1;		// modification count the weights were read at
+
+static void CL_AimAssistPriorities( void ) {
+	const char	*text;
+	char		token[64];
+	float		value;
+	int			i, j;
+
+	if ( cl_aimAssistPriority->modificationCount == aimPriorityCount ) {
+		return;
+	}
+	aimPriorityCount = cl_aimAssistPriority->modificationCount;
+
+	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+		aimPriorityWeight[i] = aimPriorityDefault[i];
+	}
+
+	// "name:weight name:weight ...", anything not named keeps its default
+	text = cl_aimAssistPriority->string;
+	while ( *text ) {
+		while ( *text == ' ' || *text == '\t' ) {
+			text++;
+		}
+		for ( i = 0; *text && *text != ':' && *text != ' ' && i < (int)sizeof( token ) - 1; i++ ) {
+			token[i] = *text++;
+		}
+		token[i] = '\0';
+		if ( *text != ':' ) {
+			while ( *text && *text != ' ' ) {
+				text++;
+			}
+			continue;
+		}
+		text++;
+		value = atof( text );
+		while ( *text && *text != ' ' ) {
+			text++;
+		}
+
+		for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
+			if ( !Q_stricmp( token, aimPriorityName[j] ) ) {
+				aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
+				break;
+			}
+		}
+	}
+}
+
+
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
-static int	aimAttacker = -1;		// the bot that last hurt us, if any
+static int	aimAttacker = -1;			// the bot that last hurt us, if any
+
+// what the weights were understood as, so a typo in the string shows up
+static void CL_AimAssistPriorityDump( void ) {
+	int	i;
+
+	CL_AimAssistPriorities();
+	Com_Printf( "aim prio:" );
+	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+		Com_Printf( " %s %.0f", aimPriorityName[i], aimPriorityWeight[i] );
+	}
+	Com_Printf( "\n" );
+}
+
+
+/*
+=================
+CL_AimAssistWounded
+
+How badly a bot is hurt, as far as the client is allowed to know. The game
+never sends another player's health, so the only thing to go on is the damage
+we did ourselves: the server reports what the one we just hit has left, and
+which one that was is the one we were steering at. That knowledge goes stale -
+they pick health up - so it is forgotten after a while.
+=================
+*/
+#define AIM_WOUND_MEMORY	12000		// how long a remembered health is worth anything
+
+static int	aimWoundHealth[MAX_CLIENTS];
+static int	aimWoundTime[MAX_CLIENTS];
+static int	aimWoundHits = -1;			// PERS_HITS as last seen
+
+static void CL_AimAssistWoundWatch( void ) {
+	int	hits, remaining, health, target;
+
+	hits = cl.snap.ps.persistant[PERS_HITS];
+	if ( aimWoundHits < 0 || hits < aimWoundHits ) {
+		aimWoundHits = hits;		// first snapshot, or a new life
+		return;
+	}
+	if ( hits == aimWoundHits ) {
+		return;
+	}
+	aimWoundHits = hits;
+
+	// we hit someone, and the one we were aiming at is the one we hit
+	target = aimAssistTarget;
+	remaining = cl.snap.ps.persistant[PERS_ATTACKEE_REMAINING];
+	if ( target < 0 || target >= MAX_CLIENTS || !remaining ) {
+		return;
+	}
+
+	health = ( ( remaining >> 8 ) & 0xff ) - 1;
+	if ( health < 0 ) {
+		health = 0;
+	}
+	aimWoundHealth[target] = health;
+	aimWoundTime[target] = cl.snap.serverTime;
+}
+
+static float CL_AimAssistWoundScore( int clientNum ) {
+	int	age;
+
+	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !aimWoundTime[clientNum] ) {
+		return 0.0f;
+	}
+
+	age = cl.snap.serverTime - aimWoundTime[clientNum];
+	if ( age < 0 || age > AIM_WOUND_MEMORY ) {
+		return 0.0f;
+	}
+
+	// the less it had left the better, and the older the news the less it says
+	return Com_Clamp( 0.0f, 1.0f, ( 100.0f - aimWoundHealth[clientNum] ) / 100.0f )
+		* ( 1.0f - (float)age / AIM_WOUND_MEMORY );
+}
+
+
+/*
+=================
+CL_AimAssistAirborne
+
+Whether a target is really in the air rather than in the middle of an ordinary
+jump. A plain jump rises about forty-five units and is over in half a second;
+anything much higher off the ground fell from somewhere or was thrown, and
+holds its path all the way down - which is what makes it easy to hit.
+=================
+*/
+static qboolean CL_AimAssistAirborne( const entityState_t *entity ) {
+	vec3_t	mins, maxs, below;
+	trace_t	trace;
+
+	if ( entity->groundEntityNum != ENTITYNUM_NONE || CL_AimAssistFloats( entity ) ) {
+		return qfalse;
+	}
+
+	CL_AimAssistHull( entity, mins, maxs );
+	VectorCopy( entity->pos.trBase, below );
+	below[2] -= 60.0f;
+	CM_BoxTrace( &trace, entity->pos.trBase, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+
+	return trace.fraction >= 1.0f;
+}
+
 
 /*
 =================
 CL_AimAssistPickTarget
 
-The bot to steer at: visible, an enemy, and by preference the one nearest the
-crosshair - or, for a short weapon with cl_aimAssistPrefer, the nearest one
-outright. The target we already had keeps a head start so the aim does not
-hop between two bots running side by side, and whoever is hurting us comes
-first when cl_aimAssistAttacker says so. With sticky off it is a plain pick,
-used for the record of unassisted shots.
+The bot to steer at: the one the priorities above like best. Only bots are
+eligible, and only living enemies. With sticky off the pick is made on the
+crosshair alone, which is what the record of unassisted shots is held against.
 =================
 */
 static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam, int weapon,
@@ -1735,14 +1929,31 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	const char		*info;
 	trace_t			trace;
 	vec3_t			targetOrigin, direction, desired;
-	float			bestScore = 999999.0f, score, pitchDelta, yawDelta, distance, speed, scatter;
+	float			bestScore = -1.0f, score, angle, pitchDelta, yawDelta, distance;
+	float			speed, scatter, weight[AIM_PRIO_COUNT];
 	int				i, targetTeam;
+	qboolean		visible;
+
+	CL_AimAssistPriorities();
+	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+		weight[i] = sticky ? aimPriorityWeight[i] : 0.0f;
+	}
+	if ( !sticky ) {
+		weight[AIM_PRIO_CURSOR] = 1.0f;		// the plain crosshair pick for the record
+		weight[AIM_PRIO_SIGHT] = 1.0f;
+	}
+
+	// A short weapon with cl_aimAssistPrefer takes the closest target first,
+	// the way it always has; the list decides everything else.
+	if ( prefer && reach > 0.0f ) {
+		weight[AIM_PRIO_NEAR] *= 2.0f;
+	}
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
 		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
 		if ( entity->eType != ET_PLAYER || entity->clientNum == cl.snap.ps.clientNum ||
 			 entity->clientNum < 0 || entity->clientNum >= MAX_CLIENTS ||
-			 ( entity->eFlags & EF_DEAD ) ) {
+			 ( entity->eFlags & EF_DEAD ) || entity->number != entity->clientNum ) {
 			continue;
 		}
 
@@ -1757,10 +1968,14 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		}
 
 		VectorCopy( entity->pos.trBase, targetOrigin );
-		targetOrigin[2] += CL_AimAssistBodyHeight( entity );	// score the bot's current crosshair position
+		targetOrigin[2] += CL_AimAssistBodyHeight( entity );
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SOLID, qfalse );
-		if ( trace.fraction < 1.0f ) {
+		visible = trace.fraction >= 1.0f;
+
+		// Out of sight is only out of the running while sight counts for
+		// something; whoever turns it down asks for the one behind the wall.
+		if ( !visible && weight[AIM_PRIO_SIGHT] >= 99.0f ) {
 			continue;
 		}
 
@@ -1772,46 +1987,65 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
 		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
+		angle = sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
 
-		if ( reach > 0.0f && prefer ) {
-			// short weapon: the closest target first, the crosshair only
-			// decides between two at the same range
-			score = distance + sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
-		} else {
-			score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+		score = weight[AIM_PRIO_SIGHT] * ( visible ? 1.0f : 0.0f );
+		score += weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
+		score += weight[AIM_PRIO_NEAR] / ( 1.0f + distance / 500.0f );
+		score += weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum );
+
+		if ( entity->clientNum == aimAttacker ) {
+			score += weight[AIM_PRIO_ATTACKER];
+		}
+		if ( entity->clientNum == aimAssistTarget ) {
+			score += weight[AIM_PRIO_KEEP];
+		}
+		if ( CL_AimAssistAirborne( entity ) ) {
+			score += weight[AIM_PRIO_AIR];
+		}
+		if ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
+			| ( 1 << PW_BATTLESUIT ) | ( 1 << PW_HASTE ) | ( 1 << PW_INVIS ) ) ) {
+			score += weight[AIM_PRIO_POWERUP];
 		}
 
-		// A shot that scatters wider than the damage it would do is a lottery
-		// at this range, whoever is being shot at - and how wide it scatters is
-		// measured, not assumed. Prefer the target where the shot can be made.
+		// How well this weapon does at that range is measured, not guessed;
+		// a shot that scatters wider than it reaches counts for little.
 		speed = CL_AimAssistProjectileSpeed( weapon );
-		if ( speed > 0.0f ) {
-			scatter = CL_AimAssistScatter( weapon, distance / speed );
-			if ( scatter > 0.0f ) {
-				score *= 1.0f + scatter / CL_AimAssistHitRadius( weapon );
-			}
+		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, distance / speed ) : -1.0f;
+		if ( scatter >= 0.0f ) {
+			score += weight[AIM_PRIO_SURE] / ( 1.0f + scatter / CL_AimAssistHitRadius( weapon ) );
+		} else {
+			score += weight[AIM_PRIO_SURE] * 0.5f;		// nothing measured yet
 		}
 
-		if ( sticky ) {
-			if ( entity->clientNum == aimAssistTarget ) {
-				score *= 0.6f;
-			}
-
-			// The server names whoever hurt us last in the player state, so
-			// this needs nothing the client would not already know.
-			if ( cl_aimAssistAttacker->integer
-				&& entity->clientNum == aimAttacker ) {
-				score = -1.0f;
-			}
-		}
-
-		if ( score < bestScore ) {
+		if ( score > bestScore ) {
 			bestScore = score;
 			best = entity;
 		}
 	}
 
 	return best;
+}
+
+
+/*
+=================
+CL_AimAssistVisible
+
+Whether there is a clear shot at this target from here. Used to hold the
+trigger when cl_aimAssistHoldFire says a shot into cover is not worth taking.
+=================
+*/
+static qboolean CL_AimAssistVisible( const vec3_t viewOrigin, const entityState_t *entity ) {
+	vec3_t	targetOrigin;
+	trace_t	trace;
+
+	VectorCopy( entity->pos.trBase, targetOrigin );
+	targetOrigin[2] += CL_AimAssistBodyHeight( entity );
+	CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
+		0, MASK_SHOT, qfalse );
+
+	return trace.fraction >= 1.0f;
 }
 
 
@@ -2316,6 +2550,8 @@ static void CL_AimAssistWatch( void ) {
 	}
 	aimWatchedTime = cl.snap.serverTime;
 
+	CL_AimAssistWoundWatch();
+
 	// Whoever hurt us last. The player state names the attacker, but it names
 	// client zero before anyone has, and it carries the last life's killer
 	// into the next; so a new life - a respawn or a map restart, both of which
@@ -2589,6 +2825,12 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 
 	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, reach,
 		cl_aimAssistPrefer->integer != 0, qtrue );
+
+	// A shot into cover is a wasted one: hold the trigger until there is a way
+	// through, for anyone who asked for that.
+	if ( cl_aimAssistHoldFire->integer && entity && !CL_AimAssistVisible( viewOrigin, entity ) ) {
+		cmd->buttons &= ~BUTTON_ATTACK;
+	}
 
 	// the weapon timer runs whether or not there is anything to steer at
 	firing = CL_AimAssistFiring( cmd, weapon, viewOrigin, entity );

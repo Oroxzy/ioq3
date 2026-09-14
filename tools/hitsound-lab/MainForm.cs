@@ -82,6 +82,34 @@ public class MainForm : Form, IMessageFilter {
 
 	readonly Label statTuneBoxes = Number();
 	readonly Label statTuneSamples = Number();
+	readonly CheckBox aimHoldFire = new() { Text = "nicht schießen, solange das Ziel hinter Deckung ist", AutoSize = true };
+
+	// Was ein Ziel zum besseren Ziel macht. Die Reihenfolge ist das Gewicht:
+	// oben zaehlt am meisten. Schluessel wie in cl_aimAssistPriority.
+	static readonly (string Key, string Name, string Effect)[] Priorities = {
+		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss überhaupt durchkommt" ),
+		( "cursor",   "Nähe zum Fadenkreuz",   "wohin du ohnehin schon zielst" ),
+		( "attacker", "wer mich zuletzt traf", "sofort zurückschlagen" ),
+		( "sure",     "Treffsicherheit",       "was die Waffe auf die Entfernung gemessen trifft" ),
+		( "near",     "Nähe im Raum",          "der nächste Gegner zuerst" ),
+		( "wounded",  "schon verwundet",       "wen ich selbst angeschlagen habe" ),
+		( "keep",     "Ziel behalten",         "nicht zwischen zweien hin und her springen" ),
+		( "powerup",  "trägt ein Powerup",     "Quad, Regeneration, Haste zuerst" ),
+		( "air",      "in der Luft",           "fliegt berechenbar - ein bloßer Sprung zählt nicht" ),
+	};
+	static readonly int[] PriorityDefault = { 100, 80, 100, 60, 40, 40, 30, 20, 0 };
+
+	readonly Dictionary<string, int> prioWeight = new();
+	readonly ListView prioView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, CheckBoxes = true,
+		GridLines = true, HideSelection = false, Font = new Font( "Segoe UI", 9 ),
+	};
+	readonly Button prioUp = new() { Text = "▲ höher", Width = 90 };
+	readonly Button prioDown = new() { Text = "▼ tiefer", Width = 90 };
+	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 260 };
+	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	bool prioUpdating;
+
 	readonly Label statBestWeapon = Number();
 	readonly ListView rankView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
@@ -157,6 +185,29 @@ public class MainForm : Form, IMessageFilter {
 		rankView.Columns.Add( "Treffer", 70, HorizontalAlignment.Right );
 		rankView.Columns.Add( "Quote", 260 );
 		rankView.Columns.Add( "Fehlweite ø", 90, HorizontalAlignment.Right );
+
+		prioView.Columns.Add( "Kriterium", 190 );
+		prioView.Columns.Add( "Gewicht", 70, HorizontalAlignment.Right );
+		prioView.Columns.Add( "was es bewirkt", 400 );
+		for ( int i = 0; i < Priorities.Length; i++ ) prioWeight[Priorities[i].Key] = PriorityDefault[i];
+		FillPriorities();
+		prioUp.Click += ( _, _ ) => MovePriority( -1 );
+		prioDown.Click += ( _, _ ) => MovePriority( 1 );
+		prioView.SelectedIndexChanged += ( _, _ ) => ShowPrioritySelection();
+		prioView.ItemChecked += ( _, e ) => {
+			if ( prioUpdating ) return;
+			// abgehakt heisst Gewicht null; beim Wiedereinschalten kommt ein
+			// brauchbarer Wert zurueck, sonst bliebe die Zeile wirkungslos
+			var key = (string)e.Item.Tag!;
+			if ( !e.Item.Checked ) prioWeight[key] = 0;
+			else if ( prioWeight[key] == 0 ) prioWeight[key] = 50;
+			FillPriorities();
+		};
+		prioBar.ValueChanged += ( _, _ ) => {
+			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
+			prioWeight[(string)prioView.SelectedItems[0].Tag!] = prioBar.Value;
+			FillPriorities( (string)prioView.SelectedItems[0].Tag! );
+		};
 		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text
 		rankView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
 		rankView.DrawItem += ( _, _ ) => { };
@@ -363,6 +414,7 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
 			Row( Pad( aimAttacker ), Pad( aimPrefer ), Pad( aimExact ) ),
+			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ), Pad( aimLearn ), Pad( aimLearned ) ),
 			Row( Pad( botOutline ) ),
 			Row( Pad( itemOutline ), Pad( itemOutlineAll ) ),
@@ -429,7 +481,79 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Rangliste",
 			Row( Counter( "beste Waffe:", statBestWeapon ) ),
 			rankView ) );
+		tabs.TabPages.Add( Page( "Vorrang",
+			Row( Pad( prioUp ), Pad( prioDown ), Pad( new Label {
+					Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 8, 4, 0 ) } ),
+				Pad( prioBar ), Pad( prioValue ) ),
+			prioView ) );
 		return tabs;
+	}
+
+	// Die Liste, nach Gewicht sortiert: oben zaehlt am meisten
+	void FillPriorities( string? keep = null ) {
+		prioUpdating = true;
+		prioView.BeginUpdate();
+		prioView.Items.Clear();
+
+		foreach ( var p in Priorities.OrderByDescending( p => prioWeight[p.Key] )
+				.ThenBy( p => Array.FindIndex( Priorities, q => q.Key == p.Key ) ) ) {
+			int weight = prioWeight[p.Key];
+			var row = new ListViewItem( p.Name ) { Tag = p.Key, Checked = weight > 0 };
+			row.SubItems.Add( weight.ToString() );
+			row.SubItems.Add( p.Effect );
+			if ( weight == 0 ) row.ForeColor = Color.DimGray;
+			prioView.Items.Add( row );
+			if ( keep is not null && p.Key == keep ) row.Selected = true;
+		}
+
+		prioView.EndUpdate();
+		prioUpdating = false;
+		ShowPrioritySelection();
+	}
+
+	void ShowPrioritySelection() {
+		if ( prioView.SelectedItems.Count == 0 ) { prioValue.Text = "(Zeile wählen)"; return; }
+		var key = (string)prioView.SelectedItems[0].Tag!;
+		prioUpdating = true;
+		prioBar.Value = Math.Clamp( prioWeight[key], prioBar.Minimum, prioBar.Maximum );
+		prioUpdating = false;
+		prioValue.Text = prioWeight[key].ToString();
+	}
+
+	// Hoeher oder tiefer heisst: das Gewicht mit dem Nachbarn tauschen, denn
+	// das Gewicht ist die Reihenfolge
+	void MovePriority( int step ) {
+		if ( prioView.SelectedItems.Count == 0 ) return;
+		int index = prioView.SelectedItems[0].Index, other = index + step;
+		if ( other < 0 || other >= prioView.Items.Count ) return;
+
+		var key = (string)prioView.Items[index].Tag!;
+		var neighbour = (string)prioView.Items[other].Tag!;
+		int mine = prioWeight[key], theirs = prioWeight[neighbour];
+		if ( mine == theirs ) {
+			// gleich schwer: einen Schritt daran vorbei
+			mine = Math.Clamp( theirs - step, 0, 100 );
+		} else {
+			( mine, theirs ) = ( theirs, mine );
+		}
+		prioWeight[key] = mine;
+		prioWeight[neighbour] = theirs;
+		FillPriorities( key );
+	}
+
+	string PriorityString() =>
+		string.Join( " ", Priorities.Select( p => p.Key + ":" + prioWeight[p.Key] ) );
+
+	void ApplyPriorityString( string text ) {
+		foreach ( var part in text.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) ) {
+			var colon = part.IndexOf( ':' );
+			if ( colon <= 0 ) continue;
+			var key = part[..colon];
+			if ( prioWeight.ContainsKey( key ) && int.TryParse( part[( colon + 1 )..], out int w ) ) {
+				prioWeight[key] = Math.Clamp( w, 0, 100 );
+			}
+		}
+		FillPriorities();
 	}
 
 	// Karteikarte: eine Zeile Zaehler oben, darunter die Liste
@@ -502,6 +626,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
 		s.AppendLine( "aimExact=" + aimExact.Checked );
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
+		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
+		s.AppendLine( "aimPriority=" + PriorityString() );
 		s.AppendLine( "aimPrefer=" + aimPrefer.Checked );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
@@ -551,6 +677,8 @@ public class MainForm : Form, IMessageFilter {
 		SetNum( aimLead, v, "aimLead" );
 		SetBool( aimExact, v, "aimExact" );
 		SetBool( aimLearn, v, "aimLearn" );
+		SetBool( aimHoldFire, v, "aimHoldFire" );
+		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
 		SetBool( aimPrefer, v, "aimPrefer" );
 		SetBool( botOutline, v, "botOutline" );
 		SetBool( itemOutline, v, "itemOutline" );
@@ -592,6 +720,8 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistLead {Dec( aimLead.Value )}" );
 		cfg.AppendLine( $"seta cl_aimAssistExact {( aimExact.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistPriority \"{PriorityString()}\"" );
 		cfg.AppendLine( "set logfile 2" );
 		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf lokale Bot-Partien. Der
