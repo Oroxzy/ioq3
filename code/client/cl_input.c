@@ -548,37 +548,6 @@ static float CL_AimAssistProjectileSpeed( int weapon ) {
 }
 
 
-/*
-=================
-CL_AimAssistReach
-
-How far a weapon is worth steering for. Measured in play: beyond these
-distances the rocket and the shotgun stop hitting anything, the lightning gun
-simply ends and the gauntlet has to touch. Zero means no limit.
-=================
-*/
-static float CL_AimAssistReach( int weapon ) {
-	switch ( weapon ) {
-	case WP_GAUNTLET:
-		return 64.0f;
-	case WP_SHOTGUN:
-		return 800.0f;
-	case WP_GRENADE_LAUNCHER:
-		return 700.0f;
-	case WP_ROCKET_LAUNCHER:
-		return 900.0f;
-	case WP_LIGHTNING:
-		return 768.0f;
-	case WP_PLASMAGUN:
-		return 1400.0f;
-	case WP_BFG:
-		return 2000.0f;
-	default:
-		return 0.0f;
-	}
-}
-
-
 // Movement constants the game keeps to itself: the height a walking player is
 // lifted over (STEPSIZE in bg_local.h) and the head start every missile gets on
 // its first frame (MISSILE_PRESTEP_TIME in g_missile.c).
@@ -1924,7 +1893,7 @@ crosshair alone, which is what the record of unassisted shots is held against.
 =================
 */
 static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam, int weapon,
-		float reach, qboolean prefer, qboolean sticky ) {
+		qboolean sticky ) {
 	entityState_t	*entity, *best = NULL;
 	const char		*info;
 	trace_t			trace;
@@ -1941,12 +1910,6 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	if ( !sticky ) {
 		weight[AIM_PRIO_CURSOR] = 1.0f;		// the plain crosshair pick for the record
 		weight[AIM_PRIO_SIGHT] = 1.0f;
-	}
-
-	// A short weapon with cl_aimAssistPrefer takes the closest target first,
-	// the way it always has; the list decides everything else.
-	if ( prefer && reach > 0.0f ) {
-		weight[AIM_PRIO_NEAR] *= 2.0f;
 	}
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
@@ -2754,7 +2717,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, reach, k;
+	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, k;
 	int				i, key, localTeam, weapon;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
 
@@ -2784,12 +2747,11 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
 		weapon = cl.snap.ps.weapon;
 	}
-	reach = CL_AimAssistReach( weapon );
 
 	if ( !steering ) {
 		// no help this frame, but a shot is still worth a line for the record
 		entity = cl_aimAssistDebug->integer
-			? CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, 0.0f, qfalse, qfalse ) : NULL;
+			? CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, qfalse ) : NULL;
 		firing = CL_AimAssistFiring( cmd, weapon, viewOrigin, entity );
 		if ( firing && entity ) {
 			CL_AimAssistTargetPoint( entity, viewOrigin, weapon, qtrue, targetOrigin, &lead );
@@ -2823,8 +2785,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		cmd->buttons &= ~BUTTON_ATTACK;
 	}
 
-	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, reach,
-		cl_aimAssistPrefer->integer != 0, qtrue );
+	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, qtrue );
 
 	// A shot into cover is a wasted one: hold the trigger until there is a way
 	// through, for anyone who asked for that.

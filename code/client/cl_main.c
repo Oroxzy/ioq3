@@ -78,7 +78,6 @@ cvar_t	*cl_autoRecordDemo;
 cvar_t	*cl_aimAssist;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
-cvar_t	*cl_aimAssistPrefer;
 cvar_t	*cl_aimAssistPriority;
 cvar_t	*cl_aimAssistHoldFire;
 cvar_t	*cl_aimAssistSmooth;
@@ -3614,9 +3613,6 @@ void CL_Init( void ) {
 	cl_aimAssistAttacker = Cvar_Get( "cl_aimAssistAttacker", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistAttacker, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistAttacker, "Aim assistance snaps to whichever bot is dealing damage, instead of the one nearest the crosshair" );
-	cl_aimAssistPrefer = Cvar_Get( "cl_aimAssistPrefer", "1", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_aimAssistPrefer, 0, 1, qtrue );
-	Cvar_SetDescription( cl_aimAssistPrefer, "With a short-ranged weapon the aim assist takes the closest bot first and ignores those out of reach" );
 	cl_aimAssistPriority = Cvar_Get( "cl_aimAssistPriority",
 		"sight:100 cursor:80 attacker:100 sure:60 near:40 wounded:40 keep:30 powerup:20 air:0", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistPriority, "What makes one bot the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );

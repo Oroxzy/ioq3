@@ -49,8 +49,9 @@ public class MainForm : Form, IMessageFilter {
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", Checked = true, AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
 	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", Checked = true, AutoSize = true };
-	readonly CheckBox aimPrefer = new() { Text = "kurze Waffen: nächstes Ziel zuerst", Checked = true, AutoSize = true };
-	readonly CheckBox aimAttacker = new() { Text = "sofort auf den, der mich trifft", Checked = true, AutoSize = true };
+	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
+	// dass zum Angreifer ohne Einschwenken gesprungen wird
+	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
 	readonly CheckBox itemOutline = new() { Text = "Waffen und Powerups mit Respawn-Zeit", Checked = true, AutoSize = true };
 	readonly CheckBox itemOutlineAll = new() { Text = "auch Rüstung und Mega", Checked = true, AutoSize = true };
 	readonly TextBox aimKey = new() {
@@ -259,7 +260,6 @@ public class MainForm : Form, IMessageFilter {
 		aimStrength.Enabled = on;
 		aimKey.Enabled = on;
 		aimAttacker.Enabled = on;
-		aimPrefer.Enabled = on;
 		aimSmooth.Enabled = on;
 		aimExact.Enabled = on;
 		aimLearn.Enabled = on;
@@ -419,7 +419,7 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
-			Row( Pad( aimAttacker ), Pad( aimPrefer ), Pad( aimExact ) ),
+			Row( Pad( aimAttacker ), Pad( aimExact ) ),
 			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ), Pad( aimLearn ), Pad( aimLearned ) ),
 			Row( Pad( botOutline ) ),
@@ -645,7 +645,6 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
 		s.AppendLine( "aimPriority=" + PriorityString() );
-		s.AppendLine( "aimPrefer=" + aimPrefer.Checked );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
 		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
@@ -696,7 +695,6 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
 		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
-		SetBool( aimPrefer, v, "aimPrefer" );
 		SetBool( botOutline, v, "botOutline" );
 		SetBool( itemOutline, v, "itemOutline" );
 		SetBool( itemOutlineAll, v, "itemOutlineAll" );
@@ -729,7 +727,6 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
 		cfg.AppendLine( $"seta cl_itemOutline {( itemOutline.Checked ? ( itemOutlineAll.Checked ? 2 : 1 ) : 0 )}" );
 		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"seta cl_aimAssistPrefer {( aimPrefer.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
