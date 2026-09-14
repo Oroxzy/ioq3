@@ -19,6 +19,17 @@ Waffentimer voraus und setzt auf genau dem Befehl, auf dem der Server feuert,
 den Zielpunkt auf die Stelle, gegen die der Server den Schuss wirklich prüft.
 Dazwischen folgt sie weich, damit das Bild nicht ruckelt.
 
+Die Glättung dazwischen ist ein Ausgleich mit Mittelwert null — über alle
+gezeichneten Bilder hebt sie sich auf. Über die **Schüsse** tat sie das nicht:
+ein Waffentakt von hundert Millisekunden schwebt gegen einen Snapshot-Takt von
+fünfzig und trifft immer wieder dieselbe Stelle der Sägezahnkurve, sodass das
+Maschinengewehr mit einem festen Vorhalt von etwa sieben Millisekunden schoss —
+immer vor das Ziel, nie dahinter, rund drei Einheiten. Der Ausgleich bleibt
+jetzt auf **jedem** Schusskommando weg, nicht nur auf denen der Einzelschuss-
+waffen. Und der Abstand, ab dem der eigene Splash die Hilfe aussetzen lässt,
+richtet sich nach der Waffe: die früheren pauschalen 160 Einheiten passen zur
+Rakete und sind für Plasma, dessen Splash zwanzig weit reicht, achtmal zu viel.
+
 Sie ist **auf die lokale Verbindung und auf Bots begrenzt** und lässt sich
 nicht gegen Menschen einsetzen: sie läuft nur über `NA_LOOPBACK`, und ein Ziel
 kommt nur infrage, wenn der Server es in seinem Spieler-Configstring als Bot
@@ -43,7 +54,22 @@ Client nicht wissen kann, behauptet er auch nicht.
 nicht durchkommt. Geprüft wird die Linie zu dem Punkt, auf den **wirklich
 gezielt** wird — bei der Rakete also der vorgehaltene, nicht der Bot: einer
 hinter einer Säule, dessen Vorhaltepunkt im Freien steht, ist ein Schuss wert;
-einer im Freien, dessen Vorhaltepunkt hinter der Säule liegt, nicht.
+einer im Freien, dessen Vorhaltepunkt hinter der Säule liegt, nicht. Dasselbe
+gilt, wenn der eigene Splash einen erwischen würde.
+
+Die Prüfung läuft von der Mündung, vierzehn Einheiten vor dem Auge, wie sie der
+Server baut — und sie sieht auch **Türen und Aufzüge**, die der reine
+Welt-Test durchlässt. Sie fällt, bevor der Schuss vorhergesagt wird, denn eine
+Sperre löscht im Spiel den Waffentimer: eine Vorhersage, die den Schuss schon
+gezählt hätte, liefe dem Server um einen Schuss voraus.
+
+Zwei Dinge dazu, die man wissen muss. Gesperrt wird nur, **solange die
+Zieltaste hält** — ohne Ziel gibt es kein „durchkommen", das man prüfen könnte.
+Und eine Sperre **verzögert**, sie streicht nicht: das Spiel setzt den
+Waffentimer auf null, sobald ein Befehl ohne Abzug ankommt, also feuert der
+nächste Befehl mit Abzug sofort. Deshalb steht jede Sperre im Protokoll und
+ihre Zahl oben im Tab „Trefferton" — vorher war eine wirkende Sperre von einer
+toten Einstellung nicht zu unterscheiden.
 
 ## Die Tabs
 
@@ -65,7 +91,7 @@ Gewichte machen daraus eine Zahl, und das höchste Ziel gewinnt.
 
 | Kriterium | wofür |
 | --- | --- |
-| freie Sichtlinie | nur, worauf ein Schuss überhaupt durchkommt |
+| freie Sichtlinie | nur, worauf ein Schuss durchkommt — mit kurzer Nachwirkung |
 | Nähe zum Fadenkreuz | wohin du ohnehin schon zielst |
 | wer mich zuletzt traf | sofort zurückschlagen |
 | Treffsicherheit | was die Waffe auf die Entfernung **gemessen** trifft |
@@ -75,7 +101,26 @@ Gewichte machen daraus eine Zahl, und das höchste Ziel gewinnt.
 | trägt ein Powerup | Quad, Regeneration, Haste zuerst |
 | in der Luft | fliegt berechenbar — ein bloßer Sprung zählt nicht |
 
-Zwei Dinge sind dabei erwähnenswert, weil sie nicht selbstverständlich sind:
+Drei Dinge sind dabei erwähnenswert, weil sie nicht selbstverständlich sind:
+
+*Freie Sichtlinie* hat als einzige Eigenschaft des Augenblicks eine Uhr, und
+die hat sie sich verdient. Die Linie wird von einem Auge gezogen, das sich mit
+jedem gezeichneten Bild bewegt, gegen einen Körper, der sich nur bewegt, wenn
+ein Snapshot ankommt — an einer Kante kippt die Antwort deshalb mehrmals
+**innerhalb eines Server-Frames**. Im Protokoll stand eine Zielwahl, die in
+einer Viertelsekunde zehnmal zwischen zwei Bots hin und her sprang, und Schüsse
+binnen einer Zehntelsekunde nach so einem Sprung waren **dreieinhalbmal
+ungenauer** als der Rest — bei einem Sechstel aller Schüsse.
+
+Eine Zehntelsekunde Gedächtnis beendet das. Das sind zwei Server-Frames, mehr
+kann das Flackern nie überspannen, und länger ist es bewusst nicht: jede
+Millisekunde davon ist eine, in der die Wahl an einem Ziel hängen könnte, das
+wirklich hinter etwas verschwunden ist. Aus demselben Grund bekommt **nur das
+Ziel, auf das gerade gezielt wird**, dieses Gedächtnis — sonst könnte die Hilfe
+einen Bot hinter einer Wand aufgreifen, zu dem sie dann keinen Weg findet,
+während ein erreichbarer im Freien steht. Nebenbei entscheidet das größte
+Gewicht der Tabelle damit endlich etwas, statt jedem Bewerber dieselben hundert
+Punkte zu addieren.
 
 *Treffsicherheit* stützt sich nicht auf eine Annahme, sondern auf die Tabelle
 aus dem Tab „pro Waffe". Eine Rakete, deren gemessene Streuung breiter ist als
@@ -111,6 +156,14 @@ ein Fach, **gelesen weich**: zwischen den Mitten zweier Fächer wird
 überblendet, damit eine halbe Zehntelsekunde Unterschied nicht zu einer anderen
 Antwort führt, bloß weil ein Schuss ins Nachbarfach fiel.
 
+Die **Streuung** eines Fachs ist der ganze Fehlschuss, nicht nur seine Hälfte.
+Bis Dateifassung 3 zählte allein, wie weit das Ziel an seiner eigenen
+Laufrichtung entlang danebenlag; was es **quer dazu** tat, ging verloren — und
+das war der größere Teil: über eine Sitzung 22 Einheiten längs gegen 28
+Einheiten quer. Die Streuung stand damit bei zwei Dritteln ihrer wahren Größe,
+und ein gemessenes Fach wirkte zuverlässiger als ein ungemessenes. Eine ältere
+`aimtune.cfg` wird deshalb verworfen statt weitergeschrieben.
+
 Die Datei überlebt die Sitzung, weil ein Fach sich langsam füllt — eine
 Handvoll Schüsse pro Abend. Der Konsolenbefehl `aimtune` gibt die Tabelle
 jederzeit aus, samt der Gewichte, wie die Engine sie verstanden hat.
@@ -132,8 +185,22 @@ statt stillschweigend Felder zu lesen, die es damals nicht gab.
 | `aim skip:` | warum die Hilfe **nichts** tat: kein Ziel, kein Durchkommen, eigener Splash |
 | `aim learn:` | eine gemessene Probe: wie weit der Bot wirklich lief gegen die Erwartung |
 | `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame |
+| `aim hold:` | jede Sperre des Abzugs mit Grund und Entfernung, und wie lange sie hielt |
 | `aim tune:` | der Stand eines Fachs nach jeder Änderung |
 | `aim impact:` / `aim missile:` | jeder Einschlag mit den Stellungen aller Bots, jedes Geschoss beim Start |
+
+Die Schusszeile hat in Fassung 5 aufgeräumt. `speed` war die **eigene**
+Geschwindigkeit, obwohl die zweite Achse der Tabelle die des Ziels ist — jetzt
+`pace` für das Ziel und `myspeed` für einen selbst, wie auf der Lernzeile.
+`frame` war hier die Uhr des Befehls und auf jeder anderen Zeilenart die des
+Snapshots, was jede Verknüpfung um bis zu ein Drittel Server-Frame verschob —
+jetzt `cmd`, und `world` bleibt der Snapshot. `phase` ist ganz weg: die Zeile
+wird nur auf einem Schusskommando geschrieben, und das bekommt den Ausgleich
+nicht mehr, also hätte das Feld nur noch eine Zahl gedruckt, die auf nichts
+angewandt wurde. Neu dazu kommt `swing` — wie weit die Sicht bis zum Schuss
+kommen musste. Bei den schnappenden Waffen ist `error` bauartbedingt null, weil
+die Sicht genau auf den Punkt gesetzt wird; erst `swing` sagt dort, wie viel
+Arbeit das war.
 
 Die letzten beiden machen den Löwenanteil des Volumens aus — und genau aus
 ihnen kommt die Fehlweiten-Messung.

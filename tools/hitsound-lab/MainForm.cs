@@ -77,6 +77,8 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label statShotRate = Number();
 	readonly Label statShotError = Number();
 	readonly Label statShotRateOff = Number();
+	readonly Label statHold = Number();
+	readonly ToolTip holdTip = new();
 	readonly ListView shotView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ),
@@ -91,7 +93,7 @@ public class MainForm : Form, IMessageFilter {
 	// Life > 0: eine Regel ueber etwas, das geschehen ist - die verfaellt.
 	// Life = 0: eine Eigenschaft des Augenblicks, die keine Uhr braucht.
 	static readonly (string Key, string Name, string Effect, double Life)[] Priorities = {
-		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss überhaupt durchkommt", 0 ),
+		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss durchkommt – plus Nachwirkung", 0.1 ),
 		( "cursor",   "Nähe zum Fadenkreuz",   "wohin du ohnehin schon zielst", 0 ),
 		( "attacker", "wer mich zuletzt traf", "sofort zurückschlagen, solange es frisch ist", 6 ),
 		( "sure",     "Treffsicherheit",       "was die Waffe auf die Entfernung gemessen trifft", 0 ),
@@ -113,7 +115,11 @@ public class MainForm : Form, IMessageFilter {
 	readonly Button prioDown = new() { Text = "▼ tiefer", Width = 90 };
 	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 200 };
 	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
-	readonly TrackBar prioLifeBar = new() { Minimum = 0, Maximum = 60, TickFrequency = 5, Width = 160 };
+	// in Zehntelsekunden, damit auch die Nachwirkung der Sichtlinie einstellbar
+	// ist - die liegt bei Bruchteilen einer Sekunde, nicht bei ganzen. Die
+	// Reichweite bleibt dieselbe wie zuvor in ganzen Sekunden, sonst wuerde
+	// ein geladener Wert darueber beim ersten Anfassen stillschweigend gekappt.
+	readonly TrackBar prioLifeBar = new() { Minimum = 0, Maximum = 600, TickFrequency = 100, Width = 160 };
 	readonly Label prioLifeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	bool prioUpdating;
 	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
@@ -134,7 +140,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 4;
+	const int LogVersion = 5;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -184,6 +190,11 @@ public class MainForm : Form, IMessageFilter {
 		shotView.Columns.Add( "in der Luft", 80 );
 		shotView.Columns.Add( "Vorhalt", 70, HorizontalAlignment.Right );
 		shotView.Columns.Add( "Fehler", 70, HorizontalAlignment.Right );
+		// Bei geschnappten Waffen ist der Fehler bauartbedingt null, weil die
+		// Sicht genau auf den Punkt gesetzt wird. Erst der Schwenk daneben
+		// sagt, wie weit die Hilfe dafuer arbeiten musste.
+		shotView.Columns.Add( "Schwenk", 70, HorizontalAlignment.Right );
+		shotView.Columns.Add( "Tempo", 70, HorizontalAlignment.Right );
 		shotView.Columns.Add( "Zielpunkt", 150 );
 		shotView.Columns.Add( "Ergebnis", 80 );
 		shotView.Columns.Add( "Hilfe", 60 );
@@ -239,7 +250,7 @@ public class MainForm : Form, IMessageFilter {
 			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
 			var key = (string)prioView.SelectedItems[0].Tag!;
 			if ( !IsTimed( key ) ) return;
-			prioTime[key] = prioLifeBar.Value;
+			prioTime[key] = prioLifeBar.Value / 10.0;
 			FillPriorities( key );
 		};
 		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text
@@ -488,6 +499,7 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( aimExact ) ),
 			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
+			Row( Hint( "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." ) ),
 			Row( Hint( "Die Taste zielt nur; geschossen wird mit der Feuertaste." ) ),
 			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ) );
 	}
@@ -562,7 +574,8 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Zielhilfe",
 			Row( Counter( "Schüsse:", statShots ), Counter( "getroffen:", statShotHits ),
 				Counter( "daneben:", statShotMiss ), Counter( "Quote:", statShotRate ),
-				Counter( "ohne Hilfe:", statShotRateOff ), Counter( "Fehler ø:", statShotError ) ),
+				Counter( "ohne Hilfe:", statShotRateOff ), Counter( "Fehler ø:", statShotError ),
+				Counter( "Feuer gehalten:", statHold ) ),
 			shotView ) );
 		tabs.TabPages.Add( Page( "pro Waffe",
 			Row( Counter( "Töpfe:", statTuneBoxes ), Counter( "Proben:", statTuneSamples ) ),
@@ -602,7 +615,7 @@ public class MainForm : Form, IMessageFilter {
 			int weight = prioWeight[p.Key];
 			var row = new ListViewItem( p.Name ) { Tag = p.Key, Checked = weight > 0 };
 			row.SubItems.Add( weight.ToString() );
-			row.SubItems.Add( IsTimed( p.Key ) ? prioTime[p.Key].ToString( "0" ) + " s" : "—" );
+			row.SubItems.Add( IsTimed( p.Key ) ? prioTime[p.Key].ToString( "0.0" ) + " s" : "—" );
 			row.SubItems.Add( p.Effect );
 			if ( weight == 0 ) row.ForeColor = Color.DimGray;
 			prioView.Items.Add( row );
@@ -632,10 +645,10 @@ public class MainForm : Form, IMessageFilter {
 		prioBar.Value = Math.Clamp( prioWeight[key], prioBar.Minimum, prioBar.Maximum );
 		prioLifeBar.Enabled = timed;
 		prioLifeBar.Value = timed
-			? (int)Math.Clamp( prioTime[key], prioLifeBar.Minimum, prioLifeBar.Maximum ) : 0;
+			? (int)Math.Clamp( Math.Round( prioTime[key] * 10 ), prioLifeBar.Minimum, prioLifeBar.Maximum ) : 0;
 		prioUpdating = false;
 		prioValue.Text = prioWeight[key].ToString();
-		prioLifeValue.Text = timed ? prioTime[key].ToString( "0" ) + " s" : "dauerhaft";
+		prioLifeValue.Text = timed ? prioTime[key].ToString( "0.0" ) + " s" : "dauerhaft";
 	}
 
 	// Hoeher oder tiefer heisst: das Gewicht mit dem Nachbarn tauschen, denn
@@ -659,8 +672,12 @@ public class MainForm : Form, IMessageFilter {
 		FillPriorities( key );
 	}
 
+	// Der Punkt muss ein Punkt bleiben: die Engine liest die Zahl mit atof,
+	// das ein deutsches Komma als Ende der Zahl nimmt und die Nachkommastellen
+	// stillschweigend verschluckt.
 	string PriorityString() => string.Join( " ", Priorities.Select( p => IsTimed( p.Key )
-		? $"{p.Key}:{prioWeight[p.Key]}:{prioTime[p.Key]:0}"
+		? string.Format( System.Globalization.CultureInfo.InvariantCulture,
+			"{0}:{1}:{2:0.##}", p.Key, prioWeight[p.Key], prioTime[p.Key] )
 		: $"{p.Key}:{prioWeight[p.Key]}" ) );
 
 	void ApplyPriorityString( string text ) {
@@ -671,7 +688,9 @@ public class MainForm : Form, IMessageFilter {
 			if ( f.Length > 2 && IsTimed( f[0] )
 				&& double.TryParse( f[2], System.Globalization.NumberStyles.Any,
 					System.Globalization.CultureInfo.InvariantCulture, out double life ) ) {
-				prioTime[f[0]] = Math.Clamp( life, 0, 120 );
+				// dieselbe Obergrenze wie der Schieber, damit ein geladener
+				// Wert nicht groesser sein kann als das, was er anzeigt
+				prioTime[f[0]] = Math.Clamp( life, 0, prioLifeBar.Maximum / 10.0 );
 			}
 		}
 		FillPriorities();
@@ -927,7 +946,8 @@ public class MainForm : Form, IMessageFilter {
 			return;		// das Spiel schreibt gerade, beim naechsten Mal wieder
 		}
 
-		int hits = 0, sounds = 0;
+		int hits = 0, sounds = 0, holds = 0, heldMs = 0;
+		var holdReason = new Dictionary<string, int>();
 		var frames = new HashSet<string>();
 		var recent = new List<string>();
 		var damageFrames = new List<Damage>();
@@ -972,6 +992,20 @@ public class MainForm : Form, IMessageFilter {
 			} else if ( trimmed.StartsWith( "aim missile: " ) ) {
 				var missile = Missile.Parse( trimmed );
 				if ( missile is not null ) missiles.Add( missile );
+			} else if ( trimmed.StartsWith( "aim hold: " ) ) {
+				// "... released after N ms frame M" schliesst eine Sperre ab,
+				// jede andere Zeile oeffnet eine
+				var f = trimmed.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+				int at = Array.IndexOf( f, "after" );
+				if ( at >= 0 && at + 1 < f.Length && int.TryParse( f[at + 1], out int ms ) ) {
+					heldMs += ms;
+				} else {
+					holds++;
+					var reason = string.Join( " ", f.Skip( 3 ).TakeWhile( x => x != "at" ) );
+					if ( reason.Length > 0 ) {
+						holdReason[reason] = holdReason.GetValueOrDefault( reason ) + 1;
+					}
+				}
 			} else if ( trimmed.StartsWith( "aim learn: " ) ) {
 				learned = trimmed;
 			} else if ( trimmed.StartsWith( "aim log: " ) ) {
@@ -984,6 +1018,21 @@ public class MainForm : Form, IMessageFilter {
 		}
 
 		ShowLogVersion( stamp );
+
+		// Wie oft der Abzug gesperrt wurde und wie lange insgesamt. Ohne diese
+		// Zeile war nicht zu unterscheiden, ob die Sperre nie zugriff oder ob
+		// sie zugriff und man es nur nicht merkte.
+		// Kurz halten: die Zeile ist die siebte Zahl in einer Reihe, die nicht
+		// umbricht. Die Aufschlüsselung steht im Tooltip.
+		if ( holds == 0 ) {
+			statHold.Text = "–";
+			holdTip.SetToolTip( statHold, "Der Abzug wurde nie gesperrt." );
+		} else {
+			statHold.Text = $"{holds}× / {heldMs} ms";
+			holdTip.SetToolTip( statHold, string.Join( "\n", holdReason
+				.OrderByDescending( x => x.Value ).Select( x => $"{x.Key}: {x.Value}" ) ) );
+		}
+
 		UpdateShots( shots, damageFrames, impacts, missiles );
 		UpdateTune( tunes );
 		ShowLearned( learned );
@@ -1142,6 +1191,9 @@ public class MainForm : Form, IMessageFilter {
 		public bool InAir;
 		public bool Assisted = true;	// aeltere Protokolle kennen das Feld nicht
 		public double Error;
+		public double Swing;			// wie weit die Sicht bis zum Schuss kommen musste
+		public double Pace;				// Tempo des Ziels, die zweite Achse der Tabelle
+		public double MySpeed;			// eigenes Tempo
 		public double[] Eye = new double[3], Plain = new double[3];
 		public string Weapon = "", Target = "", Position = "";
 
@@ -1159,6 +1211,8 @@ public class MainForm : Form, IMessageFilter {
 					case "air": shot.InAir = f[i + 1] == "1"; break;
 				case "assist": shot.Assisted = f[i + 1] == "1"; break;
 				case "me": int.TryParse( f[i + 1], out shot.Me ); break;
+				case "pace": double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Pace ); break;
+				case "myspeed": double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.MySpeed ); break;
 				case "world": int.TryParse( f[i + 1], out shot.World ); break;
 				case "eye": ReadPoint( f, i + 1, shot.Eye ); break;
 				case "plain": ReadPoint( f, i + 1, shot.Plain ); break;
@@ -1166,9 +1220,18 @@ public class MainForm : Form, IMessageFilter {
 					case "error":
 						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Error );
 						break;
+					// Wie weit die Sicht kommen musste. Bei geschnappten Waffen
+					// ist "error" bauartbedingt null, "swing" sagt dort alles.
+					case "swing":
+						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Swing );
+						break;
 					case "at":
 						if ( i + 3 < f.Length ) shot.Position = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
 						break;
+					// "cmd" ist der Takt des Befehls, "frame" hiess dasselbe in
+					// Fassung 4 und frueher. Auf jeder anderen Zeilenart meint
+					// "frame" dagegen den Snapshot - deshalb der neue Name.
+					case "cmd":
 					case "frame": ok = int.TryParse( f[i + 1], out shot.Frame ); break;
 				}
 			}
@@ -1488,6 +1551,8 @@ public class MainForm : Form, IMessageFilter {
 				shot.InAir ? "ja" : "nein",
 				shot.Lead + " ms",
 				shot.Error.ToString( "0.00" ) + "°",
+				shot.Swing.ToString( "0.00" ) + "°",
+				shot.Pace.ToString( "0" ) + "/" + shot.MySpeed.ToString( "0" ),
 				shot.Position,
 				landed ? "Treffer" : "daneben",
 				shot.Assisted ? "ja" : "nein",
