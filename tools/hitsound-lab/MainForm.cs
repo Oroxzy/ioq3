@@ -603,7 +603,9 @@ public class MainForm : Form, IMessageFilter {
 			lines.Add( "aimLead=" + Dec( aimLead.Value ) );
 			Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath )! );
 			File.WriteAllLines( SettingsPath, lines );
-		} catch ( IOException ) {
+		} catch ( Exception ) {
+			// eine schreibgeschuetzte Datei oder ein gesperrter Ordner ist kein
+			// Grund, den Takt mit einem Fehlerdialog anzuhalten
 		}
 	}
 
@@ -614,7 +616,12 @@ public class MainForm : Form, IMessageFilter {
 		bool exited;
 		try { exited = game is { HasExited: true }; } catch ( InvalidOperationException ) { exited = false; }
 
-		if ( logPath.Length == 0 || !File.Exists( logPath ) ) return;
+		if ( logPath.Length == 0 || !File.Exists( logPath ) ) {
+			// ein Spiel, das zu Ende ist, ohne je ein Protokoll geschrieben zu
+			// haben, darf kein spaeteres, von Hand gestartetes beglaubigen
+			if ( exited ) game = null;
+			return;
+		}
 
 		string text;
 		try {

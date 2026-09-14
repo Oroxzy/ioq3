@@ -1065,6 +1065,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 
 		VectorCopy( trace.endpos, predicted );
 		if ( trace.fraction >= 1.0f ) {
+			stopped = qfalse;		// the run got all the way, stairs or not
 			break;
 		}
 		stopped = qtrue;
@@ -1109,12 +1110,14 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 	if ( !trace.startsolid && !trace.allsolid && trace.fraction < 1.0f ) {
 		floor = trace.endpos[2];
 
+		// only a move worth the name counts as being set down: a runner on
+		// the flat sits on its floor to begin with, give or take a hair
 		if ( predicted[2] < floor ) {
+			snapped = floor - predicted[2] > 0.5f;
 			predicted[2] = floor;					// landed, or walked up a step
-			snapped = qtrue;
 		} else if ( grounded && predicted[2] - floor <= STEPSIZE ) {
+			snapped = predicted[2] - floor > 0.5f;
 			predicted[2] = floor;					// walked down a step
-			snapped = qtrue;
 		}
 	}
 
@@ -1208,19 +1211,23 @@ The aim has to be solved, not offset: point somewhere, see where the arc
 crosses the target's distance, raise the point by the shortfall, and again -
 each round brings the height at that distance closer, and a few rounds settle
 it. Far below the eye a full step overshoots, so the step is halved whenever
-the miss changes sign. The loop leaves with the time that belongs to the aim
-it hands out. A target out of throwing range keeps the aim rising; the cap
-stops that.
+the miss changes sign. Out of throwing range the miss stops shrinking and
+would grow with every round from there; the best aim found is the one handed
+out then - the throw that lands nearest - and the loop leaves with the time
+that belongs to the aim it hands out.
 =================
 */
 static void CL_AimAssistArc( const vec3_t eye, const vec3_t impact, vec3_t aim, float *timeOut ) {
 	vec3_t	muzzle, velocity;
-	float	time, height, miss, lastMiss, gain;
+	float	time, height, miss, lastMiss, bestMiss, bestHeight, bestTime, gain;
 	int		i;
 
 	VectorCopy( impact, aim );
 	time = 0.0f;
 	lastMiss = 0.0f;
+	bestMiss = 0.0f;
+	bestHeight = aim[2];
+	bestTime = 0.0f;
 	gain = 1.0f;
 
 	for ( i = 0; i < 16; i++ ) {
@@ -1231,11 +1238,20 @@ static void CL_AimAssistArc( const vec3_t eye, const vec3_t impact, vec3_t aim, 
 
 		height = muzzle[2] + velocity[2] * time - 0.5f * DEFAULT_GRAVITY * time * time;
 		miss = impact[2] - height;
+		if ( i == 0 || fabs( miss ) < fabs( bestMiss ) ) {
+			bestMiss = miss;
+			bestHeight = aim[2];
+			bestTime = time;
+		}
 		if ( fabs( miss ) < 0.25f || i == 15 ) {
 			break;
 		}
-		if ( i > 0 && ( miss > 0.0f ) != ( lastMiss > 0.0f ) ) {
-			gain *= 0.5f;
+		if ( i > 0 ) {
+			if ( ( miss > 0.0f ) != ( lastMiss > 0.0f ) ) {
+				gain *= 0.5f;		// overshot: damp
+			} else if ( fabs( miss ) >= fabs( lastMiss ) ) {
+				break;				// no closer on the same side: out of range
+			}
 		}
 		lastMiss = miss;
 		if ( aim[2] - impact[2] + miss * gain > 4096.0f ) {
@@ -1244,8 +1260,9 @@ static void CL_AimAssistArc( const vec3_t eye, const vec3_t impact, vec3_t aim, 
 		aim[2] += miss * gain;
 	}
 
+	aim[2] = bestHeight;
 	if ( timeOut ) {
-		*timeOut = time;
+		*timeOut = bestTime;
 	}
 }
 
@@ -1999,7 +2016,12 @@ static void CL_AimAssistWatch( void ) {
 	// counter, which the game steps at most once in 700 ms; the damage count,
 	// which it rewrites on every damaged frame; or the attacker itself, which
 	// it rewrites on every hit.
-	if ( ps->persistant[PERS_SPAWN_COUNT] != aimSpawnCount ) {
+	// A restart or a team change goes through the same reset as a connect,
+	// which leaves the spawn count where a life with no death had it; the
+	// damage count going back to nothing tells those apart from a hit, which
+	// always leaves a count behind.
+	if ( ps->persistant[PERS_SPAWN_COUNT] != aimSpawnCount
+		|| ( ps->damageCount == 0 && aimDamageCount != 0 ) ) {
 		aimSpawnCount = ps->persistant[PERS_SPAWN_COUNT];
 		aimAttacker = -1;
 		aimDamageEvent = ps->damageEvent;
