@@ -61,7 +61,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly NumericUpDown aimSmooth = new() { Minimum = 0, Maximum = 300, Increment = 10, Value = 0, Width = 60 };
 	readonly NumericUpDown aimLead = new() { DecimalPlaces = 1, Increment = 0.1m, Minimum = 0.1m, Maximum = 5.0m, Value = 1.5m, Width = 70 };
 	readonly CheckBox aimExact = new() { Text = "exakt im Schussmoment", Checked = true, AutoSize = true };
-	readonly CheckBox aimLearn = new() { Text = "Vorhalt automatisch optimieren", Checked = true, AutoSize = true };
+	readonly CheckBox aimLearn = new() { Text = "je Waffe und Entfernung nachmessen", Checked = true, AutoSize = true };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
 	readonly Label statHits = Number();
@@ -128,7 +128,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 1;
+	const int LogVersion = 2;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -143,7 +143,6 @@ public class MainForm : Form, IMessageFilter {
 	string rankStamp = "";
 	string tuneStamp = "";
 	Process? game;					// das von hier gestartete Spiel, solange es laeuft
-	decimal leadAtStart;			// der Vorhalt, mit dem es gestartet wurde
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
@@ -849,7 +848,6 @@ public class MainForm : Form, IMessageFilter {
 			}
 			shotStamp = "";
 			aimLearned.Text = "";
-			leadAtStart = aimLead.Value;
 
 			game = Process.Start( new ProcessStartInfo {
 				FileName = exe,
@@ -862,23 +860,6 @@ public class MainForm : Form, IMessageFilter {
 			status.ForeColor = Color.ForestGreen;
 		} catch ( Exception ex ) {
 			MessageBox.Show( this, ex.Message, "Start fehlgeschlagen", MessageBoxButtons.OK, MessageBoxIcon.Error );
-		}
-	}
-
-	// Nur den gelernten Vorhalt in die gespeicherten Einstellungen schreiben,
-	// alles andere so lassen, wie es zuletzt gespeichert wurde - und wenn noch
-	// nie gespeichert wurde, wenigstens diesen einen Wert
-	void PersistLearnedLead() {
-		try {
-			var lines = File.Exists( SettingsPath )
-				? File.ReadAllLines( SettingsPath ).Where( l => !l.StartsWith( "aimLead=" ) ).ToList()
-				: new List<string>();
-			lines.Add( "aimLead=" + Dec( aimLead.Value ) );
-			Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath )! );
-			File.WriteAllLines( SettingsPath, lines );
-		} catch ( Exception ) {
-			// eine schreibgeschuetzte Datei oder ein gesperrter Ordner ist kein
-			// Grund, den Takt mit einem Fehlerdialog anzuhalten
 		}
 	}
 
@@ -971,7 +952,6 @@ public class MainForm : Form, IMessageFilter {
 		// Start der App wieder weg
 		if ( exited ) {
 			game = null;
-			if ( aimLearn.Checked && aimLead.Value != leadAtStart ) PersistLearnedLead();
 		}
 
 		int missed = Math.Max( 0, frames.Count - sounds );
@@ -1095,35 +1075,22 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
-	// Die letzte Zeile "aim learn:" - der Vorhalt, den das Spiel gerade gelernt
-	// hat. Solange das Spiel ihn selbst optimiert, folgt der Regler dem Spiel,
-	// und beim naechsten Start geht der gelernte Wert wieder mit hinein.
+	// Die letzte Zeile "aim learn:" - wie viele Schuesse bisher gemessen wurden.
+	// Der Regler daneben wird davon nicht mehr bewegt: er gibt dem Vorhalt seine
+	// Form und bleibt die Vorgabe des Benutzers, waehrend das Gemessene je Waffe
+	// und Flugzeit in der Karte "pro Waffe" steht. Ein einzelner gelernter Wert
+	// haette eine Korrektur von einer Entfernung auf alle anderen uebertragen.
 	void ShowLearned( string line ) {
 		if ( line.Length == 0 ) return;
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
-		decimal hold = 0;
 		int count = 0;
 		for ( int i = 0; i < f.Length - 1; i++ ) {
-			if ( f[i] == "hold" ) {
-				decimal.TryParse( f[i + 1], System.Globalization.NumberStyles.Any,
-					System.Globalization.CultureInfo.InvariantCulture, out hold );
-			} else if ( f[i] == "n" ) {
-				int.TryParse( f[i + 1], out count );
-			}
+			if ( f[i] == "n" ) int.TryParse( f[i + 1], out count );
 		}
-		if ( hold <= 0 ) return;
+		if ( count <= 0 ) return;
 
-		// Nur das Spiel, das von hier gestartet wurde, darf den Regler bewegen -
-		// bis sein Protokoll nach dem Ende einmal ganz gelesen ist: ein altes
-		// Protokoll wuerde sonst beim Start den gespeicherten Wert ueberschreiben
-		if ( game is null ) return;
-
-		aimLearned.Text = $"gelernt: {hold.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture )} s aus {count} Schüssen";
-		var rounded = Math.Round( hold, 1 );
-		if ( aimLearn.Checked && rounded >= aimLead.Minimum && rounded <= aimLead.Maximum && aimLead.Value != rounded ) {
-			aimLead.Value = rounded;
-		}
+		aimLearned.Text = $"{count} Schüsse gemessen – siehe „pro Waffe“";
 	}
 
 	// Eine Zeile "aim shot:" aus dem Protokoll

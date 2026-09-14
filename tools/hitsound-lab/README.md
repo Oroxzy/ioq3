@@ -28,6 +28,12 @@ ausweist. Das ist keine Einstellung, sondern steht so im Code.
 einen Kasten mit Respawn-Zähler, dessen Farbe von Rot über Orange nach Grün
 läuft, je näher das Ding am Zurückkommen ist.
 
+**Feuer halten.** Auf Wunsch bleibt der Abzug gesperrt, solange der Schuss
+nicht durchkommt. Geprüft wird die Linie zu dem Punkt, auf den **wirklich
+gezielt** wird — bei der Rakete also der vorgehaltene, nicht der Bot: einer
+hinter einer Säule, dessen Vorhaltepunkt im Freien steht, ist ein Schuss wert;
+einer im Freien, dessen Vorhaltepunkt hinter der Säule liegt, nicht.
+
 ## Die Tabs
 
 | Tab | zeigt |
@@ -74,20 +80,58 @@ ist nicht möglich.
 
 ## Was dabei gelernt wird
 
-Mit „Vorhalt automatisch optimieren" misst das Spiel nach jedem Geschoss, wie
-weit der Bot bis zum Ankunfts-Frame wirklich in seine Laufrichtung gekommen
-ist, und stellt den Vorhalt danach. Das Ergebnis landet in zwei Stellen:
+Mit „je Waffe und Entfernung nachmessen" prüft das Spiel nach jedem Geschoss,
+wie weit der Bot bis zum Ankunfts-Frame wirklich in seine Laufrichtung gekommen
+ist — und schreibt das Ergebnis **in das Fach seiner Waffe und seiner Flugzeit**,
+sonst nirgendwohin.
 
-* `cl_aimAssistLead` — wie lange ein Ziel seine Richtung im Schnitt hält
-* `baseq3/aimtune.cfg` — je Waffe und Flugzeitband der Faktor und die Streuung
+Das ist der wichtige Teil. Früher gab es **einen** gelernten Wert, den jeder
+Schuss bewegte. Ein Schwung weiter Raketen zog ihn herunter und verkürzte damit
+den Vorhalt für nahes Plasma mit, wo nie etwas gemessen worden war. Was auf
+einer Entfernung gilt, gehört auf diese Entfernung.
 
-Die zweite Datei überlebt die Sitzung, weil ein Fach sich langsam füllt: eine
+| | was es ist |
+| --- | --- |
+| `cl_aimAssistLead` („Richtung halten") | **deine Vorgabe**, nicht gelernt: sie gibt dem Vorhalt seine Form |
+| `baseq3/aimtune.cfg` | **das Gemessene**: je Waffe × Flugzeitband ein Faktor und die Streuung |
+
+Vier Bänder (bis 0,4 s / 0,8 s / 1,3 s / darüber). Geschrieben wird scharf in
+ein Fach, **gelesen weich**: zwischen den Mitten zweier Fächer wird
+überblendet, damit eine halbe Zehntelsekunde Unterschied nicht zu einer anderen
+Antwort führt, bloß weil ein Schuss ins Nachbarfach fiel.
+
+Die Datei überlebt die Sitzung, weil ein Fach sich langsam füllt — eine
 Handvoll Schüsse pro Abend. Der Konsolenbefehl `aimtune` gibt die Tabelle
-jederzeit aus, und beim Verlassen wird sie ins Protokoll geschrieben.
+jederzeit aus, samt der Gewichte, wie die Engine sie verstanden hat.
 
 Nichts davon weiß etwas über die mitgelieferten Bots. Gemessen wird, was vor
 der Waffe steht — andere Bots oder unvorhersehbare Bewegung ergeben einfach
 andere Zahlen.
+
+## Was im Protokoll steht
+
+Jede Sitzung stempelt sich mit der Fassung ihrer Zeilen (`aim log: version …`).
+Passt sie nicht zu der, die dieses Werkzeug kennt, sagt es das oben im Fenster,
+statt stillschweigend Felder zu lesen, die es damals nicht gab.
+
+| Zeile | wofür |
+| --- | --- |
+| `aim shot:` | jeder Schuss: Ziel, Entfernung, Vorhalt, Zielpunkt, Restfehler, der gemessene Faktor und die erwartete Streuung, ob der Ersatzpunkt griff |
+| `aim pick:` | jede Änderung der Zielwahl mit dem Beitrag **jeder** Priorität und den Punktzahlen der übrigen Bewerber |
+| `aim skip:` | warum die Hilfe **nichts** tat: kein Ziel, kein Durchkommen, eigener Splash |
+| `aim learn:` | eine gemessene Probe: wie weit der Bot wirklich lief gegen die Erwartung |
+| `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame |
+| `aim tune:` | der Stand eines Fachs nach jeder Änderung |
+| `aim impact:` / `aim missile:` | jeder Einschlag mit den Stellungen aller Bots, jedes Geschoss beim Start |
+
+Die letzten beiden machen den Löwenanteil des Volumens aus — und genau aus
+ihnen kommt die Fehlweiten-Messung.
+
+**Ein Fallstrick beim Auswerten:** die Bot-Stellungen einer `aim impact:`-Zeile
+sind einen Server-Frame **zu spät**, weil das Ereignis erst mit dem nächsten
+Snapshot ankommt. Für Hitscan steht die richtige Stellung in der Schusszeile
+selbst (`plain` — das Ziel in dem Frame, gegen den der Befehl lief). Wer gegen
+die Einschlagliste misst, bläht jede Fehlweite um eine Frame-Bewegung auf.
 
 ## Bauen und starten
 

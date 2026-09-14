@@ -870,22 +870,19 @@ in seconds, and the learner tunes it from what the bots really do.
 */
 // Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
 // verschwindet oder seine Bedeutung wechselt.
-#define AIM_LOG_VERSION	1
+#define AIM_LOG_VERSION	2
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
-static int		aimHoldMarked = -1;		// server time the learned value was last marked for q3config.cfg
-static qboolean	aimHoldPending;			// a learned step the config has not been marked for yet
-
-void Com_WriteConfiguration( void );
 
 /*
 =================
 CL_AimAssistHold
 
-The hold time in use is the cvar itself. The learner writes every step
-straight into it, so whatever sets the cvar - a config, the console, the test
-bench - simply becomes the value the learner goes on from, and there is no
-second copy that could quietly disagree with what the cvar shows.
+How long a target is assumed to hold its direction, in seconds. This is the
+player's setting, not a learned one: it gives the lead its shape, and the
+measured table corrects that shape per weapon and per flight time. It used to
+be learned as well, and that was the mistake - one number moved by every shot
+carries a correction found at one range into every other.
 =================
 */
 static float CL_AimAssistHold( void ) {
@@ -894,39 +891,10 @@ static float CL_AimAssistHold( void ) {
 
 /*
 =================
-CL_AimAssistSetHold
-
-The learner's write. The cvar is archived, and an ordinary set of an archived
-cvar has the engine write q3config.cfg on the next frame - a file written on
-every learned shot would be a hitch on every shot. So the step is written with
-the archive flag masked, which changes the value at once and the file not at
-all; the file is marked for writing every couple of seconds instead, and the
-rest is flushed when the connection goes (CL_AimAssistFlush).
-=================
-*/
-static void CL_AimAssistSetHold( float hold ) {
-	int	flags;
-
-	flags = cl_aimAssistLead->flags;
-	cl_aimAssistLead->flags &= ~CVAR_ARCHIVE;
-	Cvar_SetValue( "cl_aimAssistLead", hold );
-	cl_aimAssistLead->flags = flags;
-	aimHoldPending = qtrue;
-
-	if ( aimHoldMarked < 0 || cl.snap.serverTime - aimHoldMarked > 2000 || aimHoldMarked > cl.snap.serverTime ) {
-		cvar_modifiedFlags |= flags & CVAR_ARCHIVE;
-		aimHoldMarked = cl.snap.serverTime;
-		aimHoldPending = qfalse;
-	}
-}
-
-/*
-=================
 CL_AimAssistFlush
 
-Called when the connection goes. The mark alone is not enough on the way out
-of the program: the config is written at the top of a frame, and no frame
-follows a quit. So the file is written here as well.
+Called when the connection goes: the measured table is written out, and the
+next session stamps the log afresh.
 =================
 */
 static void CL_AimAssistTuneSave( void );
@@ -934,18 +902,9 @@ void CL_AimAssistTuneDump( void );
 static void CL_AimAssistPriorityDump( void );
 
 void CL_AimAssistFlush( void ) {
-	aimLogStamped = qfalse;			// die naechste Sitzung stempelt neu
+	aimLogStamped = qfalse;
 	CL_AimAssistTuneSave();
 	CL_AimAssistTuneDump();
-
-	if ( !cl_aimAssistLead || !aimHoldPending ) {
-		return;
-	}
-
-	cvar_modifiedFlags |= cl_aimAssistLead->flags & CVAR_ARCHIVE;
-	aimHoldPending = qfalse;
-	aimHoldMarked = -1;
-	Com_WriteConfiguration();
 }
 
 static float CL_AimAssistSideways( float time ) {
@@ -1099,8 +1058,22 @@ with a prior weight of its own on the untouched value, so a first sample
 nudges rather than decides.
 =================
 */
+static float CL_AimAssistBandCentre( int band ) {
+	static const float	centre[AIM_BANDS] = { 0.2f, 0.6f, 1.05f, 1.8f };
+
+	return centre[band < 0 ? 0 : ( band >= AIM_BANDS ? AIM_BANDS - 1 : band )];
+}
+
+// What one box on its own says, with its own weight against the untouched one
+static float CL_AimAssistBoxFactor( int weapon, int band ) {
+	const aimTune_t	*t = &aimTune[weapon][band];
+
+	return ( t->sum + AIM_TUNE_PRIOR ) / ( t->weight + AIM_TUNE_PRIOR );
+}
+
 static float CL_AimAssistTune( int weapon, float lead ) {
-	const aimTune_t	*t;
+	float	here, there, share;
+	int		band, next;
 
 	if ( !aimTuneLoaded ) {
 		CL_AimAssistTuneLoad();
@@ -1109,9 +1082,27 @@ static float CL_AimAssistTune( int weapon, float lead ) {
 		return 1.0f;
 	}
 
-	t = &aimTune[weapon][CL_AimAssistBand( lead )];
-	return Com_Clamp( 0.1f, 2.0f,
-		( t->sum + AIM_TUNE_PRIOR ) / ( t->weight + AIM_TUNE_PRIOR ) );
+	// A box is written sharp and read soft. Half a frame either side of a
+	// boundary are the same shot, and they should not get different answers
+	// because one landed in the next box: the two nearest boxes are blended
+	// by where the flight time falls between their middles, so the correction
+	// runs smoothly with the range instead of stepping at the edges.
+	band = CL_AimAssistBand( lead );
+	here = CL_AimAssistBandCentre( band );
+
+	if ( lead < here && band > 0 ) {
+		next = band - 1;
+	} else if ( lead > here && band < AIM_BANDS - 1 ) {
+		next = band + 1;
+	} else {
+		return Com_Clamp( 0.1f, 2.0f, CL_AimAssistBoxFactor( weapon, band ) );
+	}
+
+	there = CL_AimAssistBandCentre( next );
+	share = Com_Clamp( 0.0f, 1.0f, ( lead - here ) / ( there - here ) );
+
+	return Com_Clamp( 0.1f, 2.0f, CL_AimAssistBoxFactor( weapon, band ) * ( 1.0f - share )
+		+ CL_AimAssistBoxFactor( weapon, next ) * share );
 }
 
 /*
@@ -2520,20 +2511,22 @@ static void CL_AimAssistLearn( void ) {
 		expected = p->expected;
 		error = Com_Clamp( -1.0f, 1.0f, ( actual - expected ) / p->straight );
 		weight = p->straight / ( p->straight + lateral );
-		hold = CL_AimAssistHold() * exp( 0.1f * error * weight );
-		hold = Com_Clamp( 0.1f, 5.0f, hold );
-		CL_AimAssistSetHold( hold );
-
-		// and into the box for this weapon at this flight time, which is what
-		// the prediction and the target choice really read
+		// Into the box for this weapon at this flight time, and nowhere else.
+		// There used to be a single hold time that every shot moved, and that
+		// was wrong: a run of long rockets pulled it down and shortened the
+		// lead for close plasma with it, where nothing had been measured at
+		// all. What is learned at one range belongs to that range.
 		CL_AimAssistTuneUpdate( p->weapon, p->lead, expected, actual, weight );
+		hold = CL_AimAssistHold();
 		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
 
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
-		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f hold %.2f n %i frame %i\n",
+		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f"
+			" error %.2f weight %.2f hold %.2f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
-			actual, p->straight, expected, lateral, hold, aimLearned, cl.snap.serverTime );
+			actual, p->straight, expected, lateral, error, weight, hold,
+			aimLearned, cl.snap.serverTime );
 		Com_Printf( "aim tune: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), band, CL_AimAssistBandStart( band ),
 			CL_AimAssistTune( p->weapon, p->lead ), CL_AimAssistScatter( p->weapon, p->lead ),
