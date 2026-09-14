@@ -134,6 +134,8 @@ public class MainForm : Form, IMessageFilter {
 	string aimKeyBeforeCapture = "MOUSE4";
 	bool capturingAimKey;
 	string shotStamp = "";
+	string rankStamp = "";
+	string tuneStamp = "";
 	Process? game;					// das von hier gestartete Spiel, solange es laeuft
 	decimal leadAtStart;			// der Vorhalt, mit dem es gestartet wurde
 
@@ -246,6 +248,7 @@ public class MainForm : Form, IMessageFilter {
 
 		Controls.Add( BuildLayout() );
 		Application.AddMessageFilter( this );
+		foreach ( var view in new[] { shotView, tuneView, rankView, prioView } ) FitOnResize( view );
 		FillPriorities();			// erst wenn die Liste im Fenster haengt
 		LoadSettings();
 		poll.Start();
@@ -1158,9 +1161,26 @@ public class MainForm : Form, IMessageFilter {
 	// vorbei und schlaegt irgendwo dahinter ein - der Einschlag selbst sagt
 	// nichts, der Abstand der Linie zum Ziel dagegen alles. "kurz" heisst, der
 	// Schuss ist vor dem Ziel im Boden oder einer Wand geblieben.
-	static string DescribeMiss( Shot shot, Impact impact, out double units ) {
+	// Wo das Ziel stand, als der Schuss aufgeloest wurde. Die Bot-Liste einer
+	// Einschlagzeile ist dafuer einen Server-Frame zu spaet: das Ereignis kommt
+	// erst mit dem naechsten Snapshot an. Bei Hitscan steht die richtige
+	// Stellung ohnehin in der Schusszeile - "plain" ist das Ziel im Frame, gegen
+	// den der Befehl lief, und stimmt damit auf die Einheit. Bei Geschossen
+	// zaehlt der Ankunftszeitpunkt, also die Liste eines Frames davor.
+	static double[]? ResolvePosition( Shot shot, Impact impact, List<Impact> impacts ) {
+		if ( !IsProjectile( shot.Weapon ) && shot.World >= 0 ) return shot.Plain;
+
+		var earlier = impacts.FirstOrDefault( x => x.Frame == impact.Frame - 50
+			&& x.Bots.ContainsKey( shot.Target ) );
+		if ( earlier is not null ) return earlier.Bots[shot.Target];
+
+		return impact.Bots.TryGetValue( shot.Target, out var late ) ? late : null;
+	}
+
+	static string DescribeMiss( Shot shot, Impact impact, List<Impact> impacts, out double units ) {
 		units = 0;
-		if ( !impact.Bots.TryGetValue( shot.Target, out var bot ) ) return "";
+		var bot = ResolvePosition( shot, impact, impacts );
+		if ( bot is null ) return "";
 
 		double ux = impact.At[0] - shot.Eye[0], uy = impact.At[1] - shot.Eye[1], uz = impact.At[2] - shot.Eye[2];
 		double len = Math.Sqrt( ux * ux + uy * uy + uz * uz );
@@ -1219,6 +1239,47 @@ public class MainForm : Form, IMessageFilter {
 	// Flugzeit, wie viel vom Vorhalt wirklich eintrifft und wie weit das
 	// Ergebnis danach noch streut. Die Streuung gegen den Wirkradius sagt,
 	// ob der Schuss auf die Entfernung ueberhaupt zu machen ist.
+	// Die Spalten sollen die Fensterbreite mitnehmen. Was beim Anlegen als
+	// Breite dasteht, gilt dabei als Verhaeltnis: eine breite Spalte bekommt
+	// von jeder zusaetzlichen Breite entsprechend mehr ab.
+	static void FitColumns( ListView view ) {
+		var columns = view.Columns.Cast<ColumnHeader>().ToArray();
+		var weights = columns.Select( c => c.Tag is int t ? t : c.Width ).ToArray();
+		int total = weights.Sum();
+		int room = view.ClientSize.Width - 4;
+		if ( total <= 0 || room < 120 ) return;
+
+		// Enger als die eigene Ueberschrift wird keine Spalte - lieber quer
+		// scrollen als zwoelf Spalten, die alle "F..." heissen
+		var least = columns.Select( c => TextRenderer.MeasureText( c.Text, view.Font ).Width + 22 ).ToArray();
+
+		int used = 0;
+		for ( int i = 0; i < columns.Length - 1; i++ ) {
+			int w = Math.Max( least[i], room * weights[i] / total );
+			columns[i].Width = w;
+			used += w;
+		}
+		columns[^1].Width = Math.Max( least[^1], room - used );
+	}
+
+	static void FitOnResize( ListView view ) {
+		foreach ( ColumnHeader column in view.Columns ) column.Tag = column.Width;
+		view.Resize += ( _, _ ) => FitColumns( view );
+		FitColumns( view );
+	}
+
+	// Welche Zeile gewaehlt ist, damit sie einen Neuaufbau ueberlebt: sonst
+	// verliert man sie alle halbe Sekunde, sobald das Protokoll weiterlaeuft
+	static string? SelectedKey( ListView view ) => view.SelectedItems.Count > 0
+		? ( view.SelectedItems[0].Tag as string ?? view.SelectedItems[0].Text ) : null;
+
+	static void Reselect( ListView view, string? key ) {
+		if ( key is null ) return;
+		foreach ( ListViewItem row in view.Items ) {
+			if ( ( row.Tag as string ?? row.Text ) == key ) { row.Selected = true; return; }
+		}
+	}
+
 	void UpdateTune( Dictionary<string, Tune> tunes ) {
 		var rows = new List<ListViewItem>();
 		int samples = 0;
@@ -1242,7 +1303,7 @@ public class MainForm : Form, IMessageFilter {
 				colour = Color.Firebrick;
 			}
 
-			var row = new ListViewItem( t.Weapon ) { ForeColor = colour };
+			var row = new ListViewItem( t.Weapon ) { ForeColor = colour, Tag = t.Weapon + "|" + t.Band };
 			row.SubItems.Add( t.From.ToString( "0.0", System.Globalization.CultureInfo.InvariantCulture ) + " s" );
 			row.SubItems.Add( t.Samples.ToString() );
 			row.SubItems.Add( t.Factor.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture ) );
@@ -1255,9 +1316,16 @@ public class MainForm : Form, IMessageFilter {
 		statTuneBoxes.Text = rows.Count.ToString();
 		statTuneSamples.Text = samples.ToString();
 
+		// nur neu zeichnen, wenn sich wirklich etwas geaendert hat
+		var stamp = string.Join( ";", rows.Select( r => r.Tag + ":" + r.SubItems[2].Text + ":" + r.SubItems[4].Text ) );
+		if ( stamp == tuneStamp ) return;
+		tuneStamp = stamp;
+
+		var keep = SelectedKey( tuneView );
 		tuneView.BeginUpdate();
 		tuneView.Items.Clear();
 		tuneView.Items.AddRange( rows.ToArray() );
+		Reselect( tuneView, keep );
 		tuneView.EndUpdate();
 	}
 
@@ -1299,9 +1367,15 @@ public class MainForm : Form, IMessageFilter {
 		var best = order.FirstOrDefault( r => r.Shots >= 5 ) ?? order.FirstOrDefault();
 		statBestWeapon.Text = best is null ? "–" : $"{best.Weapon} {100 * best.Share:0} %";
 
+		var stamp = string.Join( ";", order.Select( r => $"{r.Weapon}:{r.Shots}:{r.Hits}:{r.MissCount}" ) );
+		if ( stamp == rankStamp ) return;
+		rankStamp = stamp;
+
+		var keep = SelectedKey( rankView );
 		rankView.BeginUpdate();
 		rankView.Items.Clear();
 		rankView.Items.AddRange( rows.ToArray() );
+		Reselect( rankView, keep );
 		rankView.EndUpdate();
 	}
 
@@ -1341,7 +1415,7 @@ public class MainForm : Form, IMessageFilter {
 			var impact = FindImpact( shot, impacts, missiles );
 			string missText = "";
 			double missUnits = 0;
-			if ( impact is not null ) missText = DescribeMiss( shot, impact, out missUnits );
+			if ( impact is not null ) missText = DescribeMiss( shot, impact, impacts, out missUnits );
 
 			// die Quote mit Hilfe sagt erst etwas, wenn die ohne daneben steht
 			if ( shot.Assisted ) { assisted++; if ( landed ) assistedHit++; }
@@ -1385,10 +1459,15 @@ public class MainForm : Form, IMessageFilter {
 		if ( stamp == shotStamp ) return;
 		shotStamp = stamp;
 
+		// Eine gewaehlte Zeile bleibt gewaehlt, und nur ohne Auswahl laeuft die
+		// Liste dem neuesten Schuss hinterher - wer etwas ansieht, will nicht
+		// bei jedem Schuss weggescrollt werden
+		var keep = SelectedKey( shotView );
 		shotView.BeginUpdate();
 		shotView.Items.Clear();
 		shotView.Items.AddRange( rows.TakeLast( 300 ).ToArray() );
-		if ( shotView.Items.Count > 0 ) shotView.EnsureVisible( shotView.Items.Count - 1 );
+		Reselect( shotView, keep );
+		if ( keep is null && shotView.Items.Count > 0 ) shotView.EnsureVisible( shotView.Items.Count - 1 );
 		shotView.EndUpdate();
 	}
 }
