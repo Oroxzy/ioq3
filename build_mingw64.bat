@@ -50,6 +50,14 @@ if exist vm\ui.qvm del vm\ui.qvm
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
+REM Der Quake-Champions-Trefferton. Die Engine sucht ihn als sound/feedback/hit_qc.wav,
+REM also muss er in einem pk3 liegen - lose Dateien findet der Server bei sv_pure nicht.
+pushd "%PROJECT_DIR%assets\hitsound-qc" || goto :error
+"%CMAKE_EXE%" -E tar cf "%GAME_DIR%\baseq3\zz-hitsound-qc.pk3" --format=zip sound
+set "PK3_ERROR=%ERRORLEVEL%"
+popd
+if not "%PK3_ERROR%"=="0" goto :error
+
 echo.
 echo *** Build fertig. Starten mit: "%GAME_DIR%\ioquake3.exe" ***
 echo *** ENTER zum Schliessen... ***
