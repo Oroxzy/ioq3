@@ -109,6 +109,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 260 };
 	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	bool prioUpdating;
+	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
 
 	readonly Label statBestWeapon = Number();
 	readonly ListView rankView = new() {
@@ -190,18 +191,22 @@ public class MainForm : Form, IMessageFilter {
 		prioView.Columns.Add( "Gewicht", 70, HorizontalAlignment.Right );
 		prioView.Columns.Add( "was es bewirkt", 400 );
 		for ( int i = 0; i < Priorities.Length; i++ ) prioWeight[Priorities[i].Key] = PriorityDefault[i];
-		FillPriorities();
 		prioUp.Click += ( _, _ ) => MovePriority( -1 );
 		prioDown.Click += ( _, _ ) => MovePriority( 1 );
 		prioView.SelectedIndexChanged += ( _, _ ) => ShowPrioritySelection();
+		// Beim Anlegen der Zeilen meldet Windows jeden Haken erst als aus und
+		// dann als an. Das ist kein Klick, und ohne diese Unterscheidung
+		// schreibt sich die ganze Liste beim ersten Anzeigen selbst um.
+		prioView.MouseDown += ( _, _ ) => prioClicked = true;
+		prioView.KeyDown += ( _, e ) => { if ( e.KeyCode == Keys.Space ) prioClicked = true; };
 		prioView.ItemChecked += ( _, e ) => {
-			if ( prioUpdating ) return;
+			if ( prioUpdating || !prioClicked || e.Item?.Tag is not string key ) return;
+			prioClicked = false;
 			// abgehakt heisst Gewicht null; beim Wiedereinschalten kommt ein
 			// brauchbarer Wert zurueck, sonst bliebe die Zeile wirkungslos
-			var key = (string)e.Item.Tag!;
 			if ( !e.Item.Checked ) prioWeight[key] = 0;
 			else if ( prioWeight[key] == 0 ) prioWeight[key] = 50;
-			FillPriorities();
+			BeginInvoke( () => FillPriorities( key ) );
 		};
 		prioBar.ValueChanged += ( _, _ ) => {
 			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
@@ -237,6 +242,7 @@ public class MainForm : Form, IMessageFilter {
 
 		Controls.Add( BuildLayout() );
 		Application.AddMessageFilter( this );
+		FillPriorities();			// erst wenn die Liste im Fenster haengt
 		LoadSettings();
 		poll.Start();
 	}
@@ -481,17 +487,28 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Rangliste",
 			Row( Counter( "beste Waffe:", statBestWeapon ) ),
 			rankView ) );
-		tabs.TabPages.Add( Page( "Vorrang",
-			Row( Pad( prioUp ), Pad( prioDown ), Pad( new Label {
-					Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 8, 4, 0 ) } ),
-				Pad( prioBar ), Pad( prioValue ) ),
-			prioView ) );
+		// Eigene Karteikarte statt Page(): die Bedienzeile bekommt eine feste
+		// Hoehe, sonst nimmt sie sich mit dem Schieber darin den ganzen Platz
+		// und die Liste bleibt einen Pixel hoch
+		var prioPage = new TabPage( "Vorrang" ) { Padding = new Padding( 10 ), BackColor = SystemColors.Control };
+		var prioGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+		prioGrid.RowStyles.Add( new RowStyle( SizeType.Absolute, 56 ) );
+		prioGrid.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
+		prioGrid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		prioGrid.Controls.Add( Row( Pad( prioUp ), Pad( prioDown ),
+			Pad( new Label { Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
+			Pad( prioBar ), Pad( prioValue ) ), 0, 0 );
+		prioGrid.Controls.Add( prioView, 0, 1 );
+		prioPage.Controls.Add( prioGrid );
+		tabs.TabPages.Add( prioPage );
 		return tabs;
 	}
 
 	// Die Liste, nach Gewicht sortiert: oben zaehlt am meisten
 	void FillPriorities( string? keep = null ) {
+		if ( prioUpdating ) return;			// nicht aus sich selbst heraus
 		prioUpdating = true;
+		prioClicked = false;
 		prioView.BeginUpdate();
 		prioView.Items.Clear();
 
