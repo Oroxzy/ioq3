@@ -1407,6 +1407,33 @@ static void CL_BotDamageColour( int health, float fresh, qboolean seen, byte *ou
 }
 
 
+// What a bot had left, ready to be written once the world is on the screen
+typedef struct {
+	float	x, y;
+	byte	colour[3];
+	char	text[12];
+} botLabel_t;
+
+static botLabel_t	botLabel[MAX_CLIENTS];
+static int			botLabels;
+
+static void CL_DrawBotLabels( void ) {
+	vec4_t	tint;
+	int		i;
+
+	for ( i = 0; i < botLabels; i++ ) {
+		tint[0] = botLabel[i].colour[0] / 255.0f;
+		tint[1] = botLabel[i].colour[1] / 255.0f;
+		tint[2] = botLabel[i].colour[2] / 255.0f;
+		tint[3] = 1.0f;
+		SCR_DrawStringExt(
+			(int)( botLabel[i].x * 640.0f / cls.glconfig.vidWidth - strlen( botLabel[i].text ) * 5.0f ),
+			(int)( botLabel[i].y * 480.0f / cls.glconfig.vidHeight - 10.0f ),
+			10.0f, botLabel[i].text, tint, qtrue, qfalse );
+	}
+	botLabels = 0;
+}
+
 static void CL_AddBotOutlines( void ) {
 	static const byte	visible[4] = { 255, 115, 25, 255 };
 	static const byte	hidden[4] = { 120, 40, 10, 255 };
@@ -1416,10 +1443,8 @@ static void CL_AddBotOutlines( void ) {
 	const char			*info;
 	const byte			*colour;
 	byte				shade[4];
-	char				text[16];
 	trace_t				trace;
 	vec3_t				origin, corner[8], near[8], eye, label;
-	vec4_t				tint;
 	qboolean			ahead, seen;
 	float				top, fresh, x, y;
 	int					i, j, health = -1, armor = 0;
@@ -1483,18 +1508,21 @@ static void CL_AddBotOutlines( void ) {
 
 		CL_BotOutlineWireBox( near, colour );
 
-		// and the numbers over it, on the grid the menus use
-		if ( health >= 0 && cl_botOutline->integer > 1 ) {
+		// The numbers are flat on the screen, and everything flat has to wait
+		// until the world has been painted or the world paints over it. So
+		// they are only worked out here and drawn later, with the item clocks.
+		if ( health >= 0 && cl_botOutline->integer > 1 && botLabels < MAX_CLIENTS ) {
 			VectorCopy( origin, label );
 			label[2] += top + 14.0f;
 			if ( CL_ProjectToScreen( label, &x, &y ) ) {
-				Com_sprintf( text, sizeof( text ), armor > 0 ? "%i+%i" : "%i", health, armor );
-				tint[0] = colour[0] / 255.0f;
-				tint[1] = colour[1] / 255.0f;
-				tint[2] = colour[2] / 255.0f;
-				tint[3] = 1.0f;
-				SCR_DrawStringExt( (int)( x * 640.0f / cls.glconfig.vidWidth - strlen( text ) * 5.0f ),
-					(int)( y * 480.0f / cls.glconfig.vidHeight - 10.0f ), 10.0f, text, tint, qtrue, qfalse );
+				Com_sprintf( botLabel[botLabels].text, sizeof( botLabel[0].text ),
+					armor > 0 ? "%i+%i" : "%i", health, armor );
+				botLabel[botLabels].x = x;
+				botLabel[botLabels].y = y;
+				botLabel[botLabels].colour[0] = colour[0];
+				botLabel[botLabels].colour[1] = colour[1];
+				botLabel[botLabels].colour[2] = colour[2];
+				botLabels++;
 			}
 		}
 		health = -1;
@@ -1812,6 +1840,7 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
 	VM_Debug( 0 );
 
 	CL_DrawItemTimers();
+	CL_DrawBotLabels();
 
 	CL_CheckMissedHitSound();
 }

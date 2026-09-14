@@ -3633,7 +3633,7 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_aimAssistLead, "Seconds a bot is expected to hold its direction; the sideways lead of a projectile never exceeds it" );
 	cl_aimAssistLearn = Cvar_Get( "cl_aimAssistLearn", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistLearn, 0, 1, qtrue );
-	Cvar_SetDescription( cl_aimAssistLearn, "Let the aim assist adjust cl_aimAssistLead from where the bots really go" );
+	Cvar_SetDescription( cl_aimAssistLearn, "Measure what the lead is really worth per weapon and flight time, into baseq3/aimtune.cfg" );
 
 	cl_hitPitch = Cvar_Get( "cl_hitPitch", "1", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_hitPitch, 0, 1, qtrue );

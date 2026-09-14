@@ -1203,7 +1203,7 @@ evening's worth of shots.
 =================
 */
 static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
-		float expected, float actual, float weight ) {
+		float base, float aimed, float actual, float weight ) {
 	aimTune_t	*t;
 	float		ratio, miss;
 
@@ -1211,13 +1211,22 @@ static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
 		CL_AimAssistTuneLoad();
 	}
 	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f
-		|| expected <= 1.0f || weight <= 0.0f ) {
+		|| base <= 1.0f || weight <= 0.0f ) {
 		return;
 	}
 
 	t = &aimTune[weapon][CL_AimAssistBand( lead )][CL_AimAssistSpeedBand( speed )];
-	ratio = Com_Clamp( 0.0f, 2.0f, actual / expected );
-	miss = actual - expected * CL_AimAssistTune( weapon, lead, speed );
+
+	// The factor is what the model has to be multiplied by, so it has to be
+	// measured against the model - the expectation before this box touched it.
+	// Measured against the already-corrected one, each sample would only ever
+	// say how far the last correction was off, and the box would settle on the
+	// square root of the correction it needs instead of the correction.
+	ratio = Com_Clamp( 0.0f, 2.0f, actual / base );
+
+	// The scatter is what the shot that was really aimed still missed by, so
+	// it is measured against the point that was really aimed at.
+	miss = actual - aimed;
 
 	t->sum = t->sum * AIM_TUNE_DECAY + ratio * weight;
 	t->weight = t->weight * AIM_TUNE_DECAY + weight;
@@ -1864,6 +1873,8 @@ static void CL_AimAssistPriorities( void ) {
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
 static int	aimAttacker = -1;			// the bot that last hurt us, if any
 static int	aimAttackerTime;			// server time it did
+static int	aimShotTarget = -1;			// who the last shot was aimed at
+static int	aimShotTime;				// and when, so a stale one is not believed
 static int	aimKeepSince;				// server time the current target was taken
 static int	aimPickLast = -1;			// who the record last named as the pick
 
@@ -1940,10 +1951,20 @@ static void CL_AimAssistWoundWatch( void ) {
 	if ( hits == aimWoundHits ) {
 		return;
 	}
+	// The count moves on whether or not this one can be put to a name. Leaving
+	// it behind would only hand this report to the next shot, which may well
+	// have gone at somebody else.
 	aimWoundHits = hits;
 
-	// we hit someone, and the one we were aiming at is the one we hit
-	target = aimAssistTarget;
+	// Whoever the shot was fired at - not whoever the aim happens to be on now.
+	// The report arrives with the snapshot, a good fifty milliseconds after the
+	// command that fired, and the pick is remade every frame in between: a
+	// flick in that window would file one bot's health under another's name and
+	// then draw an untouched bot as nearly dead. Only a recent shot counts.
+	target = -1;
+	if ( aimShotTime && cl.snap.serverTime - aimShotTime <= 400 ) {
+		target = aimShotTarget;
+	}
 	remaining = cl.snap.ps.persistant[PERS_ATTACKEE_REMAINING];
 	if ( target < 0 || target >= MAX_CLIENTS || !remaining ) {
 		return;
@@ -2057,8 +2078,12 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		weight[i] = sticky ? aimPriorityWeight[i] : 0.0f;
 	}
 	if ( !sticky ) {
-		weight[AIM_PRIO_CURSOR] = 1.0f;		// the plain crosshair pick for the record
-		weight[AIM_PRIO_SIGHT] = 1.0f;
+		// The plain crosshair pick, for the record of unassisted shots. It has
+		// to answer the same question a player would: the bot being shot at.
+		// One behind a wall, or behind the shooter, is not that - counting
+		// those as missed shots would measure the rate on noise.
+		weight[AIM_PRIO_CURSOR] = 1.0f;
+		weight[AIM_PRIO_SIGHT] = 100.0f;
 	}
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
@@ -2085,9 +2110,12 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 			0, MASK_SOLID, qfalse );
 		visible = trace.fraction >= 1.0f;
 
-		// Out of sight is only out of the running while sight counts for
-		// something; whoever turns it down asks for the one behind the wall.
-		if ( !visible && weight[AIM_PRIO_SIGHT] >= 99.0f ) {
+		// Out of sight is out of the running unless sight has been turned off
+		// altogether. Anything in between would be a trap: a blocked bot that
+		// won the pick cannot be steered at either - the steering finds no way
+		// through and gives up - so it would strand the assist on a target it
+		// can do nothing with while a reachable one stands in the open.
+		if ( !visible && weight[AIM_PRIO_SIGHT] > 0.0f ) {
 			continue;
 		}
 
@@ -2100,6 +2128,12 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 		yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 		angle = sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
+
+		// nobody is shooting at something a quarter turn away from the
+		// crosshair, and the record should not pretend they were
+		if ( !sticky && angle > 30.0f ) {
+			continue;
+		}
 
 		part[AIM_PRIO_SIGHT] = weight[AIM_PRIO_SIGHT] * ( visible ? 1.0f : 0.0f );
 		part[AIM_PRIO_CURSOR] = weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
@@ -2511,6 +2545,7 @@ typedef struct {
 	vec3_t	origin;			// where the target stood at the shot
 	vec3_t	along;			// unit vector of its sideways motion then
 	float	straight;		// sideways distance a straight line gives it by arrival
+	float	base;			// what the model alone expected, before the box's factor
 	float	expected;		// what the prediction really aimed for, tuning included
 	float	rate;			// its sideways speed after the trust of the moment
 	float	speed;			// and before it, which is the axis the table is kept on
@@ -2598,7 +2633,8 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	VectorCopy( along, p->along );
 	p->straight = speed * lead;
 	p->speed = speed;
-	p->expected = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead, speed );
+	p->base = speed * CL_AimAssistSideways( lead ) * trust;
+	p->expected = p->base * CL_AimAssistTune( weapon, lead, speed );
 	p->rate = speed * trust;
 	p->lead = lead;
 }
@@ -2672,7 +2708,7 @@ static void CL_AimAssistLearn( void ) {
 		// was wrong: a run of long rockets pulled it down and shortened the
 		// lead for close plasma with it, where nothing had been measured at
 		// all. What is learned at one range belongs to that range.
-		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, expected, actual, weight );
+		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, p->base, expected, actual, weight );
 		hold = CL_AimAssistHold();
 		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
@@ -2942,7 +2978,7 @@ static int		aimSmoothTarget = -1;	// who the filter was following
 static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
-	vec3_t			viewOrigin, targetOrigin, aimPoint, direction, desired;
+	vec3_t			viewOrigin, targetOrigin, aimPoint, direction, desired, forward;
 	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, k;
 	int				i, key, localTeam, weapon;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
@@ -3020,15 +3056,20 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// shot worth taking, and one standing in the open whose lead is behind the
 	// pillar is not. Only when neither can be reached is there nothing to do.
 	if ( cl_aimAssistHoldFire->integer && entity ) {
-		CL_AimAssistTargetPoint( entity, viewOrigin, weapon, qfalse, aimPoint, NULL );
+		// Along the view as it stands, as far as the target is. Asking whether
+		// the target can be seen is the wrong question and answers itself: the
+		// pick already required that, so the trigger would never be held. What
+		// matters is whether a shot leaving now runs into the map before it
+		// gets there - the view may still be swinging, and with a lead it is
+		// pointed beside the bot on purpose.
+		VectorSubtract( entity->pos.trBase, viewOrigin, direction );
+		desired[PITCH] = cl.viewangles[PITCH] + SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
+		desired[YAW] = cl.viewangles[YAW] + SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
+		desired[ROLL] = 0.0f;
+		AngleVectors( desired, forward, NULL, NULL );
+		VectorMA( viewOrigin, VectorLength( direction ), forward, aimPoint );
 		CM_BoxTrace( &trace, viewOrigin, aimPoint, vec3_origin, vec3_origin,
 			0, MASK_SHOT, qfalse );
-		if ( trace.fraction < 1.0f ) {
-			VectorCopy( entity->pos.trBase, aimPoint );
-			aimPoint[2] += CL_AimAssistBodyHeight( entity );
-			CM_BoxTrace( &trace, viewOrigin, aimPoint, vec3_origin, vec3_origin,
-				0, MASK_SHOT, qfalse );
-		}
 		if ( trace.fraction < 1.0f ) {
 			cmd->buttons &= ~BUTTON_ATTACK;
 		}
@@ -3131,6 +3172,10 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	cl.viewangles[YAW] += yawDelta * blend;
 
 	if ( firing ) {
+		// who this shot went at, for the damage report that arrives later
+		aimShotTarget = entity->clientNum;
+		aimShotTime = cl.snap.serverTime;
+
 		// A shot at the plain body has no led point to learn from, but it
 		// flies the same time, which the record needs to match its impact.
 		CL_AimAssistRemember( entity, weapon, plain ? 0.0f : lead, targetOrigin, exact );
