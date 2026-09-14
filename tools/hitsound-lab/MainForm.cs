@@ -783,6 +783,7 @@ public class MainForm : Form, IMessageFilter {
 	sealed class Shot {
 		public int Frame, Lead, Distance;
 		public int Me = -1;				// eigene Client-Nummer, um Einschlaege zuzuordnen
+		public int World = -1;			// Server-Frame, gegen den der Schuss lief (neuere Protokolle)
 		public bool InAir;
 		public bool Assisted = true;	// aeltere Protokolle kennen das Feld nicht
 		public double Error;
@@ -803,6 +804,7 @@ public class MainForm : Form, IMessageFilter {
 					case "air": shot.InAir = f[i + 1] == "1"; break;
 				case "assist": shot.Assisted = f[i + 1] == "1"; break;
 				case "me": int.TryParse( f[i + 1], out shot.Me ); break;
+				case "world": int.TryParse( f[i + 1], out shot.World ); break;
 				case "eye": ReadPoint( f, i + 1, shot.Eye ); break;
 				case "plain": ReadPoint( f, i + 1, shot.Plain ); break;
 					case "lead": int.TryParse( f[i + 1], out shot.Lead ); break;
@@ -829,15 +831,20 @@ public class MainForm : Form, IMessageFilter {
 	// die gleich nach dem Abzug neben meinem Auge auftaucht, und dann ihr
 	// Einschlag unter derselben Nummer.
 	static Impact? FindImpact( Shot shot, List<Impact> impacts, List<Missile> missiles ) {
+		// Das Ereignis eines Schusses steht im naechsten Snapshot nach dem
+		// Server-Frame, gegen den er lief; ohne "world" bleibt das weite Fenster
+		int start = shot.World >= 0 ? shot.World : shot.Frame;
+		int span = shot.World >= 0 ? 100 : 300;
+
 		if ( IsProjectile( shot.Weapon ) ) {
-			var mine = missiles.FirstOrDefault( m => m.Frame >= shot.Frame && m.Frame <= shot.Frame + 200
+			var mine = missiles.FirstOrDefault( m => m.Frame >= start && m.Frame <= start + 200
 				&& Distance( m.At, shot.Eye ) < 150 );
 			if ( mine is null ) return null;
 			return impacts.FirstOrDefault( x => x.Num == mine.Num && x.Frame >= mine.Frame
 				&& x.Kind.StartsWith( "missile" ) );
 		}
 
-		return impacts.FirstOrDefault( x => x.Frame >= shot.Frame && x.Frame <= shot.Frame + 300
+		return impacts.FirstOrDefault( x => x.Frame >= start && x.Frame <= start + span
 			&& ( x.Kind == "rail" ? x.Client == shot.Me : ( !x.Kind.StartsWith( "missile" ) && x.Other == shot.Me ) ) );
 	}
 
@@ -880,13 +887,22 @@ public class MainForm : Form, IMessageFilter {
 		var claimed = new bool[damageFrames.Count];
 
 		foreach ( var shot in shots ) {
-			int until = shot.Frame + shot.Lead + 300;
+			// Ein Hitscan-Schuss trifft genau im Server-Frame, gegen den sein
+			// Befehl lief - dem "world"-Frame der Zeile; so bekommt bei einer
+			// Zeile pro Kugel jede Kugel nur ihren eigenen Treffer. Ein Geschoss
+			// kommt nach dem Vorhalt an, plus dem Spielraum eines ausweichenden
+			// Ziels. Aeltere Protokolle ohne "world" behalten das weite Fenster.
+			int from = shot.Frame, until = shot.Frame + shot.Lead + 300;
+			if ( shot.World >= 0 ) {
+				from = shot.World;
+				until = IsProjectile( shot.Weapon ) ? shot.World + shot.Lead + 400 : shot.World;
+			}
 			bool landed = false;
 
 			for ( int i = 0; i < damageFrames.Count; i++ ) {
 				var damage = damageFrames[i];
 				if ( claimed[i] || damage.Victim != shot.Target ) continue;
-				if ( damage.Frame < shot.Frame || damage.Frame > until ) continue;
+				if ( damage.Frame < from || damage.Frame > until ) continue;
 
 				claimed[i] = true;
 				landed = true;
