@@ -88,28 +88,33 @@ public class MainForm : Form, IMessageFilter {
 
 	// Was ein Ziel zum besseren Ziel macht. Die Reihenfolge ist das Gewicht:
 	// oben zaehlt am meisten. Schluessel wie in cl_aimAssistPriority.
-	static readonly (string Key, string Name, string Effect)[] Priorities = {
-		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss überhaupt durchkommt" ),
-		( "cursor",   "Nähe zum Fadenkreuz",   "wohin du ohnehin schon zielst" ),
-		( "attacker", "wer mich zuletzt traf", "sofort zurückschlagen" ),
-		( "sure",     "Treffsicherheit",       "was die Waffe auf die Entfernung gemessen trifft" ),
-		( "near",     "Nähe im Raum",          "der nächste Gegner zuerst" ),
-		( "wounded",  "schon verwundet",       "wen ich selbst angeschlagen habe" ),
-		( "keep",     "Ziel behalten",         "nicht zwischen zweien hin und her springen" ),
-		( "powerup",  "trägt ein Powerup",     "Quad, Regeneration, Haste zuerst" ),
-		( "air",      "in der Luft",           "fliegt berechenbar - ein bloßer Sprung zählt nicht" ),
+	// Life > 0: eine Regel ueber etwas, das geschehen ist - die verfaellt.
+	// Life = 0: eine Eigenschaft des Augenblicks, die keine Uhr braucht.
+	static readonly (string Key, string Name, string Effect, double Life)[] Priorities = {
+		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss überhaupt durchkommt", 0 ),
+		( "cursor",   "Nähe zum Fadenkreuz",   "wohin du ohnehin schon zielst", 0 ),
+		( "attacker", "wer mich zuletzt traf", "sofort zurückschlagen, solange es frisch ist", 6 ),
+		( "sure",     "Treffsicherheit",       "was die Waffe auf die Entfernung gemessen trifft", 0 ),
+		( "near",     "Nähe im Raum",          "der nächste Gegner zuerst", 0 ),
+		( "wounded",  "schon verwundet",       "wen ich selbst angeschlagen habe", 12 ),
+		( "keep",     "Ziel behalten",         "nicht zwischen zweien hin und her springen", 4 ),
+		( "powerup",  "trägt ein Powerup",     "Quad, Regeneration, Haste zuerst", 0 ),
+		( "air",      "in der Luft",           "fliegt berechenbar - ein bloßer Sprung zählt nicht", 0 ),
 	};
 	static readonly int[] PriorityDefault = { 100, 80, 100, 60, 40, 40, 30, 20, 0 };
 
 	readonly Dictionary<string, int> prioWeight = new();
+	readonly Dictionary<string, double> prioTime = new();
 	readonly ListView prioView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, CheckBoxes = true,
 		GridLines = true, HideSelection = false, Font = new Font( "Segoe UI", 9 ),
 	};
 	readonly Button prioUp = new() { Text = "▲ höher", Width = 90 };
 	readonly Button prioDown = new() { Text = "▼ tiefer", Width = 90 };
-	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 260 };
+	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 200 };
 	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	readonly TrackBar prioLifeBar = new() { Minimum = 0, Maximum = 60, TickFrequency = 5, Width = 160 };
+	readonly Label prioLifeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	bool prioUpdating;
 	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
 	SplitContainer? splitMain;
@@ -129,7 +134,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 3;
+	const int LogVersion = 4;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -202,8 +207,12 @@ public class MainForm : Form, IMessageFilter {
 
 		prioView.Columns.Add( "Kriterium", 190 );
 		prioView.Columns.Add( "Gewicht", 70, HorizontalAlignment.Right );
+		prioView.Columns.Add( "gilt", 70, HorizontalAlignment.Right );
 		prioView.Columns.Add( "was es bewirkt", 400 );
-		for ( int i = 0; i < Priorities.Length; i++ ) prioWeight[Priorities[i].Key] = PriorityDefault[i];
+		for ( int i = 0; i < Priorities.Length; i++ ) {
+			prioWeight[Priorities[i].Key] = PriorityDefault[i];
+			prioTime[Priorities[i].Key] = Priorities[i].Life;
+		}
 		prioUp.Click += ( _, _ ) => MovePriority( -1 );
 		prioDown.Click += ( _, _ ) => MovePriority( 1 );
 		prioView.SelectedIndexChanged += ( _, _ ) => ShowPrioritySelection();
@@ -225,6 +234,13 @@ public class MainForm : Form, IMessageFilter {
 			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
 			prioWeight[(string)prioView.SelectedItems[0].Tag!] = prioBar.Value;
 			FillPriorities( (string)prioView.SelectedItems[0].Tag! );
+		};
+		prioLifeBar.ValueChanged += ( _, _ ) => {
+			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
+			var key = (string)prioView.SelectedItems[0].Tag!;
+			if ( !IsTimed( key ) ) return;
+			prioTime[key] = prioLifeBar.Value;
+			FillPriorities( key );
 		};
 		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text
 		rankView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
@@ -564,7 +580,9 @@ public class MainForm : Form, IMessageFilter {
 		prioGrid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
 		prioGrid.Controls.Add( Row( Pad( prioUp ), Pad( prioDown ),
 			Pad( new Label { Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
-			Pad( prioBar ), Pad( prioValue ) ), 0, 0 );
+			Pad( prioBar ), Pad( prioValue ),
+			Pad( new Label { Text = "gilt (s):", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
+			Pad( prioLifeBar ), Pad( prioLifeValue ) ), 0, 0 );
 		prioGrid.Controls.Add( prioView, 0, 1 );
 		prioPage.Controls.Add( prioGrid );
 		tabs.TabPages.Add( prioPage );
@@ -584,6 +602,7 @@ public class MainForm : Form, IMessageFilter {
 			int weight = prioWeight[p.Key];
 			var row = new ListViewItem( p.Name ) { Tag = p.Key, Checked = weight > 0 };
 			row.SubItems.Add( weight.ToString() );
+			row.SubItems.Add( IsTimed( p.Key ) ? prioTime[p.Key].ToString( "0" ) + " s" : "—" );
 			row.SubItems.Add( p.Effect );
 			if ( weight == 0 ) row.ForeColor = Color.DimGray;
 			prioView.Items.Add( row );
@@ -595,13 +614,28 @@ public class MainForm : Form, IMessageFilter {
 		ShowPrioritySelection();
 	}
 
+	// Nur die drei Regeln ueber etwas Geschehenes haben eine Gueltigkeit
+	static bool IsTimed( string key ) =>
+		Array.Find( Priorities, p => p.Key == key ).Life > 0;
+
 	void ShowPrioritySelection() {
-		if ( prioView.SelectedItems.Count == 0 ) { prioValue.Text = "(Zeile wählen)"; return; }
+		if ( prioView.SelectedItems.Count == 0 ) {
+			prioValue.Text = "(Zeile wählen)";
+			prioLifeValue.Text = "";
+			prioLifeBar.Enabled = false;
+			return;
+		}
+
 		var key = (string)prioView.SelectedItems[0].Tag!;
+		bool timed = IsTimed( key );
 		prioUpdating = true;
 		prioBar.Value = Math.Clamp( prioWeight[key], prioBar.Minimum, prioBar.Maximum );
+		prioLifeBar.Enabled = timed;
+		prioLifeBar.Value = timed
+			? (int)Math.Clamp( prioTime[key], prioLifeBar.Minimum, prioLifeBar.Maximum ) : 0;
 		prioUpdating = false;
 		prioValue.Text = prioWeight[key].ToString();
+		prioLifeValue.Text = timed ? prioTime[key].ToString( "0" ) + " s" : "dauerhaft";
 	}
 
 	// Hoeher oder tiefer heisst: das Gewicht mit dem Nachbarn tauschen, denn
@@ -625,16 +659,19 @@ public class MainForm : Form, IMessageFilter {
 		FillPriorities( key );
 	}
 
-	string PriorityString() =>
-		string.Join( " ", Priorities.Select( p => p.Key + ":" + prioWeight[p.Key] ) );
+	string PriorityString() => string.Join( " ", Priorities.Select( p => IsTimed( p.Key )
+		? $"{p.Key}:{prioWeight[p.Key]}:{prioTime[p.Key]:0}"
+		: $"{p.Key}:{prioWeight[p.Key]}" ) );
 
 	void ApplyPriorityString( string text ) {
 		foreach ( var part in text.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) ) {
-			var colon = part.IndexOf( ':' );
-			if ( colon <= 0 ) continue;
-			var key = part[..colon];
-			if ( prioWeight.ContainsKey( key ) && int.TryParse( part[( colon + 1 )..], out int w ) ) {
-				prioWeight[key] = Math.Clamp( w, 0, 100 );
+			var f = part.Split( ':' );
+			if ( f.Length < 2 || !prioWeight.ContainsKey( f[0] ) ) continue;
+			if ( int.TryParse( f[1], out int w ) ) prioWeight[f[0]] = Math.Clamp( w, 0, 100 );
+			if ( f.Length > 2 && IsTimed( f[0] )
+				&& double.TryParse( f[2], System.Globalization.NumberStyles.Any,
+					System.Globalization.CultureInfo.InvariantCulture, out double life ) ) {
+				prioTime[f[0]] = Math.Clamp( life, 0, 120 );
 			}
 		}
 		FillPriorities();

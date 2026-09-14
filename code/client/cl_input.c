@@ -870,7 +870,7 @@ in seconds, and the learner tunes it from what the bots really do.
 */
 // Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
 // verschwindet oder seine Bedeutung wechselt.
-#define AIM_LOG_VERSION	3
+#define AIM_LOG_VERSION	4
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -1790,13 +1790,23 @@ static const float	aimPriorityDefault[AIM_PRIO_COUNT] = {
 	100.0f, 80.0f, 100.0f, 60.0f, 40.0f, 40.0f, 30.0f, 20.0f, 0.0f
 };
 
+// How long a reason stays a reason. Three of them are about something that
+// happened rather than something that is: who hit us, who we hurt, who we were
+// already on. Those fade to nothing over these seconds, because a bot that hit
+// us a minute ago is not the one hurting us now. The rest are properties of
+// the moment - in sight, near the crosshair, in the air - and have no clock.
+static const float	aimPriorityLife[AIM_PRIO_COUNT] = {
+	0.0f, 0.0f, 6.0f, 0.0f, 0.0f, 12.0f, 4.0f, 0.0f, 0.0f
+};
+
 static float	aimPriorityWeight[AIM_PRIO_COUNT];
+static float	aimPriorityTime[AIM_PRIO_COUNT];
 static int		aimPriorityCount = -1;		// modification count the weights were read at
 
 static void CL_AimAssistPriorities( void ) {
 	const char	*text;
 	char		token[64];
-	float		value;
+	float		value, life;
 	int			i, j;
 
 	if ( cl_aimAssistPriority->modificationCount == aimPriorityCount ) {
@@ -1806,9 +1816,11 @@ static void CL_AimAssistPriorities( void ) {
 
 	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
 		aimPriorityWeight[i] = aimPriorityDefault[i];
+		aimPriorityTime[i] = aimPriorityLife[i];
 	}
 
-	// "name:weight name:weight ...", anything not named keeps its default
+	// "name:weight" or "name:weight:seconds", anything not named keeps its
+	// default and anything without a time keeps the one it was given
 	text = cl_aimAssistPriority->string;
 	while ( *text ) {
 		while ( *text == ' ' || *text == '\t' ) {
@@ -1826,13 +1838,22 @@ static void CL_AimAssistPriorities( void ) {
 		}
 		text++;
 		value = atof( text );
+
+		// a second colon, if it is there, is how long the reason lasts
+		life = -1.0f;
 		while ( *text && *text != ' ' ) {
+			if ( *text == ':' ) {
+				life = atof( text + 1 );
+			}
 			text++;
 		}
 
 		for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
 			if ( !Q_stricmp( token, aimPriorityName[j] ) ) {
 				aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
+				if ( life >= 0.0f ) {
+					aimPriorityTime[j] = Com_Clamp( 0.0f, 120.0f, life );
+				}
 				break;
 			}
 		}
@@ -1842,7 +1863,36 @@ static void CL_AimAssistPriorities( void ) {
 
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
 static int	aimAttacker = -1;			// the bot that last hurt us, if any
+static int	aimAttackerTime;			// server time it did
+static int	aimKeepSince;				// server time the current target was taken
 static int	aimPickLast = -1;			// who the record last named as the pick
+
+/*
+=================
+CL_AimAssistFade
+
+How much is left of a reason that happened at a certain moment. Full at the
+moment itself, nothing once its seconds have run out, straight down in
+between. A reason with no clock never fades.
+=================
+*/
+static float CL_AimAssistFade( int since, float life ) {
+	int	age;
+
+	if ( life <= 0.0f ) {
+		return 1.0f;
+	}
+	if ( !since ) {
+		return 0.0f;
+	}
+
+	age = cl.snap.serverTime - since;
+	if ( age < 0 || age > life * 1000.0f ) {
+		return 0.0f;
+	}
+
+	return 1.0f - age / ( life * 1000.0f );
+}
 
 // what the weights were understood as, so a typo in the string shows up
 static void CL_AimAssistPriorityDump( void ) {
@@ -1851,7 +1901,11 @@ static void CL_AimAssistPriorityDump( void ) {
 	CL_AimAssistPriorities();
 	Com_Printf( "aim prio:" );
 	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
-		Com_Printf( " %s %.0f", aimPriorityName[i], aimPriorityWeight[i] );
+		if ( aimPriorityLife[i] > 0.0f ) {
+			Com_Printf( " %s %.0f for %.0fs", aimPriorityName[i], aimPriorityWeight[i], aimPriorityTime[i] );
+		} else {
+			Com_Printf( " %s %.0f", aimPriorityName[i], aimPriorityWeight[i] );
+		}
 	}
 	Com_Printf( "\n" );
 }
@@ -1915,38 +1969,34 @@ is comes back with it, so a display can fade rather than lie.
 =================
 */
 qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float *freshness ) {
-	int	age;
+	float	left;
 
 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !aimWoundTime[clientNum] ) {
 		return qfalse;
 	}
 
-	age = cl.snap.serverTime - aimWoundTime[clientNum];
-	if ( age < 0 || age > AIM_WOUND_MEMORY ) {
+	// the same clock the wounded priority runs on, so what is shown and what
+	// is aimed at do not disagree about how old the news is
+	CL_AimAssistPriorities();
+	left = CL_AimAssistFade( aimWoundTime[clientNum], aimPriorityTime[AIM_PRIO_WOUNDED] );
+	if ( left <= 0.0f ) {
 		return qfalse;
 	}
 
 	*health = aimWoundHealth[clientNum];
 	*armor = aimWoundArmor[clientNum];
-	*freshness = 1.0f - (float)age / AIM_WOUND_MEMORY;
+	*freshness = left;
 	return qtrue;
 }
 
 static float CL_AimAssistWoundScore( int clientNum ) {
-	int	age;
-
 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !aimWoundTime[clientNum] ) {
-		return 0.0f;
-	}
-
-	age = cl.snap.serverTime - aimWoundTime[clientNum];
-	if ( age < 0 || age > AIM_WOUND_MEMORY ) {
 		return 0.0f;
 	}
 
 	// the less it had left the better, and the older the news the less it says
 	return Com_Clamp( 0.0f, 1.0f, ( 100.0f - aimWoundHealth[clientNum] ) / 100.0f )
-		* ( 1.0f - (float)age / AIM_WOUND_MEMORY );
+		* CL_AimAssistFade( aimWoundTime[clientNum], aimPriorityTime[AIM_PRIO_WOUNDED] );
 }
 
 
@@ -2055,8 +2105,13 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		part[AIM_PRIO_CURSOR] = weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
 		part[AIM_PRIO_NEAR] = weight[AIM_PRIO_NEAR] / ( 1.0f + distance / 500.0f );
 		part[AIM_PRIO_WOUNDED] = weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum );
-		part[AIM_PRIO_ATTACKER] = entity->clientNum == aimAttacker ? weight[AIM_PRIO_ATTACKER] : 0.0f;
-		part[AIM_PRIO_KEEP] = entity->clientNum == aimAssistTarget ? weight[AIM_PRIO_KEEP] : 0.0f;
+		// Both of these are about something that happened, so both run out.
+		part[AIM_PRIO_ATTACKER] = entity->clientNum == aimAttacker
+			? weight[AIM_PRIO_ATTACKER] * CL_AimAssistFade( aimAttackerTime, aimPriorityTime[AIM_PRIO_ATTACKER] )
+			: 0.0f;
+		part[AIM_PRIO_KEEP] = entity->clientNum == aimAssistTarget
+			? weight[AIM_PRIO_KEEP] * CL_AimAssistFade( aimKeepSince, aimPriorityTime[AIM_PRIO_KEEP] )
+			: 0.0f;
 		part[AIM_PRIO_AIR] = CL_AimAssistAirborne( entity ) ? weight[AIM_PRIO_AIR] : 0.0f;
 		part[AIM_PRIO_POWERUP] = ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
 			| ( 1 << PW_BATTLESUIT ) | ( 1 << PW_HASTE ) | ( 1 << PW_INVIS ) ) )
@@ -2703,6 +2758,7 @@ static void CL_AimAssistWatch( void ) {
 		attacker = ps->persistant[PERS_ATTACKER];
 		if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != ps->clientNum ) {
 			aimAttacker = attacker;
+			aimAttackerTime = cl.snap.serverTime;
 		}
 	}
 	if ( ps->stats[STAT_HEALTH] <= 0 ) {
@@ -2986,6 +3042,9 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		aimAssistTarget = -1;
 		aimSmoothTarget = -1;
 		return;
+	}
+	if ( entity->clientNum != aimAssistTarget ) {
+		aimKeepSince = cl.snap.serverTime;		// the clock on staying with it
 	}
 	aimAssistTarget = entity->clientNum;
 
