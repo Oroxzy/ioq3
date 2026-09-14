@@ -1370,6 +1370,43 @@ static void CL_BotOutlineWireBox( const vec3_t near[8], const byte *colour ) {
 }
 
 
+/*
+====================
+CL_BotDamageColour
+
+Green while the bot is untouched, through yellow and orange to red when the
+next hit finishes it. Dimmed when it is behind something, and faded towards
+the plain outline colour as the knowledge ages, so old news looks like old
+news instead of a promise.
+====================
+*/
+static void CL_BotDamageColour( int health, float fresh, qboolean seen, byte *out ) {
+	static const float	full[3] = { 80.0f, 220.0f, 90.0f };		// untouched
+	static const float	half[3] = { 245.0f, 210.0f, 60.0f };
+	static const float	gone[3] = { 235.0f, 60.0f, 50.0f };		// one hit left
+	const float			*low, *high;
+	float				part, share, dim;
+	int					i;
+
+	share = Com_Clamp( 0.0f, 1.0f, health / 100.0f );
+	if ( share > 0.5f ) {
+		low = half;
+		high = full;
+		part = ( share - 0.5f ) * 2.0f;
+	} else {
+		low = gone;
+		high = half;
+		part = share * 2.0f;
+	}
+
+	dim = ( seen ? 1.0f : 0.5f ) * ( 0.45f + 0.55f * Com_Clamp( 0.0f, 1.0f, fresh ) );
+	for ( i = 0; i < 3; i++ ) {
+		out[i] = (byte)Com_Clamp( 0.0f, 255.0f, ( low[i] + ( high[i] - low[i] ) * part ) * dim );
+	}
+	out[3] = 255;
+}
+
+
 static void CL_AddBotOutlines( void ) {
 	static const byte	visible[4] = { 255, 115, 25, 255 };
 	static const byte	hidden[4] = { 120, 40, 10, 255 };
@@ -1378,11 +1415,14 @@ static void CL_AddBotOutlines( void ) {
 	const entityState_t	*entity;
 	const char			*info;
 	const byte			*colour;
+	byte				shade[4];
+	char				text[16];
 	trace_t				trace;
-	vec3_t				origin, corner[8], near[8], eye;
-	qboolean			ahead;
-	float				top;
-	int					i, j;
+	vec3_t				origin, corner[8], near[8], eye, label;
+	vec4_t				tint;
+	qboolean			ahead, seen;
+	float				top, fresh, x, y;
+	int					i, j, health = -1, armor = 0;
 
 	if ( !cl_botOutline->integer || clc.state != CA_ACTIVE || clc.demoplaying
 		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || !cl.snap.valid ) {
@@ -1427,9 +1467,37 @@ static void CL_AddBotOutlines( void ) {
 		}
 
 		CM_BoxTrace( &trace, eye, origin, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse );
-		colour = trace.fraction < 1.0f ? hidden : visible;
+		seen = trace.fraction >= 1.0f;
+
+		// What a bot had left the last time we hit it. The game never sends
+		// another player's health, but the hit sound is told what the one we
+		// just hit has left, and that is worth showing: green while it is
+		// healthy, red when the next shot does it. Faded as the news ages,
+		// because they pick health up and we would not know.
+		if ( CL_AimAssistKnownDamage( entity->clientNum, &health, &armor, &fresh ) ) {
+			CL_BotDamageColour( health, fresh, seen, shade );
+			colour = shade;
+		} else {
+			colour = seen ? visible : hidden;
+		}
 
 		CL_BotOutlineWireBox( near, colour );
+
+		// and the numbers over it, on the grid the menus use
+		if ( health >= 0 && cl_botOutline->integer > 1 ) {
+			VectorCopy( origin, label );
+			label[2] += top + 14.0f;
+			if ( CL_ProjectToScreen( label, &x, &y ) ) {
+				Com_sprintf( text, sizeof( text ), armor > 0 ? "%i+%i" : "%i", health, armor );
+				tint[0] = colour[0] / 255.0f;
+				tint[1] = colour[1] / 255.0f;
+				tint[2] = colour[2] / 255.0f;
+				tint[3] = 1.0f;
+				SCR_DrawStringExt( (int)( x * 640.0f / cls.glconfig.vidWidth - strlen( text ) * 5.0f ),
+					(int)( y * 480.0f / cls.glconfig.vidHeight - 10.0f ), 10.0f, text, tint, qtrue, qfalse );
+			}
+		}
+		health = -1;
 	}
 }
 

@@ -28,6 +28,17 @@ ausweist. Das ist keine Einstellung, sondern steht so im Code.
 einen Kasten mit Respawn-Zähler, dessen Farbe von Rot über Orange nach Grün
 läuft, je näher das Ding am Zurückkommen ist.
 
+**Rest-HP am Gegner.** Der Rahmen färbt sich nach dem, was der Bot beim letzten
+Treffer noch hatte — grün unversehrt, über gelb und orange nach rot, wenn der
+nächste Schuss reicht — und schreibt die Zahlen darüber (`45+20` heißt 45 Leben
+und 20 Rüstung). Die Quelle ist dieselbe, aus der schon der Trefferton seine
+Tonhöhe nimmt: der Server verrät, was der zuletzt Getroffene übrig hat.
+
+Damit sind auch die Grenzen klar. Es steht nur bei Bots da, die **du selbst**
+getroffen hast, es gilt nur für **den letzten** Treffer, und es verblasst über
+zwölf Sekunden, weil sie inzwischen Health aufgesammelt haben können. Was der
+Client nicht wissen kann, behauptet er auch nicht.
+
 **Feuer halten.** Auf Wunsch bleibt der Abzug gesperrt, solange der Schuss
 nicht durchkommt. Geprüft wird die Linie zu dem Punkt, auf den **wirklich
 gezielt** wird — bei der Rakete also der vorgehaltene, nicht der Bot: einer

@@ -3608,8 +3608,8 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_itemOutline, 0, 2, qtrue );
 	Cvar_SetDescription( cl_itemOutline, "Outline weapons and powerups through walls on a local server and count them back in: 2 adds armor and mega health" );
 	cl_botOutline = Cvar_Get( "cl_botOutline", "0", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_botOutline, 0, 1, qtrue );
-	Cvar_SetDescription( cl_botOutline, "Outline enemy bots through walls on a local server, for watching what the aim assist does" );
+	Cvar_CheckRange( cl_botOutline, 0, 2, qtrue );
+	Cvar_SetDescription( cl_botOutline, "Outline enemy bots through walls on a local server; 2 also writes what they had left the last time they were hit" );
 	cl_aimAssistAttacker = Cvar_Get( "cl_aimAssistAttacker", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistAttacker, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistAttacker, "Aim assistance snaps to whichever bot is dealing damage, instead of the one nearest the crosshair" );

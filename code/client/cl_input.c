@@ -1871,6 +1871,7 @@ they pick health up - so it is forgotten after a while.
 #define AIM_WOUND_MEMORY	12000		// how long a remembered health is worth anything
 
 static int	aimWoundHealth[MAX_CLIENTS];
+static int	aimWoundArmor[MAX_CLIENTS];
 static int	aimWoundTime[MAX_CLIENTS];
 static int	aimWoundHits = -1;			// PERS_HITS as last seen
 
@@ -1899,7 +1900,36 @@ static void CL_AimAssistWoundWatch( void ) {
 		health = 0;
 	}
 	aimWoundHealth[target] = health;
+	aimWoundArmor[target] = remaining & 0xff;
 	aimWoundTime[target] = cl.snap.serverTime;
+}
+
+/*
+=================
+CL_AimAssistKnownDamage
+
+What a bot had left the last time we hit it, for anyone who wants to show it.
+The game never sends another player's health, so this is the only thing there
+is to go on - and it goes stale, because they pick health up. How old the news
+is comes back with it, so a display can fade rather than lie.
+=================
+*/
+qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float *freshness ) {
+	int	age;
+
+	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !aimWoundTime[clientNum] ) {
+		return qfalse;
+	}
+
+	age = cl.snap.serverTime - aimWoundTime[clientNum];
+	if ( age < 0 || age > AIM_WOUND_MEMORY ) {
+		return qfalse;
+	}
+
+	*health = aimWoundHealth[clientNum];
+	*armor = aimWoundArmor[clientNum];
+	*freshness = 1.0f - (float)age / AIM_WOUND_MEMORY;
+	return qtrue;
 }
 
 static float CL_AimAssistWoundScore( int clientNum ) {

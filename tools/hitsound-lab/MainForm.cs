@@ -49,6 +49,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe auf Bots", Checked = true, AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
 	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", Checked = true, AutoSize = true };
+	readonly CheckBox botDamage = new() { Text = "mit Rest-HP (Farbe und Zahl)", Checked = true, AutoSize = true };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -486,7 +487,7 @@ public class MainForm : Form, IMessageFilter {
 	// Was zu sehen ist - mit dem Zielen hat das nichts zu tun
 	GroupBox BuildViewBox() {
 		return Group( "Anzeige",
-			Row( Pad( botOutline ) ),
+			Row( Pad( botOutline ), Pad( botDamage ) ),
 			Row( Pad( itemOutline ) ),
 			Row( Pad( itemOutlineAll ) ) );
 	}
@@ -718,6 +719,7 @@ public class MainForm : Form, IMessageFilter {
 		}
 		if ( splitMain is not null ) s.AppendLine( "splitter=" + splitMain.SplitterDistance );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
+		s.AppendLine( "botDamage=" + botDamage.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
 		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
 
@@ -773,6 +775,7 @@ public class MainForm : Form, IMessageFilter {
 		}
 		if ( v.TryGetValue( "splitter", out var sp ) && int.TryParse( sp, out int sd ) ) splitterSaved = sd;
 		SetBool( botOutline, v, "botOutline" );
+		SetBool( botDamage, v, "botDamage" );
 		SetBool( itemOutline, v, "itemOutline" );
 		SetBool( itemOutlineAll, v, "itemOutlineAll" );
 	}
@@ -803,7 +806,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( "seta g_hitSoundDebug 1" );
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
 		cfg.AppendLine( $"seta cl_itemOutline {( itemOutline.Checked ? ( itemOutlineAll.Checked ? 2 : 1 ) : 0 )}" );
-		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? ( botDamage.Checked ? 2 : 1 ) : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
