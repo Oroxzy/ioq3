@@ -593,12 +593,15 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	// Nur den gelernten Vorhalt in die gespeicherten Einstellungen schreiben,
-	// alles andere so lassen, wie es zuletzt gespeichert wurde
+	// alles andere so lassen, wie es zuletzt gespeichert wurde - und wenn noch
+	// nie gespeichert wurde, wenigstens diesen einen Wert
 	void PersistLearnedLead() {
 		try {
-			if ( !File.Exists( SettingsPath ) ) return;
-			var lines = File.ReadAllLines( SettingsPath ).Where( l => !l.StartsWith( "aimLead=" ) ).ToList();
+			var lines = File.Exists( SettingsPath )
+				? File.ReadAllLines( SettingsPath ).Where( l => !l.StartsWith( "aimLead=" ) ).ToList()
+				: new List<string>();
 			lines.Add( "aimLead=" + Dec( aimLead.Value ) );
+			Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath )! );
 			File.WriteAllLines( SettingsPath, lines );
 		} catch ( IOException ) {
 		}
@@ -606,14 +609,10 @@ public class MainForm : Form, IMessageFilter {
 
 	// Das Spiel schreibt die Debug-Zeilen in qconsole.log, hier werden sie nur gelesen
 	void RefreshStats() {
-		// Das Spiel ist zu Ende: was es an Vorhalt gelernt hat, festhalten,
-		// sonst waere die Optimierung beim naechsten Start der App wieder weg
+		// Ob das Spiel gerade zu Ende ist; sein Protokoll wird dann noch einmal
+		// ganz gelesen, bevor der gelernte Vorhalt festgehalten wird
 		bool exited;
 		try { exited = game is { HasExited: true }; } catch ( InvalidOperationException ) { exited = false; }
-		if ( exited ) {
-			game = null;
-			if ( aimLearn.Checked && aimLead.Value != leadAtStart ) PersistLearnedLead();
-		}
 
 		if ( logPath.Length == 0 || !File.Exists( logPath ) ) return;
 
@@ -676,6 +675,14 @@ public class MainForm : Form, IMessageFilter {
 
 		UpdateShots( shots, damageFrames, impacts, missiles );
 		ShowLearned( learned );
+
+		// Das Spiel ist zu Ende und sein Protokoll gelesen: was es an Vorhalt
+		// gelernt hat, festhalten, sonst waere die Optimierung beim naechsten
+		// Start der App wieder weg
+		if ( exited ) {
+			game = null;
+			if ( aimLearn.Checked && aimLead.Value != leadAtStart ) PersistLearnedLead();
+		}
 
 		int missed = Math.Max( 0, frames.Count - sounds );
 		statHits.Text = hits.ToString();
@@ -789,11 +796,10 @@ public class MainForm : Form, IMessageFilter {
 		}
 		if ( hold <= 0 ) return;
 
-		// Nur das Spiel, das von hier laeuft, darf den Regler bewegen: ein altes
+		// Nur das Spiel, das von hier gestartet wurde, darf den Regler bewegen -
+		// bis sein Protokoll nach dem Ende einmal ganz gelesen ist: ein altes
 		// Protokoll wuerde sonst beim Start den gespeicherten Wert ueberschreiben
-		bool running;
-		try { running = game is { HasExited: false }; } catch ( InvalidOperationException ) { running = false; }
-		if ( !running ) return;
+		if ( game is null ) return;
 
 		aimLearned.Text = $"gelernt: {hold.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture )} s aus {count} Schüssen";
 		var rounded = Math.Round( hold, 1 );

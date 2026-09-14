@@ -896,7 +896,10 @@ a short flight and never more than T for a long one. T is cl_aimAssistLead,
 in seconds, and the learner tunes it from what the bots really do.
 =================
 */
-static int	aimHoldFlushed = -1;		// server time the learned value was last marked for q3config.cfg
+static int		aimHoldMarked = -1;		// server time the learned value was last marked for q3config.cfg
+static qboolean	aimHoldPending;			// a learned step the config has not been marked for yet
+
+void Com_WriteConfiguration( void );
 
 /*
 =================
@@ -920,8 +923,8 @@ The learner's write. The cvar is archived, and an ordinary set of an archived
 cvar has the engine write q3config.cfg on the next frame - a file written on
 every learned shot would be a hitch on every shot. So the step is written with
 the archive flag masked, which changes the value at once and the file not at
-all; the file is marked for writing every couple of seconds instead, and once
-more when the connection goes (CL_AimAssistFlush), so nothing learned is lost.
+all; the file is marked for writing every couple of seconds instead, and the
+rest is flushed when the connection goes (CL_AimAssistFlush).
 =================
 */
 static void CL_AimAssistSetHold( float hold ) {
@@ -931,18 +934,33 @@ static void CL_AimAssistSetHold( float hold ) {
 	cl_aimAssistLead->flags &= ~CVAR_ARCHIVE;
 	Cvar_SetValue( "cl_aimAssistLead", hold );
 	cl_aimAssistLead->flags = flags;
+	aimHoldPending = qtrue;
 
-	if ( cl.snap.serverTime - aimHoldFlushed > 2000 || aimHoldFlushed > cl.snap.serverTime ) {
+	if ( aimHoldMarked < 0 || cl.snap.serverTime - aimHoldMarked > 2000 || aimHoldMarked > cl.snap.serverTime ) {
 		cvar_modifiedFlags |= flags & CVAR_ARCHIVE;
-		aimHoldFlushed = cl.snap.serverTime;
+		aimHoldMarked = cl.snap.serverTime;
+		aimHoldPending = qfalse;
 	}
 }
 
+/*
+=================
+CL_AimAssistFlush
+
+Called when the connection goes. The mark alone is not enough on the way out
+of the program: the config is written at the top of a frame, and no frame
+follows a quit. So the file is written here as well.
+=================
+*/
 void CL_AimAssistFlush( void ) {
-	if ( cl_aimAssistLead && aimHoldFlushed >= 0 ) {
-		cvar_modifiedFlags |= cl_aimAssistLead->flags & CVAR_ARCHIVE;
-		aimHoldFlushed = -1;
+	if ( !cl_aimAssistLead || !aimHoldPending ) {
+		return;
 	}
+
+	cvar_modifiedFlags |= cl_aimAssistLead->flags & CVAR_ARCHIVE;
+	aimHoldPending = qfalse;
+	aimHoldMarked = -1;
+	Com_WriteConfiguration();
 }
 
 static float CL_AimAssistSideways( float time ) {
@@ -969,15 +987,18 @@ A negative time is a moment back along its line, wanted only for the smooth
 picture between snapshots: nothing to clip and nothing to drop there.
 =================
 */
-static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted ) {
+static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted,
+		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
 	float		gravity, sideways, floor;
 	trace_t		trace;
-	qboolean	grounded, floats;
+	qboolean	grounded, floats, stopped, snapped;
 	int			i;
 
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
 	floats = CL_AimAssistFloats( entity );
+	stopped = qfalse;
+	snapped = qfalse;
 
 	// Only the sideways guess of a target on the ground is damped, in two
 	// ways: by how long bots hold a direction at all, and by how much this one
@@ -998,6 +1019,12 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 
 	if ( time <= 0.0f ) {
 		VectorCopy( end, predicted );
+		if ( blocked ) {
+			*blocked = qfalse;
+		}
+		if ( pinned ) {
+			*pinned = qfalse;
+		}
 		return;
 	}
 
@@ -1030,12 +1057,18 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 		if ( trace.startsolid || trace.allsolid ) {
 			if ( i == 0 ) {
 				VectorCopy( end, predicted );
+			} else {
+				stopped = qtrue;
 			}
 			break;
 		}
 
 		VectorCopy( trace.endpos, predicted );
-		if ( trace.fraction >= 1.0f || !grounded ) {
+		if ( trace.fraction >= 1.0f ) {
+			break;
+		}
+		stopped = qtrue;
+		if ( !grounded ) {
 			break;
 		}
 
@@ -1078,9 +1111,18 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 
 		if ( predicted[2] < floor ) {
 			predicted[2] = floor;					// landed, or walked up a step
+			snapped = qtrue;
 		} else if ( grounded && predicted[2] - floor <= STEPSIZE ) {
 			predicted[2] = floor;					// walked down a step
+			snapped = qtrue;
 		}
+	}
+
+	if ( blocked ) {
+		*blocked = stopped;
+	}
+	if ( pinned ) {
+		*pinned = snapped;
 	}
 }
 
@@ -1124,61 +1166,125 @@ static qboolean CL_AimAssistArcWeapon( int weapon ) {
 
 /*
 =================
+CL_AimAssistLaunch
+
+How the game really throws a grenade at a point the view is on: the forward
+vector tipped up by a fifth and normalised again, at 700 units a second, from
+a muzzle fourteen units out along the untipped view (g_weapon.c, g_missile.c).
+Returns the horizontal flight time to the point's distance, or zero straight up.
+=================
+*/
+static float CL_AimAssistLaunch( const vec3_t eye, const vec3_t aim, vec3_t muzzle, vec3_t velocity ) {
+	vec3_t	direction, tipped;
+	float	distance, speed;
+
+	VectorSubtract( aim, eye, direction );
+	VectorNormalize( direction );
+	VectorMA( eye, 14.0f, direction, muzzle );
+
+	VectorCopy( direction, tipped );
+	tipped[2] += 0.2f;
+	VectorNormalize( tipped );
+	VectorScale( tipped, 700.0f, velocity );
+
+	distance = sqrt( ( aim[0] - muzzle[0] ) * ( aim[0] - muzzle[0] )
+		+ ( aim[1] - muzzle[1] ) * ( aim[1] - muzzle[1] ) );
+	speed = sqrt( velocity[0] * velocity[0] + velocity[1] * velocity[1] );
+	if ( speed < 1.0f ) {
+		return 0.0f;
+	}
+	return distance / speed;
+}
+
+
+/*
+=================
 CL_AimAssistArc
 
 Where to point for a grenade to come down on the impact point, and how long
 it takes to get there.
 
-The game does not throw a grenade where the crosshair points: it tips the
-forward vector up by a fifth, normalises it again and gives the result 700
-units a second (g_weapon.c, g_missile.c), then lets gravity pull it down. So
-the aim has to be solved, not offset: point somewhere, see where the arc
+The aim has to be solved, not offset: point somewhere, see where the arc
 crosses the target's distance, raise the point by the shortfall, and again -
 each round brings the height at that distance closer, and a few rounds settle
-it. A target out of throwing range keeps the aim rising; the cap stops that.
+it. Far below the eye a full step overshoots, so the step is halved whenever
+the miss changes sign. The loop leaves with the time that belongs to the aim
+it hands out. A target out of throwing range keeps the aim rising; the cap
+stops that.
 =================
 */
 static void CL_AimAssistArc( const vec3_t eye, const vec3_t impact, vec3_t aim, float *timeOut ) {
-	vec3_t	direction, muzzle, tipped, velocity;
-	float	distance, speed, time, height, miss;
+	vec3_t	muzzle, velocity;
+	float	time, height, miss, lastMiss, gain;
 	int		i;
 
 	VectorCopy( impact, aim );
 	time = 0.0f;
+	lastMiss = 0.0f;
+	gain = 1.0f;
 
-	for ( i = 0; i < 12; i++ ) {
-		VectorSubtract( aim, eye, direction );
-		VectorNormalize( direction );
-		VectorMA( eye, 14.0f, direction, muzzle );
-
-		VectorCopy( direction, tipped );
-		tipped[2] += 0.2f;
-		VectorNormalize( tipped );
-		VectorScale( tipped, 700.0f, velocity );
-
-		distance = sqrt( ( impact[0] - muzzle[0] ) * ( impact[0] - muzzle[0] )
-			+ ( impact[1] - muzzle[1] ) * ( impact[1] - muzzle[1] ) );
-		speed = sqrt( velocity[0] * velocity[0] + velocity[1] * velocity[1] );
-		if ( speed < 1.0f ) {
+	for ( i = 0; i < 16; i++ ) {
+		time = CL_AimAssistLaunch( eye, aim, muzzle, velocity );
+		if ( time <= 0.0f ) {
 			break;			// straight up: no arc reaches out from here
 		}
 
-		time = distance / speed;
 		height = muzzle[2] + velocity[2] * time - 0.5f * DEFAULT_GRAVITY * time * time;
 		miss = impact[2] - height;
-		if ( fabs( miss ) < 0.25f ) {
+		if ( fabs( miss ) < 0.25f || i == 15 ) {
 			break;
 		}
-
-		aim[2] += miss;
-		if ( aim[2] - impact[2] > 4096.0f ) {
+		if ( i > 0 && ( miss > 0.0f ) != ( lastMiss > 0.0f ) ) {
+			gain *= 0.5f;
+		}
+		lastMiss = miss;
+		if ( aim[2] - impact[2] + miss * gain > 4096.0f ) {
 			break;			// out of range
 		}
+		aim[2] += miss * gain;
 	}
 
 	if ( timeOut ) {
 		*timeOut = time;
 	}
+}
+
+
+/*
+=================
+CL_AimAssistArcClear
+
+Whether a grenade thrown at the solved aim gets to its distance without
+hitting anything on the way. The straight line to the aim point says nothing
+here - that point is well above the arc, and under a ceiling the line hits
+what the grenade clears. The arc itself is traced, a piece at a time.
+=================
+*/
+static qboolean CL_AimAssistArcClear( const vec3_t eye, const vec3_t aim ) {
+	vec3_t	muzzle, velocity, from, to;
+	float	time, t;
+	trace_t	trace;
+	int		i;
+
+	time = CL_AimAssistLaunch( eye, aim, muzzle, velocity );
+	if ( time <= 0.0f ) {
+		return qfalse;
+	}
+
+	VectorCopy( muzzle, from );
+	for ( i = 1; i <= 8; i++ ) {
+		t = time * i / 8.0f;
+		to[0] = muzzle[0] + velocity[0] * t;
+		to[1] = muzzle[1] + velocity[1] * t;
+		to[2] = muzzle[2] + velocity[2] * t - 0.5f * DEFAULT_GRAVITY * t * t;
+		CM_BoxTrace( &trace, from, to, vec3_origin, vec3_origin, 0, MASK_SHOT, qfalse );
+		if ( trace.fraction < 1.0f ) {
+			return qfalse;
+		}
+		VectorCopy( to, from );
+	}
+
+	return qtrue;
 }
 
 
@@ -1230,17 +1336,20 @@ average, so the aim does not tick every time the distance crosses a frame.
 */
 static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t viewOrigin,
 		int weapon, qboolean exact, vec3_t targetOrigin, float *leadOut ) {
-	vec3_t	motion, impact;
-	float	projectileSpeed, lead, frame, flight, gravity;
-	int		i;
+	vec3_t		motion, impact;
+	float		projectileSpeed, lead, frame, flight, gravity;
+	qboolean	blocked, pinned;
+	int			i;
 
 	projectileSpeed = CL_AimAssistProjectileSpeed( weapon );
 	frame = CL_AimAssistFrameTime();
 	lead = 0.0f;
+	blocked = qfalse;
+	pinned = qfalse;
 
 	if ( projectileSpeed <= 0.0f ) {
 		// hitscan: the world the snapshot shows is the one hit
-		CL_AimAssistPredict( entity, 0.0f, targetOrigin );
+		CL_AimAssistPredict( entity, 0.0f, targetOrigin, &blocked, &pinned );
 	} else if ( exact ) {
 		// The frame the missile meets the target in is the first whose
 		// segment reaches the target where it stands at the end of that
@@ -1250,7 +1359,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		// circles between two answers.
 		for ( i = 1; i < 60; i++ ) {
 			lead = i * frame;
-			CL_AimAssistPredict( entity, lead, targetOrigin );
+			CL_AimAssistPredict( entity, lead, targetOrigin, &blocked, &pinned );
 			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
 			if ( flight <= lead ) {
 				break;
@@ -1260,11 +1369,11 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		// between shots: the unrounded time, centred on the frames above,
 		// settled by repeating distance over speed
 		for ( i = 0; i < 5; i++ ) {
-			CL_AimAssistPredict( entity, lead, targetOrigin );
+			CL_AimAssistPredict( entity, lead, targetOrigin, NULL, NULL );
 			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
 			lead = Com_Clamp( 0.0f, 3.0f, flight + frame * 0.5f );
 		}
-		CL_AimAssistPredict( entity, lead, targetOrigin );
+		CL_AimAssistPredict( entity, lead, targetOrigin, &blocked, &pinned );
 	}
 
 	// The smooth picture between snapshots: the zero-mean correction of
@@ -1274,10 +1383,14 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 	// the air the point is a lead ahead on a falling arc, and a snapshot
 	// brings a velocity that has fallen a frame further, which moves the point
 	// by gravity times the lead on top: the rate is the velocity less that.
-	// Not on the shot.
-	if ( !exact ) {
+	// A point that a wall stopped does not move with the target at all, and
+	// one set down on the floor does not move in height; those get no
+	// correction they would only wobble by. Not on the shot.
+	if ( !exact && !blocked ) {
 		CL_AimAssistVelocity( entity, motion );
-		if ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) ) {
+		if ( pinned ) {
+			motion[2] = 0.0f;
+		} else if ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) ) {
 			gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
 			motion[2] -= gravity * lead;
 		}
@@ -1458,16 +1571,19 @@ CL_AimAssistInReach
 
 Whether the gauntlet's swing touches the target: the game traces thirty-two
 units out from the muzzle along the view, and the muzzle is fourteen units
-out from the eye. The target is its box.
+out from the eye. It does that before it moves the player, with the view the
+previous command was sent with. The target is its box.
 =================
 */
+static float	aimPrevAngles[2];		// the view the previous command was sent with
+
 static qboolean CL_AimAssistInReach( const vec3_t eye, const entityState_t *target ) {
 	vec3_t	angles, forward, start, end, mins, maxs;
 	float	enter, leave, near, far, low, high, delta, swap;
 	int		i;
 
-	angles[PITCH] = cl.viewangles[PITCH] + SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
-	angles[YAW] = cl.viewangles[YAW] + SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
+	angles[PITCH] = aimPrevAngles[0] + SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
+	angles[YAW] = aimPrevAngles[1] + SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );
 	angles[ROLL] = 0.0f;
 	AngleVectors( angles, forward, NULL, NULL );
 	VectorMA( eye, 14.0f, forward, start );
@@ -1516,8 +1632,10 @@ CL_AimAssistFiring
 Whether the command being built is the one the server will fire on. The
 weapon fires when its timer has run out while the trigger is held, and the
 timer is in the snapshot: what is left of it now is what it was, less the
-time of every command since. A shot predicted here restarts the timer locally
-until a snapshot that has seen that command takes over.
+time of every command since - counting down while it is above zero, then
+stopped where it crossed, or zeroed by a command without the trigger, as
+the game keeps it. A shot predicted here restarts the timer locally until a
+snapshot that has seen that command takes over.
 
 Mirrors PM_Weapon: no shot while respawning, dead, changing weapon, or out of
 ammo. Call it once per command, it keeps the timer.
@@ -1526,24 +1644,32 @@ ammo. Call it once per command, it keeps the timer.
 static int	aimFireTime = -1;		// serverTime of the command we last predicted a shot on
 static int	aimFireDelay;			// what the weapon's timer was restarted with then
 static int	aimRaiseDone = -1;		// serverTime of the command that finished raising the weapon
+static int	aimCrossTime = -1;		// serverTime of the command on which the timer ran out
+static int	aimCrossRemainder;		// what it stopped at then
+static int	aimTimerBefore = 1;		// the timer as the previous command left it
 
 static qboolean CL_AimAssistFiring( const usercmd_t *cmd, int weapon, const vec3_t eye,
 		const entityState_t *target ) {
 	const playerState_t	*ps = &cl.snap.ps;
-	int					weaponTime, local;
+	int					weaponTime, local, before;
 	qboolean			attack, ready;
 
 	attack = ( cmd->buttons & BUTTON_ATTACK ) != 0;
 
 	// A new map starts the server's clock over. A timer left from the old one
 	// would sit in the future and hold the trigger for as long as that map ran.
-	if ( aimFireTime > cl.serverTime ) {
+	if ( aimFireTime > cl.serverTime || aimCrossTime > cl.serverTime ) {
 		aimFireTime = -1;
 		aimRaiseDone = -1;
+		aimCrossTime = -1;
+		aimTimerBefore = 1;
 	}
 
-	// The timer counts down while it is above zero and then waits where it
-	// stopped: one the snapshot already shows at or below zero stays there.
+	// the snapshot has caught up with the crossing, or the timer was restarted
+	if ( aimCrossTime >= 0 && ( ps->commandTime >= aimCrossTime || aimFireTime >= aimCrossTime ) ) {
+		aimCrossTime = -1;
+	}
+
 	if ( ps->weaponTime > 0 ) {
 		weaponTime = ps->weaponTime - ( cl.serverTime - ps->commandTime );
 	} else {
@@ -1557,6 +1683,16 @@ static qboolean CL_AimAssistFiring( const usercmd_t *cmd, int weapon, const vec3
 			weaponTime = local;
 		}
 	}
+
+	// The timer stops where it crossed zero, it does not run on below it:
+	// the remainder of the crossing command is what the next shot restarts from.
+	if ( aimCrossTime >= 0 ) {
+		weaponTime = aimCrossRemainder;
+	} else if ( weaponTime <= 0 && aimTimerBefore > 0 ) {
+		aimCrossTime = cl.serverTime;
+		aimCrossRemainder = weaponTime;
+	}
+	before = aimTimerBefore;
 
 	// The raise is watched whether or not the trigger is held: the command
 	// that ends it only readies the weapon, and the shot goes out on the one
@@ -1576,14 +1712,26 @@ static qboolean CL_AimAssistFiring( const usercmd_t *cmd, int weapon, const vec3
 		ready = ps->weaponstate == WEAPON_READY || ps->weaponstate == WEAPON_FIRING;
 	}
 
+	// a command without the trigger that finds the timer out zeroes it
+	if ( ready && weaponTime <= 0 && !attack ) {
+		weaponTime = 0;
+		aimCrossRemainder = 0;
+		if ( aimCrossTime < 0 ) {
+			aimCrossTime = cl.serverTime;
+		}
+	}
+	aimTimerBefore = weaponTime;
+
 	if ( !attack || !ready || weaponTime > 0 || ( ps->pm_flags & PMF_RESPAWNED )
 		|| ps->stats[STAT_HEALTH] <= 0 || weapon != ps->weapon || ps->ammo[weapon] == 0 ) {
 		return qfalse;
 	}
 
-	// The gauntlet fires only when its swing touches something, every time
-	// its timer is out while the trigger is held.
-	if ( weapon == WP_GAUNTLET && ( !target || !CL_AimAssistInReach( eye, target ) ) ) {
+	// The gauntlet swings on the command after its timer ran out: the game
+	// checks its reach before it moves the player, with the timer and the
+	// view as the previous command left them, and only a swing that touches
+	// something counts as a shot.
+	if ( weapon == WP_GAUNTLET && ( before > 0 || !target || !CL_AimAssistInReach( eye, target ) ) ) {
 		return qfalse;
 	}
 
@@ -1592,6 +1740,8 @@ static qboolean CL_AimAssistFiring( const usercmd_t *cmd, int weapon, const vec3
 	// little early.
 	aimFireTime = cl.serverTime;
 	aimFireDelay = CL_AimAssistFireDelay( weapon ) + weaponTime;
+	aimTimerBefore = aimFireDelay;
+	aimCrossTime = -1;
 	return qtrue;
 }
 
@@ -1820,17 +1970,21 @@ Bookkeeping done once for every snapshot: who hurt us last, and whether a
 target the learner is waiting on has died on the way.
 =================
 */
-static int	aimDamageEvent = -1;	// the player state's damage counter as last seen
+static int	aimDamageEvent = -1;	// the player state's pain counter as last seen
+static int	aimDamageCount = -1;	// its damage count as last seen
+static int	aimAttackerSeen = -1;	// PERS_ATTACKER as last seen
+static int	aimSpawnCount = -1;		// PERS_SPAWN_COUNT as last seen
 static int	aimWatchedTime = -1;	// server time of the previous snapshot
 
 static void CL_AimAssistWatch( void ) {
+	const playerState_t	*ps = &cl.snap.ps;
 	const entityState_t	*entity;
 	int					i, j, attacker;
 
 	// a new map: nothing from the old one still holds
 	if ( cl.snap.serverTime < aimWatchedTime ) {
 		aimAttacker = -1;
-		aimDamageEvent = -1;
+		aimSpawnCount = -1;
 		for ( i = 0; i < AIM_PENDING; i++ ) {
 			aimPending[i].arrival = 0;
 		}
@@ -1838,25 +1992,40 @@ static void CL_AimAssistWatch( void ) {
 	aimWatchedTime = cl.snap.serverTime;
 
 	// Whoever hurt us last. The player state names the attacker, but it names
-	// client zero before anyone has: only a snapshot that also counts new
-	// damage is believed, and the first snapshot only sets the count.
-	if ( aimDamageEvent < 0 ) {
-		aimDamageEvent = cl.snap.ps.damageEvent;
-	} else if ( cl.snap.ps.damageEvent != aimDamageEvent ) {
-		aimDamageEvent = cl.snap.ps.damageEvent;
-		attacker = cl.snap.ps.persistant[PERS_ATTACKER];
-		if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != cl.snap.ps.clientNum ) {
+	// client zero before anyone has, and it carries the last life's killer
+	// into the next; so a new life - a respawn or a map restart, both of which
+	// the spawn count shows - starts without a grudge and only syncs the
+	// counters. Within a life a hit is believed when something moved: the pain
+	// counter, which the game steps at most once in 700 ms; the damage count,
+	// which it rewrites on every damaged frame; or the attacker itself, which
+	// it rewrites on every hit.
+	if ( ps->persistant[PERS_SPAWN_COUNT] != aimSpawnCount ) {
+		aimSpawnCount = ps->persistant[PERS_SPAWN_COUNT];
+		aimAttacker = -1;
+		aimDamageEvent = ps->damageEvent;
+		aimDamageCount = ps->damageCount;
+		aimAttackerSeen = ps->persistant[PERS_ATTACKER];
+	} else if ( ps->damageEvent != aimDamageEvent || ps->damageCount != aimDamageCount
+		|| ps->persistant[PERS_ATTACKER] != aimAttackerSeen ) {
+		aimDamageEvent = ps->damageEvent;
+		aimDamageCount = ps->damageCount;
+		aimAttackerSeen = ps->persistant[PERS_ATTACKER];
+		attacker = ps->persistant[PERS_ATTACKER];
+		if ( attacker >= 0 && attacker < MAX_CLIENTS && attacker != ps->clientNum ) {
 			aimAttacker = attacker;
 		}
 	}
-	if ( cl.snap.ps.stats[STAT_HEALTH] <= 0 ) {
-		aimAttacker = -1;		// a new life starts without a grudge
+	if ( ps->stats[STAT_HEALTH] <= 0 ) {
+		aimAttacker = -1;
 	}
 
-	// a target that died on the way says nothing about where it was going
+	// A target that died on the way says nothing about where it was going.
+	// Only the player's own entity counts: the corpse the game leaves behind
+	// carries the same client number for a while after the player is back.
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
 		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
-		if ( entity->eType != ET_PLAYER || !( entity->eFlags & EF_DEAD ) ) {
+		if ( entity->eType != ET_PLAYER || !( entity->eFlags & EF_DEAD )
+			|| entity->number != entity->clientNum ) {
 			continue;
 		}
 		for ( j = 0; j < AIM_PENDING; j++ ) {
@@ -2012,33 +2181,16 @@ void CL_AimAssistSnapshot( void ) {
 }
 
 
-/*
-=================
-CL_AimAssist
-
-Helps the hit-sound lab produce repeatable hits.  This deliberately does not
-use sv_cheats: the safety boundary is the loopback connection itself, and the
-only eligible targets are bots identified by the server's player configstring.
-
-Two points are computed for the target. The smooth one moves the way the
-picture moves and is what the view is steered towards between shots. The
-exact one is where the server will really test the shot, and on the command
-the shot fires on - which is predicted from the weapon timer - the view is put
-on it outright, when cl_aimAssistExact says so. That is how the follow can be
-smooth without the shot paying for it. cl_aimAssistSmooth adds a low pass on
-top for anyone who wants the follow softer still.
-=================
-*/
 static float	aimSmooth[2];			// the filtered desired pitch and yaw
 static int		aimSmoothTarget = -1;	// who the filter was following
 
-static void CL_AimAssist( usercmd_t *cmd ) {
+static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			pitchDelta, yawDelta, pitchStep, blend, lead, flight, reach, k;
+	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, reach, k;
 	int				i, key, localTeam, weapon;
-	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain;
+	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
 
 	if ( clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
 		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
@@ -2129,10 +2281,16 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	// corner or below an edge, and steering a rocket into the floor in front
 	// of you is worse than not helping at all: fall back to the plain position
 	// the target was picked by, and leave the aim alone when even that is
-	// blocked or the impact would land in your own splash.
-	CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
-		0, MASK_SHOT, qfalse );
-	if ( trace.fraction < 1.0f ) {
+	// blocked or the impact would land in your own splash. A grenade is judged
+	// by its arc, not by the line to the point the view is put on.
+	if ( CL_AimAssistArcWeapon( weapon ) ) {
+		clear = CL_AimAssistArcClear( viewOrigin, targetOrigin );
+	} else {
+		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
+			0, MASK_SHOT, qfalse );
+		clear = trace.fraction >= 1.0f;
+	}
+	if ( !clear ) {
 		VectorCopy( entity->pos.trBase, targetOrigin );
 		targetOrigin[2] += CL_AimAssistBodyHeight( entity );
 		plain = qtrue;
@@ -2179,9 +2337,15 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 	pitchDelta = AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] );
 	yawDelta = AngleNormalize180( desired[YAW] - cl.viewangles[YAW] );
 
-	// The command builder caps a pitch change at ninety degrees a command.
-	// Stay under it, so that the shot goes where the record says it went.
-	pitchStep = Com_Clamp( -89.0f, 89.0f, pitchDelta * blend );
+	// The command builder caps the change of pitch since the command began
+	// at ninety degrees, the mouse's share this frame included. Stay under
+	// it, so that the shot goes where the record says it went.
+	low = oldAngles[PITCH] - 89.0f - cl.viewangles[PITCH];
+	high = oldAngles[PITCH] + 89.0f - cl.viewangles[PITCH];
+	if ( low > high ) {
+		low = high;
+	}
+	pitchStep = Com_Clamp( low, high, pitchDelta * blend );
 	cl.viewangles[PITCH] += pitchStep;
 	cl.viewangles[YAW] += yawDelta * blend;
 
@@ -2196,6 +2360,32 @@ static void CL_AimAssist( usercmd_t *cmd ) {
 				qtrue, exact && !plain );
 		}
 	}
+}
+
+
+/*
+=================
+CL_AimAssist
+
+Helps the hit-sound lab produce repeatable hits.  This deliberately does not
+use sv_cheats: the safety boundary is the loopback connection itself, and the
+only eligible targets are bots identified by the server's player configstring.
+
+Two points are computed for the target. The smooth one moves the way the
+picture moves and is what the view is steered towards between shots. The
+exact one is where the server will really test the shot, and on the command
+the shot fires on - which is predicted from the weapon timer - the view is put
+on it outright, when cl_aimAssistExact says so. That is how the follow can be
+smooth without the shot paying for it. cl_aimAssistSmooth adds a low pass on
+top for anyone who wants the follow softer still.
+=================
+*/
+static void CL_AimAssist( usercmd_t *cmd, const vec3_t oldAngles ) {
+	CL_AimAssistSteer( cmd, oldAngles );
+
+	// the view this command goes out with, for the next command's reach test
+	aimPrevAngles[0] = cl.viewangles[PITCH];
+	aimPrevAngles[1] = cl.viewangles[YAW];
 }
 
 
@@ -2280,7 +2470,7 @@ usercmd_t CL_CreateCmd( void ) {
 	CL_JoystickMove( &cmd );
 
 	// local bot-only helper used by the hit-sound test bench
-	CL_AimAssist( &cmd );
+	CL_AimAssist( &cmd, oldAngles );
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {
