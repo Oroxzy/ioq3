@@ -2053,27 +2053,6 @@ static void CL_AimAssistSkip( int reason, int weapon ) {
 
 /*
 =================
-CL_AimAssistVisible
-
-Whether there is a clear shot at this target from here. Used to hold the
-trigger when cl_aimAssistHoldFire says a shot into cover is not worth taking.
-=================
-*/
-static qboolean CL_AimAssistVisible( const vec3_t viewOrigin, const entityState_t *entity ) {
-	vec3_t	targetOrigin;
-	trace_t	trace;
-
-	VectorCopy( entity->pos.trBase, targetOrigin );
-	targetOrigin[2] += CL_AimAssistBodyHeight( entity );
-	CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
-		0, MASK_SHOT, qfalse );
-
-	return trace.fraction >= 1.0f;
-}
-
-
-/*
-=================
 CL_AimAssistFireDelay
 
 The weapon's time between shots (PM_Weapon in bg_pmove.c), in milliseconds,
@@ -2805,7 +2784,7 @@ static int		aimSmoothTarget = -1;	// who the filter was following
 static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
-	vec3_t			viewOrigin, targetOrigin, direction, desired;
+	vec3_t			viewOrigin, targetOrigin, aimPoint, direction, desired;
 	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, k;
 	int				i, key, localTeam, weapon;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
@@ -2877,9 +2856,24 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, qtrue );
 
 	// A shot into cover is a wasted one: hold the trigger until there is a way
-	// through, for anyone who asked for that.
-	if ( cl_aimAssistHoldFire->integer && entity && !CL_AimAssistVisible( viewOrigin, entity ) ) {
-		cmd->buttons &= ~BUTTON_ATTACK;
+	// through, for anyone who asked for that. What has to be clear is the line
+	// the shot will really take - the led point a rocket is aimed at, not the
+	// target itself. A bot behind a pillar whose lead stands in the open is a
+	// shot worth taking, and one standing in the open whose lead is behind the
+	// pillar is not. Only when neither can be reached is there nothing to do.
+	if ( cl_aimAssistHoldFire->integer && entity ) {
+		CL_AimAssistTargetPoint( entity, viewOrigin, weapon, qfalse, aimPoint, NULL );
+		CM_BoxTrace( &trace, viewOrigin, aimPoint, vec3_origin, vec3_origin,
+			0, MASK_SHOT, qfalse );
+		if ( trace.fraction < 1.0f ) {
+			VectorCopy( entity->pos.trBase, aimPoint );
+			aimPoint[2] += CL_AimAssistBodyHeight( entity );
+			CM_BoxTrace( &trace, viewOrigin, aimPoint, vec3_origin, vec3_origin,
+				0, MASK_SHOT, qfalse );
+		}
+		if ( trace.fraction < 1.0f ) {
+			cmd->buttons &= ~BUTTON_ATTACK;
+		}
 	}
 
 	// the weapon timer runs whether or not there is anything to steer at

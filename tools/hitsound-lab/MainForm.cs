@@ -83,7 +83,7 @@ public class MainForm : Form, IMessageFilter {
 
 	readonly Label statTuneBoxes = Number();
 	readonly Label statTuneSamples = Number();
-	readonly CheckBox aimHoldFire = new() { Text = "nicht schießen, solange das Ziel hinter Deckung ist", AutoSize = true };
+	readonly CheckBox aimHoldFire = new() { Text = "nicht schießen, solange der Schuss nicht durchkommt", AutoSize = true };
 
 	// Was ein Ziel zum besseren Ziel macht. Die Reihenfolge ist das Gewicht:
 	// oben zaehlt am meisten. Schluessel wie in cl_aimAssistPriority.

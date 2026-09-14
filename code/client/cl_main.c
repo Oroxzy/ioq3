@@ -3618,7 +3618,7 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_aimAssistPriority, "What makes one bot the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );
 	cl_aimAssistHoldFire = Cvar_Get( "cl_aimAssistHoldFire", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistHoldFire, 0, 1, qtrue );
-	Cvar_SetDescription( cl_aimAssistHoldFire, "Hold the trigger while the aim assist's target is behind cover" );
+	Cvar_SetDescription( cl_aimAssistHoldFire, "Hold the trigger while the line to the point being aimed at - the led one, not the target - is blocked" );
 	cl_aimAssistDebug = Cvar_Get( "cl_aimAssistDebug", "0", 0 );
 	Cvar_CheckRange( cl_aimAssistDebug, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistDebug, "Print a line for every shot fired with aim assistance, to check where the prediction misses" );
