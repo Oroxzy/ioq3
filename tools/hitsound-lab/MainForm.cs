@@ -33,7 +33,7 @@ public class MainForm : Form, IMessageFilter {
 		"Original", "Quake Champions", "Eigene Datei",
 	};
 
-	readonly TextBox gameDir = new() { Width = 300 };
+	readonly TextBox gameDir = new() { Width = 258 };
 	readonly ComboBox map = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
 	readonly NumericUpDown bots = new() { Minimum = 0, Maximum = 10, Value = 3, Width = 60 };
 	readonly NumericUpDown skill = new() { Minimum = 1, Maximum = 5, Value = 3, Width = 60 };
@@ -111,6 +111,9 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	bool prioUpdating;
 	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
+	SplitContainer? splitMain;
+	Size windowSize;			// was zuletzt gespeichert wurde, leer beim ersten Start
+	int splitterSaved;			// wo der Teiler stand, 0 wenn nie gespeichert
 
 	readonly Label statBestWeapon = Number();
 	readonly ListView rankView = new() {
@@ -136,8 +139,8 @@ public class MainForm : Form, IMessageFilter {
 
 	public MainForm() {
 		Text = "Trefferton-Labor";
-		ClientSize = new Size( 880, 720 );
-		MinimumSize = new Size( 560, 420 );
+		ClientSize = new Size( 1260, 820 );
+		MinimumSize = new Size( 820, 560 );
 		Font = new Font( "Segoe UI", 9 );
 
 		gameDir.Text = FindGameDir();
@@ -246,6 +249,26 @@ public class MainForm : Form, IMessageFilter {
 		FillPriorities();			// erst wenn die Liste im Fenster haengt
 		LoadSettings();
 		poll.Start();
+	}
+
+	protected override void OnLoad( EventArgs e ) {
+		base.OnLoad( e );
+
+		// Beim ersten Start gross aufmachen - fuenf Karten voller Tabellen
+		// wollen Platz. Danach gilt, was der Benutzer zuletzt eingestellt hat.
+		if ( windowSize.Width > 400 && windowSize.Height > 300 ) {
+			ClientSize = windowSize;
+			CenterToScreen();
+		} else {
+			WindowState = FormWindowState.Maximized;
+		}
+
+		if ( splitMain is not null && splitMain.Width > 760 ) {
+			splitMain.Panel1MinSize = 430;
+			splitMain.Panel2MinSize = 320;
+			int want = splitterSaved > 0 ? splitterSaved : 500;
+			splitMain.SplitterDistance = Math.Clamp( want, 430, splitMain.Width - 320 );
+		}
 	}
 
 	protected override void OnFormClosed( FormClosedEventArgs e ) {
@@ -377,22 +400,35 @@ public class MainForm : Form, IMessageFilter {
 		};
 	}
 
+	// Links wird eingestellt, rechts wird abgelesen. Der Teiler bleibt beim
+	// Ziehen an der linken Spalte haengen, damit die Tabellen jede Breite
+	// bekommen, die das Fenster hergibt.
 	Control BuildLayout() {
-		var root = new TableLayoutPanel {
-			Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4,
-			Padding = new Padding( 12 ), AutoScroll = true,
+		// Breiten erst setzen, wenn der Teiler eine hat: vor dem Einhaengen ist
+		// er schmaler als seine eigenen Mindestbreiten und wehrt sich dagegen
+		var split = new SplitContainer {
+			Dock = DockStyle.Fill, Orientation = Orientation.Vertical,
+			FixedPanel = FixedPanel.Panel1, SplitterWidth = 8,
 		};
-		root.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
-		root.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
-		root.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
-		root.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
-		root.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		splitMain = split;
+		split.Panel1.Padding = new Padding( 12, 12, 6, 12 );
+		split.Panel1.AutoScroll = true;
+		split.Panel2.Padding = new Padding( 6, 12, 12, 12 );
 
-		root.Controls.Add( BuildMatchBox(), 0, 0 );
-		root.Controls.Add( BuildSoundBox(), 0, 1 );
-		root.Controls.Add( BuildAimBox(), 0, 2 );
-		root.Controls.Add( BuildStatsBox(), 0, 3 );
-		return root;
+		var boxes = new[] { BuildMatchBox(), BuildSoundBox(), BuildAimBox(), BuildLeadBox(), BuildViewBox() };
+		var column = new TableLayoutPanel {
+			Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+			ColumnCount = 1, RowCount = boxes.Length,
+		};
+		column.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		for ( int i = 0; i < boxes.Length; i++ ) {
+			column.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
+			column.Controls.Add( boxes[i], 0, i );
+		}
+
+		split.Panel1.Controls.Add( column );
+		split.Panel2.Controls.Add( BuildStatsBox() );
+		return split;
 	}
 
 	GroupBox BuildMatchBox() {
@@ -404,31 +440,51 @@ public class MainForm : Form, IMessageFilter {
 
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
-			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ),
-				Pad( start ), Pad( save ), Pad( status ) ) );
+			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
+			Row( Pad( start ), Pad( save ), Pad( status ) ) );
 	}
 
 	GroupBox BuildSoundBox() {
 		return Group( "Trefferton",
-			Row( Labelled( "Ton:", hitSound ), Labelled( "Datei:", hitSoundFile ) ),
+			Row( Labelled( "Ton:", hitSound ) ),
+			Row( Labelled( "Datei:", hitSoundFile ) ),
 			Row( Pad( hitPitch ) ),
-			Row( Labelled( "volle HP:", pitchFull ), Labelled( "leer:", pitchEmpty ),
-				Labelled( "Kill:", pitchKill ), Labelled( "voll ab:", pitchStack ) ) );
+			Row( Labelled( "volle HP:", pitchFull ), Labelled( "leer:", pitchEmpty ) ),
+			Row( Labelled( "Kill:", pitchKill ), Labelled( "voll ab:", pitchStack ) ) );
 	}
 
+	// Wie gezielt wird
 	GroupBox BuildAimBox() {
 		return Group( "Zielhilfe",
-			Row( Pad( aimAssist ), Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
-			Row( Pad( aimAttacker ), Pad( aimExact ) ),
+			Row( Pad( aimAssist ) ),
+			Row( Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
+			Row( Pad( aimExact ) ),
+			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
-			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ), Pad( aimLearn ), Pad( aimLearned ) ),
-			Row( Pad( botOutline ) ),
-			Row( Pad( itemOutline ), Pad( itemOutlineAll ) ),
-			Row( new Label {
-				Text = "Hold-Key zielt nur; geschossen wird separat mit der Feuertaste (10 = sofort)",
-				AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 0, 2, 0, 0 ),
-			} ) );
+			Row( Hint( "Die Taste zielt nur; geschossen wird mit der Feuertaste." ) ),
+			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ) );
 	}
+
+	// Wie weit vorgehalten wird
+	GroupBox BuildLeadBox() {
+		return Group( "Vorhalt",
+			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ) ),
+			Row( Pad( aimLearn ) ),
+			Row( Pad( aimLearned ) ) );
+	}
+
+	// Was zu sehen ist - mit dem Zielen hat das nichts zu tun
+	GroupBox BuildViewBox() {
+		return Group( "Anzeige",
+			Row( Pad( botOutline ) ),
+			Row( Pad( itemOutline ) ),
+			Row( Pad( itemOutlineAll ) ) );
+	}
+
+	static Label Hint( string text ) => new() {
+		Text = text, AutoSize = true, ForeColor = Color.DimGray,
+		Margin = new Padding( 0, 2, 0, 0 ),
+	};
 
 	// Gruppe aus festen Zeilen: nichts bricht um, nichts ueberlappt
 	static GroupBox Group( string title, params Control[] rows ) {
@@ -645,6 +701,12 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
 		s.AppendLine( "aimPriority=" + PriorityString() );
+		// nur eine wiederherstellbare Groesse merken, kein maximiertes Fenster
+		if ( WindowState == FormWindowState.Normal ) {
+			s.AppendLine( "windowWidth=" + ClientSize.Width );
+			s.AppendLine( "windowHeight=" + ClientSize.Height );
+		}
+		if ( splitMain is not null ) s.AppendLine( "splitter=" + splitMain.SplitterDistance );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
 		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
@@ -695,6 +757,11 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
 		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
+		if ( v.TryGetValue( "windowWidth", out var ww ) && int.TryParse( ww, out int w2 )
+			&& v.TryGetValue( "windowHeight", out var wh ) && int.TryParse( wh, out int h2 ) ) {
+			windowSize = new Size( w2, h2 );
+		}
+		if ( v.TryGetValue( "splitter", out var sp ) && int.TryParse( sp, out int sd ) ) splitterSaved = sd;
 		SetBool( botOutline, v, "botOutline" );
 		SetBool( itemOutline, v, "itemOutline" );
 		SetBool( itemOutlineAll, v, "itemOutlineAll" );
