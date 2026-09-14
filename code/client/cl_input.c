@@ -870,7 +870,7 @@ in seconds, and the learner tunes it from what the bots really do.
 */
 // Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
 // verschwindet oder seine Bedeutung wechselt.
-#define AIM_LOG_VERSION	2
+#define AIM_LOG_VERSION	3
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -921,30 +921,37 @@ static float CL_AimAssistSideways( float time ) {
 
 /*
 =================
-The record of what the prediction is really worth, per weapon and per flight
-time.
+The record of what the prediction is really worth: per weapon, per flight
+time, and per how fast the target was going.
 
 The lead model says how far a target gets while a shot is on its way. How well
-that holds depends on how long the shot is on its way: a plasma bolt arrives
-before anyone can change their mind, a rocket at the far end of the map gives
-them all the time in the world. It also depends on the weapon, because each
-one asks the question at its own distances. So every learned shot is written
-into the box for its weapon and its band of flight time, and two things are
-kept there: the factor the expectation has to be multiplied by to match what
-really happened, and how far the result still scatters after that.
+that holds depends on two things, and they are not the same thing. On how long
+the shot is on its way - a plasma bolt arrives before anyone can change their
+mind, a rocket at the far end of the map gives them all the time in the world.
+And on how fast the target is going: one that is walking is manoeuvring and
+will turn, one at full speed is committed to its line and mostly keeps it.
 
-The factor tells the prediction how much of the lead to believe. The scatter
-tells the target choice which shots are worth steering at all - a shot whose
-scatter is wider than the splash it would do is a lottery, whoever is being
-shot at, and that is measured, not assumed.
+So a box is a weapon, a band of flight time and a band of speed, and it keeps
+two numbers: the factor the expectation has to be multiplied by to match what
+really happened, and how far the result still scatters after that. The factor
+tells the prediction how much of the lead to believe; the scatter tells the
+target choice which shots are worth steering at all.
+
+The shooter's own speed is deliberately not an axis. The eye is carried to
+firing time exactly, so where the shot leaves from is known, and the target's
+path does not care how fast the shooter runs. It does change how quickly the
+view has to swing, which shows up as the residual error on the shot line - a
+different number, measured separately. Both speeds are written to the log so
+the question can be settled from data rather than from opinion.
 
 A box fills slowly, a handful of shots an evening, so the table is written
-next to the config and read back at the start: it goes on learning from where
-it left off instead of starting over every session.
+next to the config and read back at the start.
 =================
 */
 #define AIM_BANDS		4
+#define AIM_SPEEDS		2
 #define AIM_TUNE_FILE	"aimtune.cfg"
+#define AIM_TUNE_FORMAT	2			// the shape of the file, not of the log
 #define AIM_TUNE_PRIOR	4.0f		// weight the untouched factor 1.0 carries
 #define AIM_TUNE_DECAY	0.98f		// what a box keeps of its past per sample
 
@@ -955,7 +962,7 @@ typedef struct {
 	int		samples;
 } aimTune_t;
 
-static aimTune_t	aimTune[WP_NUM_WEAPONS][AIM_BANDS];
+static aimTune_t	aimTune[WP_NUM_WEAPONS][AIM_BANDS][AIM_SPEEDS];
 static qboolean		aimTuneLoaded;
 static qboolean		aimTuneDirty;
 
@@ -978,12 +985,44 @@ static int CL_AimAssistBand( float lead ) {
 	return 3;
 }
 
+static float CL_AimAssistBandCentre( int band ) {
+	static const float	centre[AIM_BANDS] = { 0.2f, 0.6f, 1.05f, 1.8f };
+
+	return centre[band < 0 ? 0 : ( band >= AIM_BANDS ? AIM_BANDS - 1 : band )];
+}
+
+/*
+=================
+CL_AimAssistSpeedBand
+
+Walking or running. A bot at full pace does about three hundred and twenty
+units a second; much below two hundred it is turning, stopping or picking
+something up, and its line is worth less. Two steps only, because every step
+divides the samples, and a box with nothing in it learns nothing.
+=================
+*/
+static int CL_AimAssistSpeedBand( float speed ) {
+	return speed < 200.0f ? 0 : 1;
+}
+
+static float CL_AimAssistSpeedCentre( int band ) {
+	static const float	centre[AIM_SPEEDS] = { 110.0f, 330.0f };
+
+	return centre[band < 0 ? 0 : ( band >= AIM_SPEEDS ? AIM_SPEEDS - 1 : band )];
+}
+
+static float CL_AimAssistSpeedStart( int band ) {
+	static const float	start[AIM_SPEEDS] = { 0.0f, 200.0f };
+
+	return start[band < 0 ? 0 : ( band >= AIM_SPEEDS ? AIM_SPEEDS - 1 : band )];
+}
+
 static void CL_AimAssistTuneLoad( void ) {
 	union { char *c; void *v; }	file;
 	const char					*line;
 	aimTune_t					*t;
 	float						sum, weight, square;
-	int							weapon, band, samples;
+	int							weapon, band, pace, samples, format = 0;
 	long						length;
 
 	aimTuneLoaded = qtrue;
@@ -995,12 +1034,15 @@ static void CL_AimAssistTuneLoad( void ) {
 
 	line = file.c;
 	while ( *line ) {
-		if ( *line != '#' && sscanf( line, "%i %i %f %f %f %i",
-				&weapon, &band, &sum, &weight, &square, &samples ) == 6
+		if ( sscanf( line, "format %i", &format ) == 1 && format != AIM_TUNE_FORMAT ) {
+			break;			// written by an older build, its boxes mean something else
+		}
+		if ( *line != '/' && sscanf( line, "%i %i %i %f %f %f %i",
+				&weapon, &band, &pace, &sum, &weight, &square, &samples ) == 7
 			&& weapon > WP_NONE && weapon < WP_NUM_WEAPONS
-			&& band >= 0 && band < AIM_BANDS
+			&& band >= 0 && band < AIM_BANDS && pace >= 0 && pace < AIM_SPEEDS
 			&& weight >= 0.0f && square >= 0.0f && samples >= 0 ) {
-			t = &aimTune[weapon][band];
+			t = &aimTune[weapon][band][pace];
 			t->sum = sum;
 			t->weight = weight;
 			t->square = square;
@@ -1019,28 +1061,30 @@ static void CL_AimAssistTuneLoad( void ) {
 }
 
 static void CL_AimAssistTuneSave( void ) {
-	char		text[4096];
-	const char	*name;
+	char		text[8192];
 	aimTune_t	*t;
-	int			weapon, band;
+	int			weapon, band, pace;
 
 	if ( !aimTuneDirty ) {
 		return;
 	}
 
-	Q_strncpyz( text, "// what the aim assist has measured about its own lead.\n"
-		"// weapon band sum weight square samples\n", sizeof( text ) );
+	Com_sprintf( text, sizeof( text ),
+		"format %i\n// what the aim assist has measured about its own lead.\n"
+		"// weapon band pace sum weight square samples\n", AIM_TUNE_FORMAT );
 
 	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
 		for ( band = 0; band < AIM_BANDS; band++ ) {
-			t = &aimTune[weapon][band];
-			if ( !t->samples ) {
-				continue;
+			for ( pace = 0; pace < AIM_SPEEDS; pace++ ) {
+				t = &aimTune[weapon][band][pace];
+				if ( !t->samples ) {
+					continue;
+				}
+				Q_strcat( text, sizeof( text ), va( "%i %i %i %.4f %.4f %.1f %i\t// %s %.1fs %.0fu/s\n",
+					weapon, band, pace, t->sum, t->weight, t->square, t->samples,
+					CL_AimAssistWeaponName( weapon ), CL_AimAssistBandStart( band ),
+					CL_AimAssistSpeedStart( pace ) ) );
 			}
-			name = CL_AimAssistWeaponName( weapon );
-			Q_strcat( text, sizeof( text ), va( "%i %i %.4f %.4f %.1f %i\t// %s %.1fs\n",
-				weapon, band, t->sum, t->weight, t->square, t->samples,
-				name, CL_AimAssistBandStart( band ) ) );
 		}
 	}
 
@@ -1048,32 +1092,39 @@ static void CL_AimAssistTuneSave( void ) {
 	aimTuneDirty = qfalse;
 }
 
-/*
-=================
-CL_AimAssistTune
-
-How much of the modelled lead to believe for this weapon at this flight time.
-One until something has been learned, and it never strays far: the box starts
-with a prior weight of its own on the untouched value, so a first sample
-nudges rather than decides.
-=================
-*/
-static float CL_AimAssistBandCentre( int band ) {
-	static const float	centre[AIM_BANDS] = { 0.2f, 0.6f, 1.05f, 1.8f };
-
-	return centre[band < 0 ? 0 : ( band >= AIM_BANDS ? AIM_BANDS - 1 : band )];
-}
-
 // What one box on its own says, with its own weight against the untouched one
-static float CL_AimAssistBoxFactor( int weapon, int band ) {
-	const aimTune_t	*t = &aimTune[weapon][band];
+static float CL_AimAssistBoxFactor( int weapon, int band, int pace ) {
+	const aimTune_t	*t = &aimTune[weapon][band][pace];
 
 	return ( t->sum + AIM_TUNE_PRIOR ) / ( t->weight + AIM_TUNE_PRIOR );
 }
 
-static float CL_AimAssistTune( int weapon, float lead ) {
-	float	here, there, share;
-	int		band, next;
+// Where a value falls between the middles of its own band and the next one,
+// and which that next one is. Zero share means the box speaks for itself.
+static float CL_AimAssistBlend( float value, float here, float there, int band, int next, int *outNext ) {
+	*outNext = next;
+	if ( next == band ) {
+		return 0.0f;
+	}
+	return Com_Clamp( 0.0f, 1.0f, ( value - here ) / ( there - here ) );
+}
+
+/*
+=================
+CL_AimAssistTune
+
+How much of the modelled lead to believe for this weapon, at this flight time,
+against a target going this fast.
+
+A box is written sharp and read soft. Half a frame either side of a boundary
+are the same shot and should not get different answers because one landed in
+the next box, so the neighbouring boxes are blended along both axes by where
+the shot falls between their middles.
+=================
+*/
+static float CL_AimAssistTune( int weapon, float lead, float speed ) {
+	float	overTime, overPace, here, there, low, high;
+	int		band, nextBand, pace, nextPace;
 
 	if ( !aimTuneLoaded ) {
 		CL_AimAssistTuneLoad();
@@ -1082,27 +1133,35 @@ static float CL_AimAssistTune( int weapon, float lead ) {
 		return 1.0f;
 	}
 
-	// A box is written sharp and read soft. Half a frame either side of a
-	// boundary are the same shot, and they should not get different answers
-	// because one landed in the next box: the two nearest boxes are blended
-	// by where the flight time falls between their middles, so the correction
-	// runs smoothly with the range instead of stepping at the edges.
 	band = CL_AimAssistBand( lead );
 	here = CL_AimAssistBandCentre( band );
-
+	nextBand = band;
 	if ( lead < here && band > 0 ) {
-		next = band - 1;
+		nextBand = band - 1;
 	} else if ( lead > here && band < AIM_BANDS - 1 ) {
-		next = band + 1;
-	} else {
-		return Com_Clamp( 0.1f, 2.0f, CL_AimAssistBoxFactor( weapon, band ) );
+		nextBand = band + 1;
 	}
+	there = CL_AimAssistBandCentre( nextBand );
+	overTime = CL_AimAssistBlend( lead, here, there, band, nextBand, &nextBand );
 
-	there = CL_AimAssistBandCentre( next );
-	share = Com_Clamp( 0.0f, 1.0f, ( lead - here ) / ( there - here ) );
+	pace = CL_AimAssistSpeedBand( speed );
+	here = CL_AimAssistSpeedCentre( pace );
+	nextPace = pace;
+	if ( speed < here && pace > 0 ) {
+		nextPace = pace - 1;
+	} else if ( speed > here && pace < AIM_SPEEDS - 1 ) {
+		nextPace = pace + 1;
+	}
+	there = CL_AimAssistSpeedCentre( nextPace );
+	overPace = CL_AimAssistBlend( speed, here, there, pace, nextPace, &nextPace );
 
-	return Com_Clamp( 0.1f, 2.0f, CL_AimAssistBoxFactor( weapon, band ) * ( 1.0f - share )
-		+ CL_AimAssistBoxFactor( weapon, next ) * share );
+	// the two flight-time neighbours at each of the two speeds, then between
+	low = CL_AimAssistBoxFactor( weapon, band, pace ) * ( 1.0f - overTime )
+		+ CL_AimAssistBoxFactor( weapon, nextBand, pace ) * overTime;
+	high = CL_AimAssistBoxFactor( weapon, band, nextPace ) * ( 1.0f - overTime )
+		+ CL_AimAssistBoxFactor( weapon, nextBand, nextPace ) * overTime;
+
+	return Com_Clamp( 0.1f, 2.0f, low * ( 1.0f - overPace ) + high * overPace );
 }
 
 /*
@@ -1114,7 +1173,7 @@ has been applied - what is left that no prediction can take away. Negative
 until the box has seen enough shots to mean anything.
 =================
 */
-static float CL_AimAssistScatter( int weapon, float lead ) {
+static float CL_AimAssistScatter( int weapon, float lead, float speed ) {
 	const aimTune_t	*t;
 
 	if ( !aimTuneLoaded ) {
@@ -1124,7 +1183,7 @@ static float CL_AimAssistScatter( int weapon, float lead ) {
 		return -1.0f;
 	}
 
-	t = &aimTune[weapon][CL_AimAssistBand( lead )];
+	t = &aimTune[weapon][CL_AimAssistBand( lead )][CL_AimAssistSpeedBand( speed )];
 	if ( t->samples < 6 || t->weight <= 0.0f ) {
 		return -1.0f;
 	}
@@ -1136,13 +1195,15 @@ static float CL_AimAssistScatter( int weapon, float lead ) {
 =================
 CL_AimAssistTuneUpdate
 
-One learned shot into its box. The factor follows the ratio the shot really
-had, the scatter follows what the corrected prediction still missed by, and
-both forget the distant past slowly so the table can follow an opponent that
-changes without throwing away an evening's worth of shots.
+One learned shot into its box - the one it belongs to, not its neighbours. The
+factor follows the ratio the shot really had, the scatter follows what the
+corrected prediction still missed by, and both forget the distant past slowly
+so the table can follow an opponent that changes without throwing away an
+evening's worth of shots.
 =================
 */
-static void CL_AimAssistTuneUpdate( int weapon, float lead, float expected, float actual, float weight ) {
+static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
+		float expected, float actual, float weight ) {
 	aimTune_t	*t;
 	float		ratio, miss;
 
@@ -1154,9 +1215,9 @@ static void CL_AimAssistTuneUpdate( int weapon, float lead, float expected, floa
 		return;
 	}
 
-	t = &aimTune[weapon][CL_AimAssistBand( lead )];
+	t = &aimTune[weapon][CL_AimAssistBand( lead )][CL_AimAssistSpeedBand( speed )];
 	ratio = Com_Clamp( 0.0f, 2.0f, actual / expected );
-	miss = actual - expected * CL_AimAssistTune( weapon, lead );
+	miss = actual - expected * CL_AimAssistTune( weapon, lead, speed );
 
 	t->sum = t->sum * AIM_TUNE_DECAY + ratio * weight;
 	t->weight = t->weight * AIM_TUNE_DECAY + weight;
@@ -1199,7 +1260,7 @@ the aimtune command and written once when the connection goes.
 */
 void CL_AimAssistTuneDump( void ) {
 	const aimTune_t	*t;
-	int				weapon, band, boxes = 0;
+	int				weapon, band, pace, boxes = 0;
 
 	if ( !aimTuneLoaded ) {
 		CL_AimAssistTuneLoad();
@@ -1207,16 +1268,20 @@ void CL_AimAssistTuneDump( void ) {
 
 	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
 		for ( band = 0; band < AIM_BANDS; band++ ) {
-			t = &aimTune[weapon][band];
-			if ( !t->samples ) {
-				continue;
+			for ( pace = 0; pace < AIM_SPEEDS; pace++ ) {
+				t = &aimTune[weapon][band][pace];
+				if ( !t->samples ) {
+					continue;
+				}
+				boxes++;
+				Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f factor %.2f"
+					" scatter %.0f reach %.0f n %i frame %i\n",
+					CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
+					pace, CL_AimAssistSpeedStart( pace ),
+					CL_AimAssistTune( weapon, CL_AimAssistBandCentre( band ), CL_AimAssistSpeedCentre( pace ) ),
+					CL_AimAssistScatter( weapon, CL_AimAssistBandCentre( band ), CL_AimAssistSpeedCentre( pace ) ),
+					CL_AimAssistHitRadius( weapon ), t->samples, cl.snap.serverTime );
 			}
-			boxes++;
-			Com_Printf( "aim tune: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
-				CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
-				CL_AimAssistTune( weapon, CL_AimAssistBandStart( band ) + 0.05f ),
-				CL_AimAssistScatter( weapon, CL_AimAssistBandStart( band ) + 0.05f ),
-				CL_AimAssistHitRadius( weapon ), t->samples, cl.snap.serverTime );
 		}
 	}
 
@@ -1267,7 +1332,8 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		sideways = time;
 	} else {
 		sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time )
-			* CL_AimAssistTune( weapon, time );
+			* CL_AimAssistTune( weapon, time,
+				sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) );
 	}
 	end[0] = entity->pos.trBase[0] + motion[0] * sideways;
 	end[1] = entity->pos.trBase[1] + motion[1] * sideways;
@@ -1895,7 +1961,7 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	entityState_t	*entity, *best = NULL;
 	const char		*info;
 	trace_t			trace;
-	vec3_t			targetOrigin, direction, desired;
+	vec3_t			targetOrigin, direction, desired, motion;
 	float			bestScore = -1.0f, score, angle, pitchDelta, yawDelta, distance;
 	float			speed, scatter, weight[AIM_PRIO_COUNT];
 	float			part[AIM_PRIO_COUNT], bestPart[AIM_PRIO_COUNT];
@@ -1969,7 +2035,9 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		// How well this weapon does at that range is measured, not guessed;
 		// a shot that scatters wider than it reaches counts for little.
 		speed = CL_AimAssistProjectileSpeed( weapon );
-		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, distance / speed ) : -1.0f;
+		CL_AimAssistVelocity( entity, motion );
+		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, distance / speed,
+			sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) ) : -1.0f;
 		part[AIM_PRIO_SURE] = scatter >= 0.0f
 			? weight[AIM_PRIO_SURE] / ( 1.0f + scatter / CL_AimAssistHitRadius( weapon ) )
 			: weight[AIM_PRIO_SURE] * 0.5f;		// nothing measured yet
@@ -2327,7 +2395,8 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum,
 		exact ? 1 : 0, exact ? 0 : (int)( CL_AimAssistPhase() * 1000.0f ),
 		CL_AimAssistHold(), CL_AimAssistCrouched( entity ) ? 1 : 0,
-		CL_AimAssistTune( weapon, lead ), CL_AimAssistScatter( weapon, lead ),
+		CL_AimAssistTune( weapon, lead, sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) ),
+		CL_AimAssistScatter( weapon, lead, sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) ),
 		fallback ? 1 : 0, cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		cl.snap.serverTime, cl.serverTime );
 }
@@ -2359,6 +2428,7 @@ typedef struct {
 	float	straight;		// sideways distance a straight line gives it by arrival
 	float	expected;		// what the prediction really aimed for, tuning included
 	float	rate;			// its sideways speed after the trust of the moment
+	float	speed;			// and before it, which is the axis the table is kept on
 	float	lead;			// flight time, a whole number of frames
 } aimPending_t;
 
@@ -2408,7 +2478,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	VectorSubtract( aimed, entity->pos.trBase, offset );
 	offset[2] = 0.0f;
 	used = DotProduct( offset, along );
-	unclipped = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead );
+	unclipped = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead, speed );
 	if ( !exact ) {
 		unclipped += speed * CL_AimAssistPhase();
 	}
@@ -2442,7 +2512,8 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	VectorCopy( entity->pos.trBase, p->origin );
 	VectorCopy( along, p->along );
 	p->straight = speed * lead;
-	p->expected = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead );
+	p->speed = speed;
+	p->expected = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead, speed );
 	p->rate = speed * trust;
 	p->lead = lead;
 }
@@ -2453,7 +2524,7 @@ static void CL_AimAssistLearn( void ) {
 	const char			*info;
 	vec3_t				moved;
 	float				actual, lateral, expected, error, weight, hold;
-	int					i, j, band;
+	int					i, j, band, pace;
 
 	for ( i = 0; i < AIM_PENDING; i++ ) {
 		p = &aimPending[i];
@@ -2516,21 +2587,29 @@ static void CL_AimAssistLearn( void ) {
 		// was wrong: a run of long rockets pulled it down and shortened the
 		// lead for close plasma with it, where nothing had been measured at
 		// all. What is learned at one range belongs to that range.
-		CL_AimAssistTuneUpdate( p->weapon, p->lead, expected, actual, weight );
+		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, expected, actual, weight );
 		hold = CL_AimAssistHold();
 		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
 
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
+		// Beide Geschwindigkeiten stehen dabei: die des Ziels ist die Achse der
+		// Tabelle, die eigene ist es bewusst nicht - ob sie es sein sollte,
+		// laesst sich nur an diesen Zeilen entscheiden.
 		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f"
-			" error %.2f weight %.2f hold %.2f n %i frame %i\n",
+			" error %.2f weight %.2f pace %.0f myspeed %.0f hold %.2f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
-			actual, p->straight, expected, lateral, error, weight, hold,
+			actual, p->straight, expected, lateral, error, weight,
+			p->speed, VectorLength( cl.snap.ps.velocity ), hold,
 			aimLearned, cl.snap.serverTime );
-		Com_Printf( "aim tune: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
+		pace = CL_AimAssistSpeedBand( p->speed );
+		Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f factor %.2f"
+			" scatter %.0f reach %.0f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), band, CL_AimAssistBandStart( band ),
-			CL_AimAssistTune( p->weapon, p->lead ), CL_AimAssistScatter( p->weapon, p->lead ),
-			CL_AimAssistHitRadius( p->weapon ), aimTune[p->weapon][band].samples,
+			pace, CL_AimAssistSpeedStart( pace ),
+			CL_AimAssistTune( p->weapon, p->lead, p->speed ),
+			CL_AimAssistScatter( p->weapon, p->lead, p->speed ),
+			CL_AimAssistHitRadius( p->weapon ), aimTune[p->weapon][band][pace].samples,
 			cl.snap.serverTime );
 	}
 }

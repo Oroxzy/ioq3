@@ -128,7 +128,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 2;
+	const int LogVersion = 3;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -186,6 +186,7 @@ public class MainForm : Form, IMessageFilter {
 
 		tuneView.Columns.Add( "Waffe", 110 );
 		tuneView.Columns.Add( "Flugzeit ab", 90, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Ziel-Tempo ab", 100, HorizontalAlignment.Right );
 		tuneView.Columns.Add( "Proben", 70, HorizontalAlignment.Right );
 		tuneView.Columns.Add( "Vorhalt-Faktor", 100, HorizontalAlignment.Right );
 		tuneView.Columns.Add( "Streuung", 80, HorizontalAlignment.Right );
@@ -938,7 +939,7 @@ public class MainForm : Form, IMessageFilter {
 			} else if ( trimmed.StartsWith( "aim tune: " ) ) {
 				var tune = Tune.Parse( trimmed );
 				// je Waffe und Flugzeitband zaehlt der zuletzt gemessene Stand
-				if ( tune is not null ) tunes[tune.Weapon + "|" + tune.Band] = tune;
+				if ( tune is not null ) tunes[tune.Weapon + "|" + tune.Band + "|" + tune.Pace] = tune;
 			}
 		}
 
@@ -1215,8 +1216,8 @@ public class MainForm : Form, IMessageFilter {
 	// Flugzeitband ueber sich selbst gemessen hat
 	sealed class Tune {
 		public string Weapon = "";
-		public int Band, Samples;
-		public double From, Factor, Scatter, Reach;
+		public int Band, Pace, Samples;
+		public double From, Above, Factor, Scatter, Reach;
 
 		public static Tune? Parse( string line ) {
 			var f = line[10..].Split( ' ', StringSplitOptions.RemoveEmptyEntries );
@@ -1226,8 +1227,10 @@ public class MainForm : Form, IMessageFilter {
 			for ( int i = 1; i < f.Length - 1; i++ ) {
 				switch ( f[i] ) {
 				case "band": int.TryParse( f[i + 1], out t.Band ); break;
+				case "pace": int.TryParse( f[i + 1], out t.Pace ); break;
 				case "n": int.TryParse( f[i + 1], out t.Samples ); break;
 				case "from": t.From = Num( f[i + 1] ); break;
+				case "above": t.Above = Num( f[i + 1] ); break;
 				case "factor": t.Factor = Num( f[i + 1] ); break;
 				case "scatter": t.Scatter = Num( f[i + 1] ); break;
 				case "reach": t.Reach = Num( f[i + 1] ); break;
@@ -1290,7 +1293,7 @@ public class MainForm : Form, IMessageFilter {
 		var rows = new List<ListViewItem>();
 		int samples = 0;
 
-		foreach ( var t in tunes.Values.OrderBy( t => t.Weapon ).ThenBy( t => t.Band ) ) {
+		foreach ( var t in tunes.Values.OrderBy( t => t.Weapon ).ThenBy( t => t.Band ).ThenBy( t => t.Pace ) ) {
 			samples += t.Samples;
 
 			string outlook;
@@ -1309,8 +1312,11 @@ public class MainForm : Form, IMessageFilter {
 				colour = Color.Firebrick;
 			}
 
-			var row = new ListViewItem( t.Weapon ) { ForeColor = colour, Tag = t.Weapon + "|" + t.Band };
+			var row = new ListViewItem( t.Weapon ) {
+				ForeColor = colour, Tag = t.Weapon + "|" + t.Band + "|" + t.Pace,
+			};
 			row.SubItems.Add( t.From.ToString( "0.0", System.Globalization.CultureInfo.InvariantCulture ) + " s" );
+			row.SubItems.Add( t.Above.ToString( "0" ) + " u/s" );
 			row.SubItems.Add( t.Samples.ToString() );
 			row.SubItems.Add( t.Factor.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture ) );
 			row.SubItems.Add( t.Scatter < 0 ? "—" : t.Scatter.ToString( "0" ) );
@@ -1323,7 +1329,7 @@ public class MainForm : Form, IMessageFilter {
 		statTuneSamples.Text = samples.ToString();
 
 		// nur neu zeichnen, wenn sich wirklich etwas geaendert hat
-		var stamp = string.Join( ";", rows.Select( r => r.Tag + ":" + r.SubItems[2].Text + ":" + r.SubItems[4].Text ) );
+		var stamp = string.Join( ";", rows.Select( r => r.Tag + ":" + r.SubItems[3].Text + ":" + r.SubItems[5].Text ) );
 		if ( stamp == tuneStamp ) return;
 		tuneStamp = stamp;
 
