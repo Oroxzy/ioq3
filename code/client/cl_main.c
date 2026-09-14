@@ -3817,6 +3817,7 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("model", CL_SetModel_f );
 	Cmd_AddCommand ("video", CL_Video_f );
 	Cmd_AddCommand ("stopvideo", CL_StopVideo_f );
+	Cmd_AddCommand ("aimtune", CL_AimAssistTuneDump );
 	if( !com_dedicated->integer ) {
 		Cmd_AddCommand ("sayto", CL_Sayto_f );
 		Cmd_SetCommandCompletionFunc( "sayto", CL_CompletePlayerName );

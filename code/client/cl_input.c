@@ -649,7 +649,10 @@ the target stands or ducks.
 =================
 */
 static float CL_AimAssistBodyHeight( const entityState_t *entity ) {
-	return CL_AimAssistCrouched( entity ) ? 0.0f : 8.0f;
+	// The box reaches from 24 below the origin to 32 above it standing and
+	// 16 above it crouched, so its middle - the point furthest from every
+	// face - is 4 above the origin standing and 4 below it crouched.
+	return CL_AimAssistCrouched( entity ) ? -4.0f : 4.0f;
 }
 
 
@@ -952,7 +955,13 @@ of the program: the config is written at the top of a frame, and no frame
 follows a quit. So the file is written here as well.
 =================
 */
+static void CL_AimAssistTuneSave( void );
+void CL_AimAssistTuneDump( void );
+
 void CL_AimAssistFlush( void ) {
+	CL_AimAssistTuneSave();
+	CL_AimAssistTuneDump();
+
 	if ( !cl_aimAssistLead || !aimHoldPending ) {
 		return;
 	}
@@ -977,6 +986,281 @@ static float CL_AimAssistSideways( float time ) {
 
 /*
 =================
+The record of what the prediction is really worth, per weapon and per flight
+time.
+
+The lead model says how far a target gets while a shot is on its way. How well
+that holds depends on how long the shot is on its way: a plasma bolt arrives
+before anyone can change their mind, a rocket at the far end of the map gives
+them all the time in the world. It also depends on the weapon, because each
+one asks the question at its own distances. So every learned shot is written
+into the box for its weapon and its band of flight time, and two things are
+kept there: the factor the expectation has to be multiplied by to match what
+really happened, and how far the result still scatters after that.
+
+The factor tells the prediction how much of the lead to believe. The scatter
+tells the target choice which shots are worth steering at all - a shot whose
+scatter is wider than the splash it would do is a lottery, whoever is being
+shot at, and that is measured, not assumed.
+
+A box fills slowly, a handful of shots an evening, so the table is written
+next to the config and read back at the start: it goes on learning from where
+it left off instead of starting over every session.
+=================
+*/
+#define AIM_BANDS		4
+#define AIM_TUNE_FILE	"aimtune.cfg"
+#define AIM_TUNE_PRIOR	4.0f		// weight the untouched factor 1.0 carries
+#define AIM_TUNE_DECAY	0.98f		// what a box keeps of its past per sample
+
+typedef struct {
+	float	sum;			// weighted sum of actual/expected
+	float	weight;			// weight behind it
+	float	square;			// weighted mean square of what is left over, in units
+	int		samples;
+} aimTune_t;
+
+static aimTune_t	aimTune[WP_NUM_WEAPONS][AIM_BANDS];
+static qboolean		aimTuneLoaded;
+static qboolean		aimTuneDirty;
+
+static float CL_AimAssistBandStart( int band ) {
+	static const float	start[AIM_BANDS] = { 0.0f, 0.4f, 0.8f, 1.3f };
+
+	return start[band < 0 ? 0 : ( band >= AIM_BANDS ? AIM_BANDS - 1 : band )];
+}
+
+static int CL_AimAssistBand( float lead ) {
+	if ( lead < 0.4f ) {
+		return 0;
+	}
+	if ( lead < 0.8f ) {
+		return 1;
+	}
+	if ( lead < 1.3f ) {
+		return 2;
+	}
+	return 3;
+}
+
+static void CL_AimAssistTuneLoad( void ) {
+	union { char *c; void *v; }	file;
+	const char					*line;
+	aimTune_t					*t;
+	float						sum, weight, square;
+	int							weapon, band, samples;
+	long						length;
+
+	aimTuneLoaded = qtrue;
+
+	length = FS_ReadFile( AIM_TUNE_FILE, &file.v );
+	if ( length <= 0 || !file.c ) {
+		return;
+	}
+
+	line = file.c;
+	while ( *line ) {
+		if ( *line != '#' && sscanf( line, "%i %i %f %f %f %i",
+				&weapon, &band, &sum, &weight, &square, &samples ) == 6
+			&& weapon > WP_NONE && weapon < WP_NUM_WEAPONS
+			&& band >= 0 && band < AIM_BANDS
+			&& weight >= 0.0f && square >= 0.0f && samples >= 0 ) {
+			t = &aimTune[weapon][band];
+			t->sum = sum;
+			t->weight = weight;
+			t->square = square;
+			t->samples = samples;
+		}
+
+		while ( *line && *line != '\n' ) {
+			line++;
+		}
+		while ( *line == '\n' || *line == '\r' ) {
+			line++;
+		}
+	}
+
+	FS_FreeFile( file.v );
+}
+
+static void CL_AimAssistTuneSave( void ) {
+	char		text[4096];
+	const char	*name;
+	aimTune_t	*t;
+	int			weapon, band;
+
+	if ( !aimTuneDirty ) {
+		return;
+	}
+
+	Q_strncpyz( text, "// what the aim assist has measured about its own lead.\n"
+		"// weapon band sum weight square samples\n", sizeof( text ) );
+
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( band = 0; band < AIM_BANDS; band++ ) {
+			t = &aimTune[weapon][band];
+			if ( !t->samples ) {
+				continue;
+			}
+			name = CL_AimAssistWeaponName( weapon );
+			Q_strcat( text, sizeof( text ), va( "%i %i %.4f %.4f %.1f %i\t// %s %.1fs\n",
+				weapon, band, t->sum, t->weight, t->square, t->samples,
+				name, CL_AimAssistBandStart( band ) ) );
+		}
+	}
+
+	FS_WriteFile( AIM_TUNE_FILE, text, strlen( text ) );
+	aimTuneDirty = qfalse;
+}
+
+/*
+=================
+CL_AimAssistTune
+
+How much of the modelled lead to believe for this weapon at this flight time.
+One until something has been learned, and it never strays far: the box starts
+with a prior weight of its own on the untouched value, so a first sample
+nudges rather than decides.
+=================
+*/
+static float CL_AimAssistTune( int weapon, float lead ) {
+	const aimTune_t	*t;
+
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f ) {
+		return 1.0f;
+	}
+
+	t = &aimTune[weapon][CL_AimAssistBand( lead )];
+	return Com_Clamp( 0.1f, 2.0f,
+		( t->sum + AIM_TUNE_PRIOR ) / ( t->weight + AIM_TUNE_PRIOR ) );
+}
+
+/*
+=================
+CL_AimAssistScatter
+
+How far the shot is expected to land from the target, in units, after the lead
+has been applied - what is left that no prediction can take away. Negative
+until the box has seen enough shots to mean anything.
+=================
+*/
+static float CL_AimAssistScatter( int weapon, float lead ) {
+	const aimTune_t	*t;
+
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f ) {
+		return -1.0f;
+	}
+
+	t = &aimTune[weapon][CL_AimAssistBand( lead )];
+	if ( t->samples < 6 || t->weight <= 0.0f ) {
+		return -1.0f;
+	}
+
+	return sqrt( t->square / t->weight );
+}
+
+/*
+=================
+CL_AimAssistTuneUpdate
+
+One learned shot into its box. The factor follows the ratio the shot really
+had, the scatter follows what the corrected prediction still missed by, and
+both forget the distant past slowly so the table can follow an opponent that
+changes without throwing away an evening's worth of shots.
+=================
+*/
+static void CL_AimAssistTuneUpdate( int weapon, float lead, float expected, float actual, float weight ) {
+	aimTune_t	*t;
+	float		ratio, miss;
+
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f
+		|| expected <= 1.0f || weight <= 0.0f ) {
+		return;
+	}
+
+	t = &aimTune[weapon][CL_AimAssistBand( lead )];
+	ratio = Com_Clamp( 0.0f, 2.0f, actual / expected );
+	miss = actual - expected * CL_AimAssistTune( weapon, lead );
+
+	t->sum = t->sum * AIM_TUNE_DECAY + ratio * weight;
+	t->weight = t->weight * AIM_TUNE_DECAY + weight;
+	t->square = t->square * AIM_TUNE_DECAY + miss * miss * weight;
+	t->samples++;
+	aimTuneDirty = qtrue;
+}
+
+
+/*
+=================
+CL_AimAssistHitRadius
+
+How far a shot may land from the target and still do something: the splash of
+the weapons that have one (g_missile.c), and half the width of the box for the
+ones that must land on it.
+=================
+*/
+static float CL_AimAssistHitRadius( int weapon ) {
+	switch ( weapon ) {
+	case WP_ROCKET_LAUNCHER:	return 120.0f;
+	case WP_GRENADE_LAUNCHER:	return 150.0f;
+	case WP_BFG:				return 120.0f;
+	case WP_PLASMAGUN:			return 20.0f;
+#ifdef MISSIONPACK
+	case WP_PROX_LAUNCHER:		return 150.0f;
+#endif
+	default:					return 15.0f;
+	}
+}
+
+/*
+=================
+CL_AimAssistTuneDump
+
+The whole table in one go, in the same lines the learner writes, so the bench
+can show it whenever it likes and not only while shots are arriving. Bound to
+the aimtune command and written once when the connection goes.
+=================
+*/
+void CL_AimAssistTuneDump( void ) {
+	const aimTune_t	*t;
+	int				weapon, band, boxes = 0;
+
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( band = 0; band < AIM_BANDS; band++ ) {
+			t = &aimTune[weapon][band];
+			if ( !t->samples ) {
+				continue;
+			}
+			boxes++;
+			Com_Printf( "aim tune: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
+				CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
+				CL_AimAssistTune( weapon, CL_AimAssistBandStart( band ) + 0.05f ),
+				CL_AimAssistScatter( weapon, CL_AimAssistBandStart( band ) + 0.05f ),
+				CL_AimAssistHitRadius( weapon ), t->samples, cl.snap.serverTime );
+		}
+	}
+
+	if ( !boxes ) {
+		Com_Printf( "aim tune: nothing measured yet\n" );
+	}
+}
+
+
+/*
+=================
 CL_AimAssistPredict
 
 Where the target stands after the given time.  A player in the air is pulled
@@ -987,7 +1271,7 @@ A negative time is a moment back along its line, wanted only for the smooth
 picture between snapshots: nothing to clip and nothing to drop there.
 =================
 */
-static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t predicted,
+static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
 	float		gravity, sideways, floor;
@@ -1011,7 +1295,8 @@ static void CL_AimAssistPredict( const entityState_t *entity, float time, vec3_t
 	if ( !grounded && !floats ) {
 		sideways = time;
 	} else {
-		sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time );
+		sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time )
+			* CL_AimAssistTune( weapon, time );
 	}
 	end[0] = entity->pos.trBase[0] + motion[0] * sideways;
 	end[1] = entity->pos.trBase[1] + motion[1] * sideways;
@@ -1366,7 +1651,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 
 	if ( projectileSpeed <= 0.0f ) {
 		// hitscan: the world the snapshot shows is the one hit
-		CL_AimAssistPredict( entity, 0.0f, targetOrigin, &blocked, &pinned );
+		CL_AimAssistPredict( entity, weapon, 0.0f, targetOrigin, &blocked, &pinned );
 	} else if ( exact ) {
 		// The frame the missile meets the target in is the first whose
 		// segment reaches the target where it stands at the end of that
@@ -1376,7 +1661,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		// circles between two answers.
 		for ( i = 1; i < 60; i++ ) {
 			lead = i * frame;
-			CL_AimAssistPredict( entity, lead, targetOrigin, &blocked, &pinned );
+			CL_AimAssistPredict( entity, weapon, lead, targetOrigin, &blocked, &pinned );
 			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
 			if ( flight <= lead ) {
 				break;
@@ -1386,11 +1671,11 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		// between shots: the unrounded time, centred on the frames above,
 		// settled by repeating distance over speed
 		for ( i = 0; i < 5; i++ ) {
-			CL_AimAssistPredict( entity, lead, targetOrigin, NULL, NULL );
+			CL_AimAssistPredict( entity, weapon, lead, targetOrigin, NULL, NULL );
 			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
 			lead = Com_Clamp( 0.0f, 3.0f, flight + frame * 0.5f );
 		}
-		CL_AimAssistPredict( entity, lead, targetOrigin, &blocked, &pinned );
+		CL_AimAssistPredict( entity, weapon, lead, targetOrigin, &blocked, &pinned );
 	}
 
 	// The smooth picture between snapshots: the zero-mean correction of
@@ -1444,13 +1729,13 @@ first when cl_aimAssistAttacker says so. With sticky off it is a plain pick,
 used for the record of unassisted shots.
 =================
 */
-static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam,
+static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam, int weapon,
 		float reach, qboolean prefer, qboolean sticky ) {
 	entityState_t	*entity, *best = NULL;
 	const char		*info;
 	trace_t			trace;
 	vec3_t			targetOrigin, direction, desired;
-	float			bestScore = 999999.0f, score, pitchDelta, yawDelta, distance;
+	float			bestScore = 999999.0f, score, pitchDelta, yawDelta, distance, speed, scatter;
 	int				i, targetTeam;
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
@@ -1494,6 +1779,17 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 			score = distance + sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta );
 		} else {
 			score = pitchDelta * pitchDelta + yawDelta * yawDelta;
+		}
+
+		// A shot that scatters wider than the damage it would do is a lottery
+		// at this range, whoever is being shot at - and how wide it scatters is
+		// measured, not assumed. Prefer the target where the shot can be made.
+		speed = CL_AimAssistProjectileSpeed( weapon );
+		if ( speed > 0.0f ) {
+			scatter = CL_AimAssistScatter( weapon, distance / speed );
+			if ( scatter > 0.0f ) {
+				score *= 1.0f + scatter / CL_AimAssistHitRadius( weapon );
+			}
 		}
 
 		if ( sticky ) {
@@ -1830,6 +2126,7 @@ typedef struct {
 	vec3_t	origin;			// where the target stood at the shot
 	vec3_t	along;			// unit vector of its sideways motion then
 	float	straight;		// sideways distance a straight line gives it by arrival
+	float	expected;		// what the prediction really aimed for, tuning included
 	float	rate;			// its sideways speed after the trust of the moment
 	float	lead;			// flight time, a whole number of frames
 } aimPending_t;
@@ -1869,7 +2166,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	VectorSubtract( aimed, entity->pos.trBase, offset );
 	offset[2] = 0.0f;
 	used = DotProduct( offset, along );
-	unclipped = speed * CL_AimAssistSideways( lead ) * trust;
+	unclipped = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead );
 	if ( !exact ) {
 		unclipped += speed * CL_AimAssistPhase();
 	}
@@ -1901,6 +2198,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	VectorCopy( entity->pos.trBase, p->origin );
 	VectorCopy( along, p->along );
 	p->straight = speed * lead;
+	p->expected = speed * CL_AimAssistSideways( lead ) * trust * CL_AimAssistTune( weapon, lead );
 	p->rate = speed * trust;
 	p->lead = lead;
 }
@@ -1911,7 +2209,7 @@ static void CL_AimAssistLearn( void ) {
 	const char			*info;
 	vec3_t				moved;
 	float				actual, lateral, expected, error, weight, hold;
-	int					i, j;
+	int					i, j, band;
 
 	for ( i = 0; i < AIM_PENDING; i++ ) {
 		p = &aimPending[i];
@@ -1963,18 +2261,28 @@ static void CL_AimAssistLearn( void ) {
 		// that mostly went sideways counts for less. The step is small, so the
 		// value settles on how the bots behave rather than on the last one's
 		// last turn.
-		expected = p->rate * CL_AimAssistSideways( p->lead );
+		expected = p->expected;
 		error = Com_Clamp( -1.0f, 1.0f, ( actual - expected ) / p->straight );
 		weight = p->straight / ( p->straight + lateral );
 		hold = CL_AimAssistHold() * exp( 0.1f * error * weight );
 		hold = Com_Clamp( 0.1f, 5.0f, hold );
 		CL_AimAssistSetHold( hold );
+
+		// and into the box for this weapon at this flight time, which is what
+		// the prediction and the target choice really read
+		CL_AimAssistTuneUpdate( p->weapon, p->lead, expected, actual, weight );
+		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
 
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
 		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f hold %.2f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
 			actual, p->straight, expected, lateral, hold, aimLearned, cl.snap.serverTime );
+		Com_Printf( "aim tune: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
+			CL_AimAssistWeaponName( p->weapon ), band, CL_AimAssistBandStart( band ),
+			CL_AimAssistTune( p->weapon, p->lead ), CL_AimAssistScatter( p->weapon, p->lead ),
+			CL_AimAssistHitRadius( p->weapon ), aimTune[p->weapon][band].samples,
+			cl.snap.serverTime );
 	}
 }
 
@@ -2245,7 +2553,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	if ( !steering ) {
 		// no help this frame, but a shot is still worth a line for the record
 		entity = cl_aimAssistDebug->integer
-			? CL_AimAssistPickTarget( viewOrigin, localTeam, 0.0f, qfalse, qfalse ) : NULL;
+			? CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, 0.0f, qfalse, qfalse ) : NULL;
 		firing = CL_AimAssistFiring( cmd, weapon, viewOrigin, entity );
 		if ( firing && entity ) {
 			CL_AimAssistTargetPoint( entity, viewOrigin, weapon, qtrue, targetOrigin, &lead );
@@ -2279,7 +2587,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		cmd->buttons &= ~BUTTON_ATTACK;
 	}
 
-	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, reach,
+	entity = CL_AimAssistPickTarget( viewOrigin, localTeam, weapon, reach,
 		cl_aimAssistPrefer->integer != 0, qtrue );
 
 	// the weapon timer runs whether or not there is anything to steer at

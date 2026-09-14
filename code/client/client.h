@@ -432,6 +432,7 @@ extern	cvar_t	*cl_aimAssistPrefer;
 
 void CL_AimAssistSnapshot( void );
 void CL_AimAssistFlush( void );		// cl_input.c, marks the learned lead for q3config.cfg
+void CL_AimAssistTuneDump( void );	// cl_input.c, prints the measured table
 qboolean CL_AimAssistCrouched( const entityState_t *entity );	// cl_input.c, records impacts for the test bench
 extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;

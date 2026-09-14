@@ -80,6 +80,18 @@ public class MainForm : Form, IMessageFilter {
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
 
+	readonly Label statTuneBoxes = Number();
+	readonly Label statTuneSamples = Number();
+	readonly Label statBestWeapon = Number();
+	readonly ListView rankView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
+	};
+	readonly ListView tuneView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+		GridLines = true, Font = new Font( "Consolas", 9 ),
+	};
+
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
 	readonly Button save = new() { Text = "Speichern", Width = 100, Height = 34 };
 	readonly Label status = new() { AutoSize = true, ForeColor = Color.DimGray };
@@ -131,6 +143,40 @@ public class MainForm : Form, IMessageFilter {
 		shotView.Columns.Add( "Hilfe", 60 );
 		shotView.Columns.Add( "Fehlweite", 70, HorizontalAlignment.Right );
 		shotView.Columns.Add( "Richtung", 110 );
+
+		tuneView.Columns.Add( "Waffe", 110 );
+		tuneView.Columns.Add( "Flugzeit ab", 90, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Proben", 70, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Vorhalt-Faktor", 100, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Streuung", 80, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Wirkradius", 80, HorizontalAlignment.Right );
+		tuneView.Columns.Add( "Aussicht", 110 );
+
+		rankView.Columns.Add( "Waffe", 120 );
+		rankView.Columns.Add( "Schüsse", 70, HorizontalAlignment.Right );
+		rankView.Columns.Add( "Treffer", 70, HorizontalAlignment.Right );
+		rankView.Columns.Add( "Quote", 260 );
+		rankView.Columns.Add( "Fehlweite ø", 90, HorizontalAlignment.Right );
+		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text
+		rankView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
+		rankView.DrawItem += ( _, _ ) => { };
+		rankView.DrawSubItem += ( _, e ) => {
+			if ( e.ColumnIndex != RankBarColumn ) { e.DrawDefault = true; return; }
+			e.DrawBackground();
+
+			double share = e.Item?.Tag is double d ? d : 0;
+			var bar = e.Bounds;
+			bar.Inflate( -3, -3 );
+			using ( var back = new SolidBrush( Color.FromArgb( 232, 232, 232 ) ) ) {
+				e.Graphics.FillRectangle( back, bar );
+			}
+			using ( var fill = new SolidBrush( RateColour( share ) ) ) {
+				e.Graphics.FillRectangle( fill, bar.X, bar.Y,
+					(int)( bar.Width * Math.Clamp( share, 0, 1 ) ), bar.Height );
+			}
+			TextRenderer.DrawText( e.Graphics, e.SubItem?.Text ?? "", rankView.Font, bar,
+				Color.Black, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter );
+		};
 
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
@@ -377,6 +423,12 @@ public class MainForm : Form, IMessageFilter {
 				Counter( "daneben:", statShotMiss ), Counter( "Quote:", statShotRate ),
 				Counter( "ohne Hilfe:", statShotRateOff ), Counter( "Fehler ø:", statShotError ) ),
 			shotView ) );
+		tabs.TabPages.Add( Page( "pro Waffe",
+			Row( Counter( "Töpfe:", statTuneBoxes ), Counter( "Proben:", statTuneSamples ) ),
+			tuneView ) );
+		tabs.TabPages.Add( Page( "Rangliste",
+			Row( Counter( "beste Waffe:", statBestWeapon ) ),
+			rankView ) );
 		return tabs;
 	}
 
@@ -639,6 +691,7 @@ public class MainForm : Form, IMessageFilter {
 		var shots = new List<Shot>();
 		var impacts = new List<Impact>();
 		var missiles = new List<Missile>();
+		var tunes = new Dictionary<string, Tune>();
 		var learned = "";
 
 		foreach ( var line in text.Split( '\n' ) ) {
@@ -677,10 +730,15 @@ public class MainForm : Form, IMessageFilter {
 				if ( missile is not null ) missiles.Add( missile );
 			} else if ( trimmed.StartsWith( "aim learn: " ) ) {
 				learned = trimmed;
+			} else if ( trimmed.StartsWith( "aim tune: " ) ) {
+				var tune = Tune.Parse( trimmed );
+				// je Waffe und Flugzeitband zaehlt der zuletzt gemessene Stand
+				if ( tune is not null ) tunes[tune.Weapon + "|" + tune.Band] = tune;
 			}
 		}
 
 		UpdateShots( shots, damageFrames, impacts, missiles );
+		UpdateTune( tunes );
 		ShowLearned( learned );
 
 		// Das Spiel ist zu Ende und sein Protokoll gelesen: was es an Vorhalt
@@ -916,10 +974,131 @@ public class MainForm : Form, IMessageFilter {
 		return parts.Count > 0 ? string.Join( "+", parts ) : "dran";
 	}
 
+	// Eine Zeile "aim tune:" - was das Spiel fuer eine Waffe in einem
+	// Flugzeitband ueber sich selbst gemessen hat
+	sealed class Tune {
+		public string Weapon = "";
+		public int Band, Samples;
+		public double From, Factor, Scatter, Reach;
+
+		public static Tune? Parse( string line ) {
+			var f = line[10..].Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			if ( f.Length < 3 ) return null;
+
+			var t = new Tune { Weapon = f[0], Scatter = -1 };
+			for ( int i = 1; i < f.Length - 1; i++ ) {
+				switch ( f[i] ) {
+				case "band": int.TryParse( f[i + 1], out t.Band ); break;
+				case "n": int.TryParse( f[i + 1], out t.Samples ); break;
+				case "from": t.From = Num( f[i + 1] ); break;
+				case "factor": t.Factor = Num( f[i + 1] ); break;
+				case "scatter": t.Scatter = Num( f[i + 1] ); break;
+				case "reach": t.Reach = Num( f[i + 1] ); break;
+				}
+			}
+			return t.Samples > 0 ? t : null;
+		}
+
+		static double Num( string s ) =>
+			double.TryParse( s, System.Globalization.NumberStyles.Any,
+				System.Globalization.CultureInfo.InvariantCulture, out double v ) ? v : 0;
+	}
+
+	// Die Tabelle, die das Spiel ueber sich selbst fuehrt: pro Waffe und
+	// Flugzeit, wie viel vom Vorhalt wirklich eintrifft und wie weit das
+	// Ergebnis danach noch streut. Die Streuung gegen den Wirkradius sagt,
+	// ob der Schuss auf die Entfernung ueberhaupt zu machen ist.
+	void UpdateTune( Dictionary<string, Tune> tunes ) {
+		var rows = new List<ListViewItem>();
+		int samples = 0;
+
+		foreach ( var t in tunes.Values.OrderBy( t => t.Weapon ).ThenBy( t => t.Band ) ) {
+			samples += t.Samples;
+
+			string outlook;
+			Color colour;
+			if ( t.Scatter < 0 ) {
+				outlook = "misst noch";
+				colour = Color.DimGray;
+			} else if ( t.Scatter < t.Reach * 0.5 ) {
+				outlook = "sicher";
+				colour = Color.ForestGreen;
+			} else if ( t.Scatter < t.Reach ) {
+				outlook = "brauchbar";
+				colour = Color.DarkGoldenrod;
+			} else {
+				outlook = "Lotterie";
+				colour = Color.Firebrick;
+			}
+
+			var row = new ListViewItem( t.Weapon ) { ForeColor = colour };
+			row.SubItems.Add( t.From.ToString( "0.0", System.Globalization.CultureInfo.InvariantCulture ) + " s" );
+			row.SubItems.Add( t.Samples.ToString() );
+			row.SubItems.Add( t.Factor.ToString( "0.00", System.Globalization.CultureInfo.InvariantCulture ) );
+			row.SubItems.Add( t.Scatter < 0 ? "—" : t.Scatter.ToString( "0" ) );
+			row.SubItems.Add( t.Reach.ToString( "0" ) );
+			row.SubItems.Add( outlook );
+			rows.Add( row );
+		}
+
+		statTuneBoxes.Text = rows.Count.ToString();
+		statTuneSamples.Text = samples.ToString();
+
+		tuneView.BeginUpdate();
+		tuneView.Items.Clear();
+		tuneView.Items.AddRange( rows.ToArray() );
+		tuneView.EndUpdate();
+	}
+
+	const int RankBarColumn = 3;
+
+	// Ampel fuer eine Quote: was trifft, was geht so, was geht daneben
+	static Color RateColour( double share ) {
+		if ( share >= 0.7 ) return Color.FromArgb( 130, 195, 130 );
+		if ( share >= 0.4 ) return Color.FromArgb( 235, 205, 115 );
+		return Color.FromArgb( 228, 140, 130 );
+	}
+
+	// Was eine Waffe ueber die Sitzung geleistet hat
+	sealed class Rank {
+		public string Weapon = "";
+		public int Shots, Hits, MissCount;
+		public double MissSum;
+		public double Share => Shots > 0 ? (double)Hits / Shots : 0;
+	}
+
+	// Welche Waffe am besten trifft, der Reihe nach. Die Quote bekommt einen
+	// Balken, damit der Abstand zwischen den Waffen ins Auge faellt; die
+	// Fehlweite daneben sagt, ob eine schwache Quote am Zielen liegt oder
+	// daran, dass die Waffe auf die Entfernung nichts ausrichtet.
+	void UpdateRanking( Dictionary<string, Rank> ranks ) {
+		var order = ranks.Values.OrderByDescending( r => r.Share ).ThenByDescending( r => r.Shots ).ToList();
+		var rows = new List<ListViewItem>();
+
+		foreach ( var r in order ) {
+			var row = new ListViewItem( r.Weapon ) { Tag = r.Share };
+			row.SubItems.Add( r.Shots.ToString() );
+			row.SubItems.Add( r.Hits.ToString() );
+			row.SubItems.Add( ( 100 * r.Share ).ToString( "0" ) + " %" );
+			row.SubItems.Add( r.MissCount > 0 ? ( r.MissSum / r.MissCount ).ToString( "0" ) : "—" );
+			rows.Add( row );
+		}
+
+		// Eine Waffe mit drei Schuessen ist kein Sieger, nur ein Zufall
+		var best = order.FirstOrDefault( r => r.Shots >= 5 ) ?? order.FirstOrDefault();
+		statBestWeapon.Text = best is null ? "–" : $"{best.Weapon} {100 * best.Share:0} %";
+
+		rankView.BeginUpdate();
+		rankView.Items.Clear();
+		rankView.Items.AddRange( rows.ToArray() );
+		rankView.EndUpdate();
+	}
+
 	void UpdateShots( List<Shot> shots, List<Damage> damageFrames, List<Impact> impacts, List<Missile> missiles ) {
 		int hit = 0, assisted = 0, assistedHit = 0, unassisted = 0, unassistedHit = 0;
 		double errorSum = 0;
 		var rows = new List<ListViewItem>();
+		var ranks = new Dictionary<string, Rank>();
 		var claimed = new bool[damageFrames.Count];
 
 		foreach ( var shot in shots ) {
@@ -957,6 +1136,13 @@ public class MainForm : Form, IMessageFilter {
 			if ( shot.Assisted ) { assisted++; if ( landed ) assistedHit++; }
 			else { unassisted++; if ( landed ) unassistedHit++; }
 
+			if ( !ranks.TryGetValue( shot.Weapon, out var rank ) ) {
+				ranks[shot.Weapon] = rank = new Rank { Weapon = shot.Weapon };
+			}
+			rank.Shots++;
+			if ( landed ) rank.Hits++;
+			if ( missText.Length > 0 ) { rank.MissSum += missUnits; rank.MissCount++; }
+
 			rows.Add( new ListViewItem( new[] {
 				shot.Frame.ToString(),
 				shot.Weapon,
@@ -980,6 +1166,7 @@ public class MainForm : Form, IMessageFilter {
 		statShotRateOff.Text = unassisted > 0 ? ( 100 * unassistedHit / unassisted ) + "%" : "–";
 		statShotError.Text = shots.Count > 0 ? ( errorSum / shots.Count ).ToString( "0.00" ) + "°" : "–";
 		statShotMiss.ForeColor = shots.Count > hit ? Color.Firebrick : Color.ForestGreen;
+		UpdateRanking( ranks );
 
 		// Neu zeichnen, sobald sich etwas geaendert hat: die Zeilenzahl allein
 		// bleibt gleich, wenn ein Schuss nachtraeglich zum Treffer wird.
