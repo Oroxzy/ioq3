@@ -973,6 +973,7 @@ typedef struct {
 static aimTune_t	aimTune[WP_NUM_WEAPONS][AIM_BANDS][AIM_SPEEDS];
 static qboolean		aimTuneLoaded;
 static qboolean		aimTuneDirty;
+static int			aimTuneWritten;		// when the table last reached the disk
 
 static float CL_AimAssistBandStart( int band ) {
 	static const float	start[AIM_BANDS] = { 0.0f, 0.4f, 0.8f, 1.3f };
@@ -3661,6 +3662,19 @@ static void CL_AimAssistLearn( void ) {
 		// all. What is learned at one range belongs to that range.
 		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, p->base, expected, actual,
 			lateral, weight );
+
+		// Put it on disk while the game is still running. Until now the table
+		// was only written when the map ended, so a game that stopped any
+		// other way took the whole evening's measuring with it - and a box
+		// fills a handful of samples at a time, so an evening is what it is.
+		// The file is a few hundred bytes and a sample arrives a few times a
+		// minute; a quarter of a minute between writes is more than enough
+		// caution for that.
+		if ( cl.serverTime - aimTuneWritten > 15000 || aimTuneWritten > cl.serverTime ) {
+			aimTuneWritten = cl.serverTime;
+			CL_AimAssistTuneSave();
+		}
+
 		hold = CL_AimAssistHold();
 		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
