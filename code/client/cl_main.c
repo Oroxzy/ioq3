@@ -79,6 +79,7 @@ cvar_t	*cl_aimAssist;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_aimAssistPriority;
+cvar_t	*cl_aimAssistPriorityWeapon;
 cvar_t	*cl_aimAssistHoldFire;
 cvar_t	*cl_aimAssistSmooth;
 cvar_t	*cl_aimAssistExact;
@@ -3616,6 +3617,15 @@ void CL_Init( void ) {
 	cl_aimAssistPriority = Cvar_Get( "cl_aimAssistPriority",
 		"sight:100 cursor:80 attacker:100:6 sure:60 near:40 wounded:40:12 keep:30:4 powerup:20 air:0", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistPriority, "What makes one bot the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );
+	// What one weapon wants differently, as weapon.name:weight. The defaults
+	// are what the record measured: a shot that has to fly loses to distance
+	// and wants the near enemy, one that arrives at once does not care. Plasma
+	// landed 72 per cent inside four hundred units and 18 per cent past eight
+	// hundred; the machinegun held ninety-something across the same span.
+	cl_aimAssistPriorityWeapon = Cvar_Get( "cl_aimAssistPriorityWeapon",
+		"rocket.near:70 grenade.near:85 plasma.near:60 shotgun.near:80 lightning.near:95 "
+		"railgun.near:10 machinegun.near:25", CVAR_ARCHIVE );
+	Cvar_SetDescription( cl_aimAssistPriorityWeapon, "Where one weapon disagrees with cl_aimAssistPriority, as weapon.name:weight - for instance rocket.near:70. Anything not named here follows the general list" );
 	cl_aimAssistHoldFire = Cvar_Get( "cl_aimAssistHoldFire", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistHoldFire, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistHoldFire, "While the aim key is held: keep the trigger shut when the shot cannot reach the point being aimed at - the led one, not the target - or would go off inside our own splash. Traced from the muzzle against the world and its movers. It delays a shot rather than cancelling it, because a command without the trigger zeroes the weapon timer" );

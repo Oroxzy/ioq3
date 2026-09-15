@@ -107,6 +107,63 @@ public class MainForm : Form, IMessageFilter {
 
 	readonly Dictionary<string, int> prioWeight = new();
 	readonly Dictionary<string, double> prioTime = new();
+
+	// Was eine einzelne Waffe anders haben will. Nur die Abweichungen stehen
+	// hier, alles andere folgt der Standardliste - neun volle Listen waeren
+	// neunmal so viel zu verstellen, und gemessen werden pro Runde nur ein
+	// paar Dutzend Proben.
+	static readonly (string Key, string Name)[] Weapons = {
+		( "rocket",     "Raketenwerfer" ),
+		( "grenade",    "Granatwerfer" ),
+		( "plasma",     "Plasmagun" ),
+		( "shotgun",    "Schrotflinte" ),
+		( "lightning",  "Blitzwerfer" ),
+		( "railgun",    "Railgun" ),
+		( "machinegun", "Maschinengewehr" ),
+		( "bfg",        "BFG" ),
+		( "gauntlet",   "Gauntlet" ),
+	};
+	readonly Dictionary<string, Dictionary<string, int>> weaponWeight = new();
+	readonly Dictionary<string, Dictionary<string, double>> weaponTime = new();
+	readonly ComboBox prioWeapon = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	readonly Button prioReset = new() { Text = "wie Standard", Width = 110 };
+
+	// null = die Standardliste, sonst der Schluessel der gewaehlten Waffe
+	string? CurWeapon => prioWeapon.SelectedIndex <= 0 ? null
+		: Weapons[prioWeapon.SelectedIndex - 1].Key;
+
+	int Weight( string key ) {
+		var w = CurWeapon;
+		return w is not null && weaponWeight.TryGetValue( w, out var over )
+			&& over.TryGetValue( key, out int v ) ? v : prioWeight[key];
+	}
+
+	double Life( string key ) {
+		var w = CurWeapon;
+		return w is not null && weaponTime.TryGetValue( w, out var over )
+			&& over.TryGetValue( key, out double v ) ? v : prioTime[key];
+	}
+
+	bool Differs( string key ) {
+		var w = CurWeapon;
+		if ( w is null ) return false;
+		return ( weaponWeight.TryGetValue( w, out var a ) && a.ContainsKey( key ) )
+			|| ( weaponTime.TryGetValue( w, out var b ) && b.ContainsKey( key ) );
+	}
+
+	void SetWeight( string key, int value ) {
+		var w = CurWeapon;
+		if ( w is null ) { prioWeight[key] = value; return; }
+		if ( !weaponWeight.TryGetValue( w, out var over ) ) weaponWeight[w] = over = new();
+		over[key] = value;
+	}
+
+	void SetLife( string key, double value ) {
+		var w = CurWeapon;
+		if ( w is null ) { prioTime[key] = value; return; }
+		if ( !weaponTime.TryGetValue( w, out var over ) ) weaponTime[w] = over = new();
+		over[key] = value;
+	}
 	readonly ListView prioView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, CheckBoxes = true,
 		GridLines = true, HideSelection = false, Font = new Font( "Segoe UI", 9 ),
@@ -239,21 +296,33 @@ public class MainForm : Form, IMessageFilter {
 			prioClicked = false;
 			// abgehakt heisst Gewicht null; beim Wiedereinschalten kommt ein
 			// brauchbarer Wert zurueck, sonst bliebe die Zeile wirkungslos
-			if ( !e.Item.Checked ) prioWeight[key] = 0;
-			else if ( prioWeight[key] == 0 ) prioWeight[key] = 50;
+			if ( !e.Item.Checked ) SetWeight( key, 0 );
+			else if ( Weight( key ) == 0 ) SetWeight( key, 50 );
 			BeginInvoke( () => FillPriorities( key ) );
 		};
 		prioBar.ValueChanged += ( _, _ ) => {
 			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
-			prioWeight[(string)prioView.SelectedItems[0].Tag!] = prioBar.Value;
+			SetWeight( (string)prioView.SelectedItems[0].Tag!, prioBar.Value );
 			FillPriorities( (string)prioView.SelectedItems[0].Tag! );
 		};
 		prioLifeBar.ValueChanged += ( _, _ ) => {
 			if ( prioUpdating || prioView.SelectedItems.Count == 0 ) return;
 			var key = (string)prioView.SelectedItems[0].Tag!;
 			if ( !IsTimed( key ) ) return;
-			prioTime[key] = prioLifeBar.Value / 10.0;
+			SetLife( key, prioLifeBar.Value / 10.0 );
 			FillPriorities( key );
+		};
+
+		prioWeapon.Items.Add( "Standard (alle Waffen)" );
+		foreach ( var w in Weapons ) prioWeapon.Items.Add( w.Name );
+		prioWeapon.SelectedIndex = 0;
+		prioWeapon.SelectedIndexChanged += ( _, _ ) => FillPriorities();
+		prioReset.Click += ( _, _ ) => {
+			var w = CurWeapon;
+			if ( w is null ) return;
+			weaponWeight.Remove( w );
+			weaponTime.Remove( w );
+			FillPriorities();
 		};
 		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text
 		rankView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
@@ -593,7 +662,10 @@ public class MainForm : Form, IMessageFilter {
 		prioGrid.RowStyles.Add( new RowStyle( SizeType.Absolute, 56 ) );
 		prioGrid.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
 		prioGrid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
-		prioGrid.Controls.Add( Row( Pad( prioUp ), Pad( prioDown ),
+		prioGrid.Controls.Add( Row(
+			Pad( new Label { Text = "für:", AutoSize = true, Margin = new Padding( 0, 10, 4, 0 ) } ),
+			Pad( prioWeapon ), Pad( prioReset ),
+			Pad( prioUp ), Pad( prioDown ),
 			Pad( new Label { Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
 			Pad( prioBar ), Pad( prioValue ),
 			Pad( new Label { Text = "gilt (s):", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
@@ -612,18 +684,25 @@ public class MainForm : Form, IMessageFilter {
 		prioView.BeginUpdate();
 		prioView.Items.Clear();
 
-		foreach ( var p in Priorities.OrderByDescending( p => prioWeight[p.Key] )
+		foreach ( var p in Priorities.OrderByDescending( p => Weight( p.Key ) )
 				.ThenBy( p => Array.FindIndex( Priorities, q => q.Key == p.Key ) ) ) {
-			int weight = prioWeight[p.Key];
-			var row = new ListViewItem( p.Name ) { Tag = p.Key, Checked = weight > 0 };
+			int weight = Weight( p.Key );
+			// Ein Pfeil sagt, dass diese Zeile von der Standardliste abweicht,
+			// damit auf einen Blick klar ist, was fuer diese Waffe eigens gilt
+			var row = new ListViewItem( ( Differs( p.Key ) ? "▸ " : "" ) + p.Name ) {
+				Tag = p.Key, Checked = weight > 0,
+			};
 			row.SubItems.Add( weight.ToString() );
-			row.SubItems.Add( IsTimed( p.Key ) ? prioTime[p.Key].ToString( "0.0" ) + " s" : "—" );
-			row.SubItems.Add( p.Effect );
+			row.SubItems.Add( IsTimed( p.Key ) ? Life( p.Key ).ToString( "0.0" ) + " s" : "—" );
+			row.SubItems.Add( Differs( p.Key )
+				? $"{p.Effect}  (Standard {prioWeight[p.Key]})" : p.Effect );
 			if ( weight == 0 ) row.ForeColor = Color.DimGray;
+			else if ( Differs( p.Key ) ) row.ForeColor = Color.DarkSlateBlue;
 			prioView.Items.Add( row );
 			if ( keep is not null && p.Key == keep ) row.Selected = true;
 		}
 
+		prioReset.Enabled = CurWeapon is not null;
 		prioView.EndUpdate();
 		prioUpdating = false;
 		ShowPrioritySelection();
@@ -644,13 +723,13 @@ public class MainForm : Form, IMessageFilter {
 		var key = (string)prioView.SelectedItems[0].Tag!;
 		bool timed = IsTimed( key );
 		prioUpdating = true;
-		prioBar.Value = Math.Clamp( prioWeight[key], prioBar.Minimum, prioBar.Maximum );
+		prioBar.Value = Math.Clamp( Weight( key ), prioBar.Minimum, prioBar.Maximum );
 		prioLifeBar.Enabled = timed;
 		prioLifeBar.Value = timed
-			? (int)Math.Clamp( Math.Round( prioTime[key] * 10 ), prioLifeBar.Minimum, prioLifeBar.Maximum ) : 0;
+			? (int)Math.Clamp( Math.Round( Life( key ) * 10 ), prioLifeBar.Minimum, prioLifeBar.Maximum ) : 0;
 		prioUpdating = false;
-		prioValue.Text = prioWeight[key].ToString();
-		prioLifeValue.Text = timed ? prioTime[key].ToString( "0.0" ) + " s" : "dauerhaft";
+		prioValue.Text = Weight( key ).ToString();
+		prioLifeValue.Text = timed ? Life( key ).ToString( "0.0" ) + " s" : "dauerhaft";
 	}
 
 	// Hoeher oder tiefer heisst: das Gewicht mit dem Nachbarn tauschen, denn
@@ -662,15 +741,15 @@ public class MainForm : Form, IMessageFilter {
 
 		var key = (string)prioView.Items[index].Tag!;
 		var neighbour = (string)prioView.Items[other].Tag!;
-		int mine = prioWeight[key], theirs = prioWeight[neighbour];
+		int mine = Weight( key ), theirs = Weight( neighbour );
 		if ( mine == theirs ) {
 			// gleich schwer: einen Schritt daran vorbei
 			mine = Math.Clamp( theirs - step, 0, 100 );
 		} else {
 			( mine, theirs ) = ( theirs, mine );
 		}
-		prioWeight[key] = mine;
-		prioWeight[neighbour] = theirs;
+		SetWeight( key, mine );
+		SetWeight( neighbour, theirs );
 		FillPriorities( key );
 	}
 
@@ -681,6 +760,53 @@ public class MainForm : Form, IMessageFilter {
 		? string.Format( System.Globalization.CultureInfo.InvariantCulture,
 			"{0}:{1}:{2:0.##}", p.Key, prioWeight[p.Key], prioTime[p.Key] )
 		: $"{p.Key}:{prioWeight[p.Key]}" ) );
+
+	// Nur die Abweichungen, als "waffe.kriterium:gewicht". Eine cvar fasst 256
+	// Zeichen, also waeren neun volle Listen gar nicht unterzubringen - was
+	// hier steht, ist genau das, was anders gemeint war.
+	string WeaponPriorityString() {
+		var parts = new List<string>();
+		foreach ( var w in Weapons ) {
+			foreach ( var p in Priorities ) {
+				bool hasW = weaponWeight.TryGetValue( w.Key, out var a ) && a.ContainsKey( p.Key );
+				bool hasT = weaponTime.TryGetValue( w.Key, out var b ) && b.ContainsKey( p.Key );
+				if ( !hasW && !hasT ) continue;
+				int weight = hasW ? a![p.Key] : prioWeight[p.Key];
+				double life = hasT ? b![p.Key] : prioTime[p.Key];
+				parts.Add( IsTimed( p.Key )
+					? string.Format( System.Globalization.CultureInfo.InvariantCulture,
+						"{0}.{1}:{2}:{3:0.##}", w.Key, p.Key, weight, life )
+					: $"{w.Key}.{p.Key}:{weight}" );
+			}
+		}
+		return string.Join( " ", parts );
+	}
+
+	void ApplyWeaponPriorityString( string text ) {
+		weaponWeight.Clear();
+		weaponTime.Clear();
+		foreach ( var part in text.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) ) {
+			var f = part.Split( ':' );
+			int dot = f[0].IndexOf( '.' );
+			if ( f.Length < 2 || dot <= 0 ) continue;
+			var weapon = f[0][..dot];
+			var key = f[0][( dot + 1 )..];
+			if ( Array.FindIndex( Weapons, x => x.Key == weapon ) < 0 ) continue;
+			if ( !prioWeight.ContainsKey( key ) ) continue;
+
+			if ( int.TryParse( f[1], out int w ) ) {
+				if ( !weaponWeight.TryGetValue( weapon, out var over ) ) weaponWeight[weapon] = over = new();
+				over[key] = Math.Clamp( w, 0, 100 );
+			}
+			if ( f.Length > 2 && IsTimed( key )
+				&& double.TryParse( f[2], System.Globalization.NumberStyles.Any,
+					System.Globalization.CultureInfo.InvariantCulture, out double life ) ) {
+				if ( !weaponTime.TryGetValue( weapon, out var over ) ) weaponTime[weapon] = over = new();
+				over[key] = Math.Clamp( life, 0, prioLifeBar.Maximum / 10.0 );
+			}
+		}
+		FillPriorities();
+	}
 
 	void ApplyPriorityString( string text ) {
 		foreach ( var part in text.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) ) {
@@ -770,6 +896,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
 		s.AppendLine( "aimPriority=" + PriorityString() );
+		s.AppendLine( "aimPriorityWeapon=" + WeaponPriorityString() );
 		// nur eine wiederherstellbare Groesse merken, kein maximiertes Fenster
 		if ( WindowState == FormWindowState.Normal ) {
 			s.AppendLine( "windowWidth=" + ClientSize.Width );
@@ -827,6 +954,7 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
 		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
+		if ( v.TryGetValue( "aimPriorityWeapon", out var wprio ) ) ApplyWeaponPriorityString( wprio );
 		if ( v.TryGetValue( "windowWidth", out var ww ) && int.TryParse( ww, out int w2 )
 			&& v.TryGetValue( "windowHeight", out var wh ) && int.TryParse( wh, out int h2 ) ) {
 			windowSize = new Size( w2, h2 );
@@ -874,6 +1002,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistPriority \"{PriorityString()}\"" );
+		cfg.AppendLine( $"seta cl_aimAssistPriorityWeapon \"{WeaponPriorityString()}\"" );
 		cfg.AppendLine( "set logfile 2" );
 		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf lokale Bot-Partien. Der

@@ -101,6 +101,30 @@ Gewichte machen daraus eine Zahl, und das höchste Ziel gewinnt.
 | trägt ein Powerup | Quad, Regeneration, Haste zuerst |
 | in der Luft | fliegt berechenbar — ein bloßer Sprung zählt nicht |
 
+## Jede Waffe darf abweichen
+
+Über der Liste steht, **für wen** sie gilt: „Standard" oder eine einzelne
+Waffe. Was bei einer Waffe anders eingestellt ist, bekommt einen Pfeil und den
+Standardwert daneben, „wie Standard" nimmt alles wieder zurück. Gespeichert
+werden nur die **Abweichungen**, nicht neun volle Listen.
+
+Der Grund steht im Protokoll. Ein Schuss, der fliegen muss, verliert mit der
+Entfernung; einer, der sofort ankommt, nicht:
+
+| Entfernung | Plasma | Rakete | Maschinengewehr |
+| --- | --- | --- | --- |
+| bis 400 | 72 % | 85 % | 94–96 % |
+| 400–800 | 52 % | 45 % | 81–92 % |
+| 800–1200 | 18 % | 33 % | 52 % |
+
+Deshalb sind die Vorgaben so gesetzt: Blitzwerfer 95, Granatwerfer 85,
+Schrotflinte 80, Rakete 70, Plasma 60 bei „Nähe im Raum", gegen 25 beim
+Maschinengewehr und 10 bei der Railgun. Eine Waffe mit Flugzeit soll den nahen
+Gegner nehmen, eine ohne den, auf den das Fadenkreuz ohnehin zeigt.
+
+Nicht nur Gewichte lassen sich so trennen, auch die Dauern: `rocket.keep:30:2.5`
+heißt, dass die Rakete ihr Ziel nur 2,5 Sekunden lang bevorzugt behält.
+
 Drei Dinge sind dabei erwähnenswert, weil sie nicht selbstverständlich sind:
 
 *Freie Sichtlinie* hat als einzige Eigenschaft des Augenblicks eine Uhr, und
@@ -199,7 +223,10 @@ und ein gemessenes Fach wirkte zuverlässiger als ein ungemessenes. Eine ältere
 
 Die Datei überlebt die Sitzung, weil ein Fach sich langsam füllt — eine
 Handvoll Schüsse pro Abend. Der Konsolenbefehl `aimtune` gibt die Tabelle
-jederzeit aus, samt der Gewichte, wie die Engine sie verstanden hat.
+jederzeit aus, samt der Gewichte, wie die Engine sie verstanden hat — die
+Standardliste, und darunter je eine Zeile für jede Waffe, die davon abweicht.
+Steht dort nichts, wurde auch nichts anders verstanden: ein Tippfehler im
+Waffennamen fällt genau dadurch auf.
 
 Nichts davon weiß etwas über die mitgelieferten Bots. Gemessen wird, was vor
 der Waffe steht — andere Bots oder unvorhersehbare Bewegung ergeben einfach

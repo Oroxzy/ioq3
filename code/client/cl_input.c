@@ -2131,56 +2131,131 @@ static float	aimPriorityWeight[AIM_PRIO_COUNT];
 static float	aimPriorityTime[AIM_PRIO_COUNT];
 static int		aimPriorityCount = -1;		// modification count the weights were read at
 
-static void CL_AimAssistPriorities( void ) {
-	const char	*text;
-	char		token[64];
-	float		value, life;
-	int			i, j;
+// The same nine per weapon, because what makes a good target depends on what
+// is being fired at it. The record is blunt about it: plasma lands seventy-two
+// per cent of its shots inside four hundred units and eighteen per cent beyond
+// eight hundred, while the machinegun holds ninety-something across the same
+// span and the railgun does not care at all. A weapon that loses its shot to
+// distance wants the near enemy; one that does not, wants the one the
+// crosshair is already on.
+//
+// These are the whole effective list per weapon, filled from the defaults and
+// then from whatever the player named, so the pick never has to work out where
+// a number came from.
+static float	aimWeaponWeight[WP_NUM_WEAPONS][AIM_PRIO_COUNT];
+static float	aimWeaponTime[WP_NUM_WEAPONS][AIM_PRIO_COUNT];
+static int		aimWeaponCount = -1;
 
-	if ( cl_aimAssistPriority->modificationCount == aimPriorityCount ) {
+static float CL_AimAssistWeight( int weapon, int prio ) {
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		return aimPriorityWeight[prio];
+	}
+	return aimWeaponWeight[weapon][prio];
+}
+
+static float CL_AimAssistLife( int weapon, int prio ) {
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+		return aimPriorityTime[prio];
+	}
+	return aimWeaponTime[weapon][prio];
+}
+
+static void CL_AimAssistPriorities( void ) {
+	const char	*text, *name;
+	char		token[64], *dot;
+	float		value, life;
+	int			i, j, pass, weapon;
+
+	if ( cl_aimAssistPriority->modificationCount == aimPriorityCount
+		&& cl_aimAssistPriorityWeapon->modificationCount == aimWeaponCount ) {
 		return;
 	}
 	aimPriorityCount = cl_aimAssistPriority->modificationCount;
+	aimWeaponCount = cl_aimAssistPriorityWeapon->modificationCount;
 
 	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
 		aimPriorityWeight[i] = aimPriorityDefault[i];
 		aimPriorityTime[i] = aimPriorityLife[i];
 	}
 
-	// "name:weight" or "name:weight:seconds", anything not named keeps its
-	// default and anything without a time keeps the one it was given
-	text = cl_aimAssistPriority->string;
-	while ( *text ) {
-		while ( *text == ' ' || *text == '\t' ) {
-			text++;
+	// Two passes over two strings. The first says what a criterion is worth in
+	// general, "name:weight" or "name:weight:seconds"; the second says what it
+	// is worth to one weapon, "weapon.name:weight". Anything not named keeps
+	// what it had, and anything without a time keeps the one it was given.
+	for ( pass = 0; pass < 2; pass++ ) {
+		if ( pass == 1 ) {
+			// the per-weapon list starts as a copy of the general one, so the
+			// pick reads one number and never has to ask where it came from
+			for ( weapon = 0; weapon < WP_NUM_WEAPONS; weapon++ ) {
+				for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+					aimWeaponWeight[weapon][i] = aimPriorityWeight[i];
+					aimWeaponTime[weapon][i] = aimPriorityTime[i];
+				}
+			}
 		}
-		for ( i = 0; *text && *text != ':' && *text != ' ' && i < (int)sizeof( token ) - 1; i++ ) {
-			token[i] = *text++;
-		}
-		token[i] = '\0';
-		if ( *text != ':' ) {
-			while ( *text && *text != ' ' ) {
+
+		text = pass == 0 ? cl_aimAssistPriority->string : cl_aimAssistPriorityWeapon->string;
+		while ( *text ) {
+			while ( *text == ' ' || *text == '\t' ) {
 				text++;
 			}
-			continue;
-		}
-		text++;
-		value = atof( text );
-
-		// a second colon, if it is there, is how long the reason lasts
-		life = -1.0f;
-		while ( *text && *text != ' ' ) {
-			if ( *text == ':' ) {
-				life = atof( text + 1 );
+			for ( i = 0; *text && *text != ':' && *text != ' ' && i < (int)sizeof( token ) - 1; i++ ) {
+				token[i] = *text++;
+			}
+			token[i] = '\0';
+			if ( *text != ':' ) {
+				while ( *text && *text != ' ' ) {
+					text++;
+				}
+				continue;
 			}
 			text++;
-		}
+			value = atof( text );
 
-		for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
-			if ( !Q_stricmp( token, aimPriorityName[j] ) ) {
-				aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
-				if ( life >= 0.0f ) {
-					aimPriorityTime[j] = Com_Clamp( 0.0f, 120.0f, life );
+			// a second colon, if it is there, is how long the reason lasts
+			life = -1.0f;
+			while ( *text && *text != ' ' ) {
+				if ( *text == ':' ) {
+					life = atof( text + 1 );
+				}
+				text++;
+			}
+
+			// on the second pass the name carries its weapon in front of a dot
+			weapon = -1;
+			name = token;
+			if ( pass == 1 ) {
+				dot = strchr( token, '.' );
+				if ( !dot ) {
+					continue;
+				}
+				*dot = '\0';
+				name = dot + 1;
+				for ( j = WP_NONE + 1; j < WP_NUM_WEAPONS; j++ ) {
+					if ( !Q_stricmp( token, CL_AimAssistWeaponName( j ) ) ) {
+						weapon = j;
+						break;
+					}
+				}
+				if ( weapon < 0 ) {
+					continue;
+				}
+			}
+
+			for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
+				if ( Q_stricmp( name, aimPriorityName[j] ) ) {
+					continue;
+				}
+				if ( pass == 0 ) {
+					aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
+					if ( life >= 0.0f ) {
+						aimPriorityTime[j] = Com_Clamp( 0.0f, 120.0f, life );
+					}
+				} else {
+					aimWeaponWeight[weapon][j] = Com_Clamp( 0.0f, 100.0f, value );
+					if ( life >= 0.0f ) {
+						aimWeaponTime[weapon][j] = Com_Clamp( 0.0f, 120.0f, life );
+					}
 				}
 				break;
 			}
@@ -2226,7 +2301,8 @@ static float CL_AimAssistFade( int since, float life ) {
 
 // what the weights were understood as, so a typo in the string shows up
 static void CL_AimAssistPriorityDump( void ) {
-	int	i;
+	int			i, weapon;
+	qboolean	said;
 
 	CL_AimAssistPriorities();
 	Com_Printf( "aim prio:" );
@@ -2241,6 +2317,32 @@ static void CL_AimAssistPriorityDump( void ) {
 		}
 	}
 	Com_Printf( "\n" );
+
+	// And where a weapon disagrees with that, one line each. Only the
+	// differences: a weapon that follows the general list says nothing, so
+	// what is on these lines is exactly what was meant to be different.
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		said = qfalse;
+		for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+			if ( aimWeaponWeight[weapon][i] == aimPriorityWeight[i]
+				&& aimWeaponTime[weapon][i] == aimPriorityTime[i] ) {
+				continue;
+			}
+			if ( !said ) {
+				Com_Printf( "aim prio: %s", CL_AimAssistWeaponName( weapon ) );
+				said = qtrue;
+			}
+			if ( aimPriorityLife[i] > 0.0f ) {
+				Com_Printf( " %s %.0f for %.2fs", aimPriorityName[i],
+					aimWeaponWeight[weapon][i], aimWeaponTime[weapon][i] );
+			} else {
+				Com_Printf( " %s %.0f", aimPriorityName[i], aimWeaponWeight[weapon][i] );
+			}
+		}
+		if ( said ) {
+			Com_Printf( "\n" );
+		}
+	}
 }
 
 
@@ -2336,14 +2438,14 @@ qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float 
 	return qtrue;
 }
 
-static float CL_AimAssistWoundScore( int clientNum ) {
+static float CL_AimAssistWoundScore( int clientNum, int weapon ) {
 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS || !aimWoundTime[clientNum] ) {
 		return 0.0f;
 	}
 
 	// the less it had left the better, and the older the news the less it says
 	return Com_Clamp( 0.0f, 1.0f, ( 100.0f - aimWoundHealth[clientNum] ) / 100.0f )
-		* CL_AimAssistFade( aimWoundTime[clientNum], aimPriorityTime[AIM_PRIO_WOUNDED] );
+		* CL_AimAssistFade( aimWoundTime[clientNum], CL_AimAssistLife( weapon, AIM_PRIO_WOUNDED ) );
 }
 
 
@@ -2401,7 +2503,7 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 
 	CL_AimAssistPriorities();
 	for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
-		weight[i] = sticky ? aimPriorityWeight[i] : 0.0f;
+		weight[i] = sticky ? CL_AimAssistWeight( weapon, i ) : 0.0f;
 	}
 	if ( !sticky ) {
 		// The plain crosshair pick, for the record of unassisted shots. It has
@@ -2452,11 +2554,11 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		// which the steering could then find no way through to while a
 		// reachable one stood in the open.
 		if ( visible || !sticky || entity->clientNum != aimAssistTarget
-			|| aimPriorityTime[AIM_PRIO_SIGHT] <= 0.0f ) {
+			|| CL_AimAssistLife( weapon, AIM_PRIO_SIGHT ) <= 0.0f ) {
 			fresh = visible ? 1.0f : 0.0f;
 		} else {
 			fresh = CL_AimAssistFade( aimSeenTime[entity->clientNum],
-				aimPriorityTime[AIM_PRIO_SIGHT] );
+				CL_AimAssistLife( weapon, AIM_PRIO_SIGHT ) );
 		}
 
 		// Out of sight is out of the running unless sight has been turned off
@@ -2491,10 +2593,10 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		part[AIM_PRIO_SIGHT] = weight[AIM_PRIO_SIGHT] * fresh;
 		part[AIM_PRIO_CURSOR] = weight[AIM_PRIO_CURSOR] / ( 1.0f + angle / 15.0f );
 		part[AIM_PRIO_NEAR] = weight[AIM_PRIO_NEAR] / ( 1.0f + distance / 500.0f );
-		part[AIM_PRIO_WOUNDED] = weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum );
+		part[AIM_PRIO_WOUNDED] = weight[AIM_PRIO_WOUNDED] * CL_AimAssistWoundScore( entity->clientNum, weapon );
 		// Both of these are about something that happened, so both run out.
 		part[AIM_PRIO_ATTACKER] = entity->clientNum == aimAttacker
-			? weight[AIM_PRIO_ATTACKER] * CL_AimAssistFade( aimAttackerTime, aimPriorityTime[AIM_PRIO_ATTACKER] )
+			? weight[AIM_PRIO_ATTACKER] * CL_AimAssistFade( aimAttackerTime, CL_AimAssistLife( weapon, AIM_PRIO_ATTACKER ) )
 			: 0.0f;
 		// Half of it is unconditional and half runs out. Purely running out
 		// was backwards where it mattered: a target just switched to had the
@@ -2505,7 +2607,7 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		// floor that never expires.
 		part[AIM_PRIO_KEEP] = entity->clientNum == aimAssistTarget
 			? weight[AIM_PRIO_KEEP] * ( 0.5f + 0.5f
-				* CL_AimAssistFade( aimKeepSince, aimPriorityTime[AIM_PRIO_KEEP] ) )
+				* CL_AimAssistFade( aimKeepSince, CL_AimAssistLife( weapon, AIM_PRIO_KEEP ) ) )
 			: 0.0f;
 		part[AIM_PRIO_AIR] = CL_AimAssistAirborne( entity ) ? weight[AIM_PRIO_AIR] : 0.0f;
 		part[AIM_PRIO_POWERUP] = ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
