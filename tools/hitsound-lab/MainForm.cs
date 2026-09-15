@@ -805,9 +805,11 @@ public class MainForm : Form, IMessageFilter {
 		}
 
 		prioReset.Enabled = CurWeapon is not null;
-		int room = WeaponPriorityString().Length;
-		prioWarn.Text = room > 255 ? $"zu lang: {room} von 255 Zeichen, die Engine kürzt"
-			: room > 200 ? $"{room} von 255 Zeichen" : "";
+		// Keine Zeichengrenze mehr - die Listen gehen als Datei ins Spiel.
+		// Stattdessen steht hier, wie viele Waffen eigene Regeln haben.
+		int eigen = Weapons.Count( w => weaponWeight.ContainsKey( w.Key ) || weaponTime.ContainsKey( w.Key ) );
+		prioWarn.Text = eigen == 0 ? "" : eigen == 1 ? "1 Waffe weicht ab" : $"{eigen} Waffen weichen ab";
+		prioWarn.ForeColor = Color.DimGray;
 		prioView.EndUpdate();
 		prioUpdating = false;
 		ShowPrioritySelection();
@@ -893,6 +895,39 @@ public class MainForm : Form, IMessageFilter {
 			}
 		}
 		return string.Join( " ", parts );
+	}
+
+	// Die Waffenlisten gehen als Datei neben die gelernte Tabelle, nicht als
+	// Variable: eine cvar fasst 256 Zeichen, und schon zwei von Hand
+	// abgestimmte Waffen brauchen 248 davon. Eine Zeile je Waffe, damit ein
+	// Mensch sie lesen und von Hand aendern kann.
+	void WriteWeaponPriorityFile() {
+		var text = new StringBuilder();
+		text.AppendLine( "format 1" );
+		text.AppendLine( "// Was eine einzelne Waffe anders haelt als cl_aimAssistPriority." );
+		text.AppendLine( "// waffe.kriterium:gewicht[:sekunden] - alles Ungenannte folgt der Standardliste." );
+		foreach ( var w in Weapons ) {
+			var parts = new List<string>();
+			foreach ( var p in Priorities ) {
+				bool hasW = weaponWeight.TryGetValue( w.Key, out var a ) && a.ContainsKey( p.Key );
+				bool hasT = weaponTime.TryGetValue( w.Key, out var b ) && b.ContainsKey( p.Key );
+				if ( !hasW && !hasT ) continue;
+				int weight = hasW ? a![p.Key] : prioWeight[p.Key];
+				double life = hasT ? b![p.Key] : prioTime[p.Key];
+				parts.Add( IsTimed( p.Key )
+					? string.Format( System.Globalization.CultureInfo.InvariantCulture,
+						"{0}.{1}:{2}:{3:0.##}", w.Key, p.Key, weight, life )
+					: $"{w.Key}.{p.Key}:{weight}" );
+			}
+			if ( parts.Count > 0 ) text.AppendLine( string.Join( " ", parts ) );
+		}
+
+		try {
+			Directory.CreateDirectory( HomePath );
+			File.WriteAllText( Path.Combine( HomePath, "aimprio.cfg" ), text.ToString() );
+		} catch ( IOException ) {
+		} catch ( UnauthorizedAccessException ) {
+		}
 	}
 
 	void ApplyWeaponPriorityString( string text ) {
@@ -1115,7 +1150,10 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistPriority \"{PriorityString()}\"" );
-		cfg.AppendLine( $"seta cl_aimAssistPriorityWeapon \"{WeaponPriorityString()}\"" );
+		// Leer, mit Absicht: die Waffenlisten stehen jetzt in aimprio.cfg, und
+		// ein alter Wert aus der q3config wuerde die Datei sonst ueberstimmen,
+		// weil die Engine die Variable zuletzt liest.
+		cfg.AppendLine( "seta cl_aimAssistPriorityWeapon \"\"" );
 		cfg.AppendLine( "set logfile 2" );
 		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf lokale Bot-Partien. Der
@@ -1170,6 +1208,7 @@ public class MainForm : Form, IMessageFilter {
 		try {
 			Directory.CreateDirectory( HomePath );
 			File.WriteAllText( Path.Combine( HomePath, CfgName ), BuildConfig() );
+			WriteWeaponPriorityFile();
 
 			logPath = Path.Combine( HomePath, "qconsole.log" );
 			ArchiveLog();

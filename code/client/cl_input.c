@@ -900,9 +900,13 @@ next session stamps the log afresh.
 static void CL_AimAssistTuneSave( void );
 void CL_AimAssistTuneDump( void );
 static void CL_AimAssistPriorityDump( void );
+void CL_AimAssistPriorityReload( void );
 
 void CL_AimAssistFlush( void ) {
 	aimLogStamped = qfalse;
+	// the bench writes the per-weapon lists just before it starts the game, so
+	// a disconnect is the right moment to look at that file again
+	CL_AimAssistPriorityReload();
 	CL_AimAssistTuneSave();
 	CL_AimAssistTuneDump();
 }
@@ -2185,15 +2189,152 @@ static float CL_AimAssistLife( int weapon, int prio ) {
 	return aimWeaponTime[weapon][prio];
 }
 
-static void CL_AimAssistPriorities( void ) {
-	const char	*text, *name;
+/*
+=================
+CL_AimAssistParsePriorities
+
+Reads "name:weight" or "name:weight:seconds" out of a string, or, with a weapon
+in front of a dot, "rocket.near:80". Anything not named keeps what it had, and
+anything without a time keeps the time it was given. A name nobody knows is
+passed over in silence, which is what makes the record's own line worth reading:
+what is not in it was not understood.
+
+Whitespace includes newlines, so the same reader serves a cvar and a file, and
+anything from a double slash to the end of a line is a remark.
+=================
+*/
+static void CL_AimAssistParsePriorities( const char *text, qboolean perWeapon ) {
+	const char	*name;
 	char		token[64], *dot;
 	float		value, life;
-	int			i, j, pass, weapon;
+	int			i, j, weapon;
 
-	if ( cl_aimAssistPriority->modificationCount == aimPriorityCount
+	if ( !text ) {
+		return;
+	}
+
+	while ( *text ) {
+		while ( *text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' ) {
+			text++;
+		}
+		if ( text[0] == '/' && text[1] == '/' ) {
+			while ( *text && *text != '\n' ) {
+				text++;
+			}
+			continue;
+		}
+		for ( i = 0; *text && *text != ':' && *text != ' ' && *text != '\t'
+			&& *text != '\n' && *text != '\r' && i < (int)sizeof( token ) - 1; i++ ) {
+			token[i] = *text++;
+		}
+		token[i] = '\0';
+		if ( *text != ':' ) {
+			while ( *text && *text != ' ' && *text != '\n' && *text != '\r' ) {
+				text++;
+			}
+			continue;
+		}
+		text++;
+		value = atof( text );
+
+		// a second colon, if it is there, is how long the reason lasts
+		life = -1.0f;
+		while ( *text && *text != ' ' && *text != '\t' && *text != '\n' && *text != '\r' ) {
+			if ( *text == ':' ) {
+				life = atof( text + 1 );
+			}
+			text++;
+		}
+
+		weapon = -1;
+		name = token;
+		if ( perWeapon ) {
+			dot = strchr( token, '.' );
+			if ( !dot ) {
+				continue;
+			}
+			*dot = '\0';
+			name = dot + 1;
+			for ( j = WP_NONE + 1; j < WP_NUM_WEAPONS; j++ ) {
+				if ( !Q_stricmp( token, CL_AimAssistWeaponName( j ) ) ) {
+					weapon = j;
+					break;
+				}
+			}
+			if ( weapon < 0 ) {
+				continue;
+			}
+		}
+
+		for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
+			if ( Q_stricmp( name, aimPriorityName[j] ) ) {
+				continue;
+			}
+			if ( !perWeapon ) {
+				aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
+				if ( life >= 0.0f ) {
+					aimPriorityTime[j] = Com_Clamp( 0.0f, 120.0f, life );
+				}
+			} else {
+				aimWeaponWeight[weapon][j] = Com_Clamp( 0.0f, 100.0f, value );
+				if ( life >= 0.0f ) {
+					aimWeaponTime[weapon][j] = Com_Clamp( 0.0f, 120.0f, life );
+				}
+			}
+			break;
+		}
+	}
+}
+
+
+/*
+=================
+CL_AimAssistPriorityFile
+
+The per-weapon lists, from a file rather than from a cvar.
+
+A cvar holds two hundred and fifty-six characters. One weapon tuned by hand had
+already taken two hundred and forty-eight of them, and nine weapons worth of
+deliberate differences need something over five hundred, which no amount of
+abbreviating fits. So they live beside the learned table instead, in a file with
+no such ceiling, and the cvar stays as a last word for anyone at the console.
+=================
+*/
+#define AIM_PRIO_FILE	"aimprio.cfg"
+
+static char		aimPrioText[8192];
+static qboolean	aimPrioLoaded;
+
+static void CL_AimAssistPriorityLoad( void ) {
+	union { char *c; void *v; } file;
+	int		length;
+
+	aimPrioLoaded = qtrue;
+	aimPrioText[0] = '\0';
+
+	length = FS_ReadFile( AIM_PRIO_FILE, &file.v );
+	if ( length <= 0 || !file.c ) {
+		return;
+	}
+	Q_strncpyz( aimPrioText, file.c, sizeof( aimPrioText ) );
+	FS_FreeFile( file.v );
+}
+
+void CL_AimAssistPriorityReload( void ) {
+	aimPrioLoaded = qfalse;
+	aimPriorityCount = -1;
+	aimWeaponCount = -1;
+}
+
+static void CL_AimAssistPriorities( void ) {
+	int	i, weapon;
+
+	if ( aimPrioLoaded && cl_aimAssistPriority->modificationCount == aimPriorityCount
 		&& cl_aimAssistPriorityWeapon->modificationCount == aimWeaponCount ) {
 		return;
+	}
+	if ( !aimPrioLoaded ) {
+		CL_AimAssistPriorityLoad();
 	}
 	aimPriorityCount = cl_aimAssistPriority->modificationCount;
 	aimWeaponCount = cl_aimAssistPriorityWeapon->modificationCount;
@@ -2202,90 +2343,21 @@ static void CL_AimAssistPriorities( void ) {
 		aimPriorityWeight[i] = aimPriorityDefault[i];
 		aimPriorityTime[i] = aimPriorityLife[i];
 	}
+	CL_AimAssistParsePriorities( cl_aimAssistPriority->string, qfalse );
 
-	// Two passes over two strings. The first says what a criterion is worth in
-	// general, "name:weight" or "name:weight:seconds"; the second says what it
-	// is worth to one weapon, "weapon.name:weight". Anything not named keeps
-	// what it had, and anything without a time keeps the one it was given.
-	for ( pass = 0; pass < 2; pass++ ) {
-		if ( pass == 1 ) {
-			// the per-weapon list starts as a copy of the general one, so the
-			// pick reads one number and never has to ask where it came from
-			for ( weapon = 0; weapon < WP_NUM_WEAPONS; weapon++ ) {
-				for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
-					aimWeaponWeight[weapon][i] = aimPriorityWeight[i];
-					aimWeaponTime[weapon][i] = aimPriorityTime[i];
-				}
-			}
-		}
-
-		text = pass == 0 ? cl_aimAssistPriority->string : cl_aimAssistPriorityWeapon->string;
-		while ( *text ) {
-			while ( *text == ' ' || *text == '\t' ) {
-				text++;
-			}
-			for ( i = 0; *text && *text != ':' && *text != ' ' && i < (int)sizeof( token ) - 1; i++ ) {
-				token[i] = *text++;
-			}
-			token[i] = '\0';
-			if ( *text != ':' ) {
-				while ( *text && *text != ' ' ) {
-					text++;
-				}
-				continue;
-			}
-			text++;
-			value = atof( text );
-
-			// a second colon, if it is there, is how long the reason lasts
-			life = -1.0f;
-			while ( *text && *text != ' ' ) {
-				if ( *text == ':' ) {
-					life = atof( text + 1 );
-				}
-				text++;
-			}
-
-			// on the second pass the name carries its weapon in front of a dot
-			weapon = -1;
-			name = token;
-			if ( pass == 1 ) {
-				dot = strchr( token, '.' );
-				if ( !dot ) {
-					continue;
-				}
-				*dot = '\0';
-				name = dot + 1;
-				for ( j = WP_NONE + 1; j < WP_NUM_WEAPONS; j++ ) {
-					if ( !Q_stricmp( token, CL_AimAssistWeaponName( j ) ) ) {
-						weapon = j;
-						break;
-					}
-				}
-				if ( weapon < 0 ) {
-					continue;
-				}
-			}
-
-			for ( j = 0; j < AIM_PRIO_COUNT; j++ ) {
-				if ( Q_stricmp( name, aimPriorityName[j] ) ) {
-					continue;
-				}
-				if ( pass == 0 ) {
-					aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
-					if ( life >= 0.0f ) {
-						aimPriorityTime[j] = Com_Clamp( 0.0f, 120.0f, life );
-					}
-				} else {
-					aimWeaponWeight[weapon][j] = Com_Clamp( 0.0f, 100.0f, value );
-					if ( life >= 0.0f ) {
-						aimWeaponTime[weapon][j] = Com_Clamp( 0.0f, 120.0f, life );
-					}
-				}
-				break;
-			}
+	// the per-weapon list starts as a copy of the general one, so the pick
+	// reads one number and never has to ask where it came from
+	for ( weapon = 0; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
+			aimWeaponWeight[weapon][i] = aimPriorityWeight[i];
+			aimWeaponTime[weapon][i] = aimPriorityTime[i];
 		}
 	}
+
+	// the file first, then the cvar on top of it: whoever types at the console
+	// should be able to overrule what the bench wrote, and not the other way
+	CL_AimAssistParsePriorities( aimPrioText, qtrue );
+	CL_AimAssistParsePriorities( cl_aimAssistPriorityWeapon->string, qtrue );
 }
 
 
