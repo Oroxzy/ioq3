@@ -140,7 +140,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 5;
+	const int LogVersion = 6;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -187,7 +187,9 @@ public class MainForm : Form, IMessageFilter {
 		shotView.Columns.Add( "Waffe", 90 );
 		shotView.Columns.Add( "Ziel", 90 );
 		shotView.Columns.Add( "Entfernung", 80, HorizontalAlignment.Right );
-		shotView.Columns.Add( "in der Luft", 80 );
+		// "ja, landet in N ms" trennt die Schuesse haerter als alles andere:
+		// eine Rakete, deren Ziel unterwegs aufsetzt, trifft halb so oft
+		shotView.Columns.Add( "in der Luft", 110 );
 		shotView.Columns.Add( "Vorhalt", 70, HorizontalAlignment.Right );
 		shotView.Columns.Add( "Fehler", 70, HorizontalAlignment.Right );
 		// Bei geschnappten Waffen ist der Fehler bauartbedingt null, weil die
@@ -887,6 +889,34 @@ public class MainForm : Form, IMessageFilter {
 		return cfg.ToString();
 	}
 
+	// Das Spiel kann sein Protokoll nur neu schreiben, nie anhaengen, also ist
+	// die Runde von vorhin weg, sobald die naechste beginnt. Eine ganze
+	// Sitzung ging so schon verloren, bevor sie ausgewertet war. Sie wandert
+	// jetzt mit ihrem Datum in einen Unterordner, und nur die juengsten
+	// zwanzig bleiben liegen, damit der Ordner nicht ins Kraut schiesst.
+	const int KeepLogs = 20;
+
+	void ArchiveLog() {
+		try {
+			if ( !File.Exists( logPath ) || new FileInfo( logPath ).Length == 0 ) return;
+
+			var attic = Path.Combine( HomePath, "logs" );
+			Directory.CreateDirectory( attic );
+			var stamp = File.GetLastWriteTime( logPath ).ToString( "yyyyMMdd-HHmmss" );
+			var target = Path.Combine( attic, $"qconsole-{stamp}.log" );
+			if ( File.Exists( target ) ) File.Delete( target );
+			File.Move( logPath, target );
+
+			foreach ( var old in new DirectoryInfo( attic ).GetFiles( "qconsole-*.log" )
+				.OrderByDescending( f => f.LastWriteTime ).Skip( KeepLogs ) ) {
+				try { old.Delete(); } catch ( IOException ) { }
+			}
+		} catch ( IOException ) {
+			// haengt noch ein Spiel daran, bleibt es eben stehen
+		} catch ( UnauthorizedAccessException ) {
+		}
+	}
+
 	void StartGame() {
 		var exe = Path.Combine( gameDir.Text, "ioquake3.exe" );
 		if ( !File.Exists( exe ) ) {
@@ -900,12 +930,7 @@ public class MainForm : Form, IMessageFilter {
 			File.WriteAllText( Path.Combine( HomePath, CfgName ), BuildConfig() );
 
 			logPath = Path.Combine( HomePath, "qconsole.log" );
-			// Haengt noch ein Spiel am Protokoll, bleibt es eben stehen
-			try {
-				if ( File.Exists( logPath ) ) File.Delete( logPath );
-			} catch ( IOException ) {
-			} catch ( UnauthorizedAccessException ) {
-			}
+			ArchiveLog();
 			shotStamp = "";
 			aimLearned.Text = "";
 
@@ -1192,6 +1217,7 @@ public class MainForm : Form, IMessageFilter {
 		public bool Assisted = true;	// aeltere Protokolle kennen das Feld nicht
 		public double Error;
 		public double Swing;			// wie weit die Sicht bis zum Schuss kommen musste
+		public int Land = -1;			// ms bis zur Landung des Ziels, -1 = bleibt in der Luft
 		public double Pace;				// Tempo des Ziels, die zweite Achse der Tabelle
 		public double MySpeed;			// eigenes Tempo
 		public double[] Eye = new double[3], Plain = new double[3];
@@ -1225,6 +1251,9 @@ public class MainForm : Form, IMessageFilter {
 					case "swing":
 						double.TryParse( f[i + 1], System.Globalization.CultureInfo.InvariantCulture, out shot.Swing );
 						break;
+					// Wann die Fuesse des Ziels wieder aufkommen sollten, in ms,
+					// oder -1 wenn es beim Einschlag noch in der Luft ist.
+					case "land": int.TryParse( f[i + 1], out shot.Land ); break;
 					case "at":
 						if ( i + 3 < f.Length ) shot.Position = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
 						break;
@@ -1548,7 +1577,7 @@ public class MainForm : Form, IMessageFilter {
 				shot.Weapon,
 				shot.Target,
 				shot.Distance.ToString(),
-				shot.InAir ? "ja" : "nein",
+				shot.InAir ? ( shot.Land >= 0 ? $"ja, landet {shot.Land} ms" : "ja" ) : "nein",
 				shot.Lead + " ms",
 				shot.Error.ToString( "0.00" ) + "°",
 				shot.Swing.ToString( "0.00" ) + "°",

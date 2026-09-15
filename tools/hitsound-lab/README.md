@@ -134,6 +134,39 @@ gemerkt und nach einigen Sekunden wieder vergessen, weil er inzwischen Health
 aufgesammelt haben dürfte. Eine echte „wenigste HP"-Auswahl über alle Gegner
 ist nicht möglich.
 
+## Der Sprung und die Landung
+
+Ein Spieler, der in Quake 3 in der Luft ist, hat keine Reibung und fast keine
+Steuerung. Seine Bahn ist deshalb **exakt** vorhersagbar, nicht ungefähr: im
+Protokoll lag die Vorhersage bei Zielen, die beim Einschlag noch flogen, im
+Mittel **fünf Einheiten** daneben. Am Boden sind es hundert.
+
+Der Haken war das Ende der Bahn. Eine Rakete fliegt hier rund eine Sekunde, ein
+Sprung dauert zwei Drittel davon. Die Vorhersage trug den Bot danach einfach
+mit Sprunggeschwindigkeit weiter, und das kostete 170 Einheiten. Die Zahl, an
+der sich alles entscheidet, ist nicht „in der Luft" sondern **ob sich die
+Fußlage während des Fluges ändert**:
+
+| Zustand beim Schuss → beim Einschlag | Trefferquote |
+| --- | --- |
+| Boden → Boden | 59 % |
+| Luft → Luft | 29 % |
+| Luft → Boden | 21 % |
+| Boden → Luft | 9 % |
+| **unverändert** | **49 %** |
+| **verändert** | **17 %** |
+
+Deshalb wird der Moment, in dem die Bahn den Boden trifft, jetzt gelöst, und
+was danach kommt, ist ein gedämpfter Lauf wie bei jedem anderen Läufer. Das
+Feld `land` auf der Schusszeile sagt, wann die Hilfe die Landung erwartet hat,
+damit sich am nächsten Protokoll nachprüfen lässt, ob es etwas gebracht hat.
+
+Die Lernproben von Zielen in der Luft werden weiter **verworfen**, und das ist
+richtig: gelernt wird allein die Haltedauer, und die kommt auf der Luftbahn gar
+nicht vor. Eine solche Probe bestätigt sich immer selbst und würde die
+Haltedauer nach oben ziehen, also den Vorhalt genau dort verlängern, wo er
+schon zu lang ist.
+
 ## Was dabei gelernt wird
 
 Mit „je Waffe und Entfernung nachmessen" prüft das Spiel nach jedem Geschoss,
@@ -186,6 +219,7 @@ statt stillschweigend Felder zu lesen, die es damals nicht gab.
 | `aim learn:` | eine gemessene Probe: wie weit der Bot wirklich lief gegen die Erwartung |
 | `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame |
 | `aim hold:` | jede Sperre des Abzugs mit Grund und Entfernung, und wie lange sie hielt |
+| `land` auf der Schusszeile | wann die Fußlage des Ziels wieder erwartet wird, oder −1 |
 | `aim tune:` | der Stand eines Fachs nach jeder Änderung |
 | `aim impact:` / `aim missile:` | jeder Einschlag mit den Stellungen aller Bots, jedes Geschoss beim Start |
 
@@ -223,3 +257,9 @@ im Wurzelverzeichnis gebaut; im Feld „Spielordner" steht der Ordner mit der
 
 „Speichern" legt alle Einstellungen unter `%AppData%\HitsoundLab\settings.ini`
 ab und holt sie beim nächsten Start zurück.
+
+Das Spiel kann sein `qconsole.log` nur neu schreiben, nie anhängen, also wäre
+die vorige Runde weg, sobald die nächste beginnt. Beim Start wandert sie
+deshalb mit ihrem Datum nach `baseq3\logs\`, und die jüngsten zwanzig bleiben
+liegen. Eine Sitzung ist auf diese Weise schon verlorengegangen, bevor sie
+ausgewertet war.

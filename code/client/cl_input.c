@@ -870,7 +870,7 @@ in seconds, and the learner tunes it from what the bots really do.
 */
 // Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
 // verschwindet oder seine Bedeutung wechselt.
-#define AIM_LOG_VERSION	5
+#define AIM_LOG_VERSION	6
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -1326,18 +1326,39 @@ A negative time is a moment back along its line, wanted only for the smooth
 picture between snapshots: nothing to clip and nothing to drop there.
 =================
 */
+static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t motion,
+		float gravity, float limit, vec3_t mins, vec3_t maxs, float *floorOut );
+
 static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
-	float		gravity, sideways, floor;
+	float		gravity, sideways, floor, pace, fall, rest, landing;
 	trace_t		trace;
-	qboolean	grounded, floats, stopped, snapped;
+	qboolean	grounded, floats, stopped, snapped, walks;
 	int			i;
 
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
 	floats = CL_AimAssistFloats( entity );
 	stopped = qfalse;
 	snapped = qfalse;
+	landing = 0.0f;
+
+	CL_AimAssistVelocity( entity, motion );
+	CL_AimAssistHull( entity, mins, maxs );
+	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
+	gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+
+	// A jump lasts about two thirds of a second and a rocket flies for about
+	// one, so the shot commonly arrives after the target has come down again.
+	// Carrying it forward at its jumping speed for the whole flight was worth
+	// a hundred and seventy units of error where a target that stayed in the
+	// air was guessed to within five: the record split the same shots forty-
+	// nine per cent against seventeen on whether the feet stayed where they
+	// were. So the moment the arc meets the floor is solved for, and what
+	// comes after it is a run like any other runner's.
+	fall = ( !grounded && !floats && time > 0.0f )
+		? CL_AimAssistLanding( entity, motion, gravity, time, mins, maxs, &landing ) : -1.0f;
+	walks = grounded || fall >= 0.0f;
 
 	// Only the sideways guess of a target on the ground is damped, in two
 	// ways: by how long bots hold a direction at all, and by how much this one
@@ -1346,17 +1367,20 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	// the game gives it no friction and next to no steering - so its whole
 	// course is kept, the rise and the fall included. Swimming and flying can
 	// turn, and are damped like running.
-	CL_AimAssistVelocity( entity, motion );
-	if ( !grounded && !floats ) {
+	if ( fall >= 0.0f ) {
+		rest = time - fall;
+		sideways = fall + CL_AimAssistSideways( rest ) * CL_AimAssistTrust( entity, rest )
+			* CL_AimAssistTune( weapon, rest, pace );
+	} else if ( !grounded && !floats ) {
 		sideways = time;
 	} else {
 		sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time )
-			* CL_AimAssistTune( weapon, time,
-				sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) );
+			* CL_AimAssistTune( weapon, time, pace );
 	}
 	end[0] = entity->pos.trBase[0] + motion[0] * sideways;
 	end[1] = entity->pos.trBase[1] + motion[1] * sideways;
-	end[2] = entity->pos.trBase[2] + motion[2] * ( grounded ? sideways : time );
+	end[2] = fall >= 0.0f ? landing
+		: entity->pos.trBase[2] + motion[2] * ( grounded ? sideways : time );
 
 	if ( time <= 0.0f ) {
 		VectorCopy( end, predicted );
@@ -1371,9 +1395,9 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 
 	// Gravity acts on anything off the floor, and trDelta[2] carries the rest:
 	// a ramp, a jump pad, the first moment of a jump. Pinning the height threw
-	// all of that away. In water and in flight there is no falling.
-	if ( !grounded && !floats ) {
-		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+	// all of that away. In water and in flight there is no falling. One that
+	// has already been set down on its floor above is past all of that.
+	if ( !grounded && !floats && fall < 0.0f ) {
 		end[2] -= 0.5f * gravity * time * time;
 	}
 
@@ -1381,7 +1405,6 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	// that clips the guess starts above that height: a curb, a stair riser or a
 	// ramp is no obstacle to the target and must not cut its lead short. Only
 	// what would stop the target itself may stop the prediction.
-	CL_AimAssistHull( entity, mins, maxs );
 	VectorCopy( mins, stepMins );
 	stepMins[2] += STEPSIZE;
 	VectorCopy( entity->pos.trBase, start );
@@ -1410,7 +1433,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 			break;
 		}
 		stopped = qtrue;
-		if ( !grounded ) {
+		if ( !walks ) {
 			break;
 		}
 
@@ -1456,7 +1479,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		if ( predicted[2] < floor ) {
 			snapped = floor - predicted[2] > 0.5f;
 			predicted[2] = floor;					// landed, or walked up a step
-		} else if ( grounded && predicted[2] - floor <= STEPSIZE ) {
+		} else if ( walks && predicted[2] - floor <= STEPSIZE ) {
 			snapped = predicted[2] - floor > 0.5f;
 			predicted[2] = floor;					// walked down a step
 		}
@@ -1468,6 +1491,71 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	if ( pinned ) {
 		*pinned = snapped;
 	}
+}
+
+
+/*
+=================
+CL_AimAssistLanding
+
+How long a target in the air has before its feet meet the floor, in seconds,
+or -1 if it is still falling when the shot gets there.
+
+The arc itself needs no measuring: a player off the ground in Quake 3 has no
+friction and almost no steering, so the parabola is exact, and the record bears
+that out - a target still in the air on arrival was guessed to within five
+units. What was missing was the end of it. A rocket flies for about a second
+and a jump lasts about two thirds of one.
+
+The landing point and the landing time each want the other, so the floor is
+looked for under where the arc is heading, the time is solved from that floor,
+and the pair is corrected once. A third pass moves nothing worth having.
+=================
+*/
+static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t motion,
+		float gravity, float limit, vec3_t mins, vec3_t maxs, float *floorOut ) {
+	vec3_t		from, to;
+	trace_t		trace;
+	float		fall, drop, root, floor;
+	int			i;
+
+	if ( gravity <= 0.0f || limit <= 0.0f ) {
+		return -1.0f;
+	}
+
+	fall = limit;
+	floor = entity->pos.trBase[2];
+
+	for ( i = 0; i < 2; i++ ) {
+		from[0] = entity->pos.trBase[0] + motion[0] * fall;
+		from[1] = entity->pos.trBase[1] + motion[1] * fall;
+		// looked for from the height it set out at, so the trace never starts
+		// inside the very floor it is looking for
+		from[2] = entity->pos.trBase[2];
+		VectorCopy( from, to );
+		to[2] -= 8192.0f;
+		CM_BoxTrace( &trace, from, to, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+		if ( trace.startsolid || trace.allsolid || trace.fraction >= 1.0f ) {
+			return -1.0f;			// nothing under the arc to come down on
+		}
+		floor = trace.endpos[2];
+
+		// half g t squared less the climb, solved for the moment it arrives
+		drop = entity->pos.trBase[2] - floor;
+		root = motion[2] * motion[2] + 2.0f * gravity * drop;
+		if ( root < 0.0f ) {
+			return -1.0f;			// never falls that far in the first place
+		}
+		fall = ( motion[2] + sqrt( root ) ) / gravity;
+		if ( fall <= 0.0f || fall >= limit ) {
+			return -1.0f;			// still in the air when the shot arrives
+		}
+	}
+
+	if ( floorOut ) {
+		*floorOut = floor;
+	}
+	return fall;
 }
 
 
@@ -2836,12 +2924,23 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		const vec3_t targetOrigin, float lead, float error, float swing, qboolean assisted,
 		qboolean exact, qboolean fallback ) {
 	const char	*info;
-	vec3_t		direction, motion;
-	float		pace;
+	vec3_t		direction, motion, mins, maxs;
+	float		pace, touchdown;
 
 	info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
 	VectorSubtract( targetOrigin, viewOrigin, direction );
 	CL_AimAssistVelocity( entity, motion );
+
+	// When the target's feet are expected back on the floor, within this
+	// shot's flight. It is the axis the record split hardest on - a rocket
+	// whose target changed its footing on the way landed less than half as
+	// often - so the guess has to be readable next to the outcome.
+	CL_AimAssistHull( entity, mins, maxs );
+	touchdown = ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) )
+		? CL_AimAssistLanding( entity, motion,
+			cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY,
+			lead, mins, maxs, NULL )
+		: -1.0f;
 
 	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
 
@@ -2871,7 +2970,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f"
 		" pace %.0f myspeed %.0f me %i"
-		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i myair %i"
+		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i myair %i land %i"
 		" world %i cmd %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
@@ -2889,6 +2988,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
 		fallback ? 1 : 0, cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
+		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
 		cl.snap.serverTime, cl.serverTime );
 }
 
