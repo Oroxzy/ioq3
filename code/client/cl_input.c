@@ -3688,8 +3688,16 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	steering = cl_aimAssist->integer && key >= 0 && Key_IsDown( key );
 
 	CL_AimAssistEye( viewOrigin );
+	// The weapon about to be held, not the one still in hand: during a change
+	// the command already carries the new one, and leading for the weapon that
+	// is going to fire is the point. But only if it is really owned - a
+	// hand-written switch order naming a weapon nobody has would otherwise
+	// leave the assist computing that weapon's lead for good, and silently,
+	// because the shot record refuses to write a line while the weapon in the
+	// command and the weapon in hand disagree.
 	weapon = cl.cgameUserCmdValue;
-	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) {
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS
+		|| !( cl.snap.ps.stats[STAT_WEAPONS] & ( 1 << weapon ) ) ) {
 		weapon = cl.snap.ps.weapon;
 	}
 
@@ -3915,6 +3923,159 @@ smooth without the shot paying for it. cl_aimAssistSmooth adds a low pass on
 top for anyone who wants the follow softer still.
 =================
 */
+/*
+=================
+CL_AutoSwitchEmpty
+
+Reach for another weapon on the round that empties the one in hand.
+
+The game only notices a dry weapon when the trigger is pulled on it again, and
+that notice costs five hundred milliseconds of weapon timer with the state left
+at firing, so the change it asks for right afterwards is refused for the whole
+of it. What it then reaches for is decided by counting down from the highest
+weapon number, which finds the grappling hook first - that carries endless
+ammunition on every spawn - and the BFG after it.
+
+This sits in the engine and not in the cgame on purpose. A cgame that comes
+with a mod, a HUD pack for instance, replaces the one built here, and a change
+made there would simply not be running. Going through the console command the
+cgame already answers works whichever cgame is loaded.
+
+The order is the player's own, best first. Two passes: the first wants at least
+two rounds, so one railgun slug does not beat eighty machinegun rounds; the
+second takes whatever is left.
+=================
+*/
+static int CL_AutoSwitchPick( int avoid ) {
+	const playerState_t	*ps = &cl.snap.ps;
+	const char			*text;
+	char				token[32];
+	int					order[WP_NUM_WEAPONS], ordered = 0;
+	int					i, j, least;
+	qboolean			known;
+
+	text = cl_autoSwitchEmptyOrder->string;
+	while ( *text && ordered < WP_NUM_WEAPONS ) {
+		while ( *text == ' ' || *text == '\t' ) {
+			text++;
+		}
+		for ( i = 0; *text && *text != ' ' && *text != '\t' && i < (int)sizeof( token ) - 1; i++ ) {
+			token[i] = *text++;
+		}
+		token[i] = '\0';
+		if ( !token[0] ) {
+			continue;
+		}
+		for ( j = WP_NONE + 1; j < WP_NUM_WEAPONS; j++ ) {
+			if ( Q_stricmp( token, CL_AimAssistWeaponName( j ) ) ) {
+				continue;
+			}
+			known = qfalse;
+			for ( i = 0; i < ordered; i++ ) {
+				if ( order[i] == j ) {
+					known = qtrue;
+				}
+			}
+			if ( !known ) {
+				order[ordered++] = j;
+			}
+			break;
+		}
+	}
+
+	for ( least = 2; least >= 1; least-- ) {
+		for ( i = 0; i < ordered; i++ ) {
+			j = order[i];
+			if ( j == avoid || !( ps->stats[STAT_WEAPONS] & ( 1 << j ) ) ) {
+				continue;
+			}
+			if ( ps->ammo[j] < 0 || ps->ammo[j] >= least ) {
+				return j;
+			}
+		}
+	}
+
+	// Nobody named the rest, so count down - but never onto the grappling
+	// hook, which is always loaded and would win every time.
+	for ( j = WP_NUM_WEAPONS - 1; j > WP_NONE; j-- ) {
+		if ( j == avoid || j == WP_GRAPPLING_HOOK
+			|| !( ps->stats[STAT_WEAPONS] & ( 1 << j ) ) ) {
+			continue;
+		}
+		if ( ps->ammo[j] < 0 || ps->ammo[j] >= 1 ) {
+			return j;
+		}
+	}
+	return WP_NONE;
+}
+
+static void CL_AutoSwitchEmpty( void ) {
+	const playerState_t	*ps = &cl.snap.ps;
+	static int			watched = WP_NONE;
+	static int			before = -1;
+	static int			asked;
+	int					held, next;
+
+	if ( !cl_autoSwitchEmpty->integer || clc.state != CA_ACTIVE || clc.demoplaying
+		|| !cl.snap.valid || ps->pm_type == PM_DEAD || ps->pm_type == PM_INTERMISSION
+		|| ( ps->pm_flags & ( PMF_FOLLOW | PMF_RESPAWNED ) )
+		|| ps->persistant[PERS_TEAM] == TEAM_SPECTATOR ) {
+		watched = WP_NONE;
+		before = -1;
+		return;
+	}
+
+	held = ps->weapon;
+	if ( held <= WP_NONE || held >= WP_NUM_WEAPONS ) {
+		return;
+	}
+	if ( held != watched ) {
+		watched = held;					// a change is under way or just landed
+		before = ps->ammo[held];
+		asked = 0;
+		return;
+	}
+
+	// The command already carries a different weapon: somebody is changing by
+	// hand, and two of us pulling at it would be worse than neither.
+	if ( cl.cgameUserCmdValue != held ) {
+		before = ps->ammo[held];
+		return;
+	}
+
+	next = ps->ammo[held];
+	if ( next != 0 || before < 0 ) {
+		before = next;
+		return;						// loaded, or endless
+	}
+	// At one, only the round that emptied it counts. At two, a weapon that is
+	// empty for any other reason counts as well - one picked up empty, say.
+	if ( cl_autoSwitchEmpty->integer < 2 && before <= 0 ) {
+		return;
+	}
+	before = next;
+
+	// The change goes through the command buffer and takes a frame; without
+	// this the same request would be sent again on every frame until the
+	// snapshot caught up, and the weapon would never settle.
+	if ( asked && cl.serverTime - asked < 600 ) {
+		return;
+	}
+
+	next = CL_AutoSwitchPick( held );
+	if ( next <= WP_NONE ) {
+		return;						// nothing loaded to reach for
+	}
+	asked = cl.serverTime;
+	if ( cl_aimAssistDebug->integer ) {
+		Com_Printf( "aim swap: %s empty to %s frame %i\n",
+			CL_AimAssistWeaponName( held ), CL_AimAssistWeaponName( next ),
+			cl.snap.serverTime );
+	}
+	Cbuf_AddText( va( "weapon %i\n", next ) );
+}
+
+
 static void CL_AimAssist( usercmd_t *cmd, const vec3_t oldAngles ) {
 	CL_AimAssistSteer( cmd, oldAngles );
 
@@ -4005,6 +4166,7 @@ usercmd_t CL_CreateCmd( void ) {
 	CL_JoystickMove( &cmd );
 
 	// local bot-only helper used by the hit-sound test bench
+	CL_AutoSwitchEmpty();
 	CL_AimAssist( &cmd, oldAngles );
 
 	// check to make sure the angles haven't wrapped

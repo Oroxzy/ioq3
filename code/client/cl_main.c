@@ -80,6 +80,8 @@ cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_aimAssistPriority;
 cvar_t	*cl_aimAssistPriorityWeapon;
+cvar_t	*cl_autoSwitchEmpty;
+cvar_t	*cl_autoSwitchEmptyOrder;
 cvar_t	*cl_aimAssistHoldFire;
 cvar_t	*cl_aimAssistSmooth;
 cvar_t	*cl_aimAssistExact;
@@ -3625,7 +3627,16 @@ void CL_Init( void ) {
 	cl_aimAssistPriorityWeapon = Cvar_Get( "cl_aimAssistPriorityWeapon",
 		"rocket.near:70 grenade.near:85 plasma.near:60 shotgun.near:80 lightning.near:95 "
 		"railgun.near:10 machinegun.near:25", CVAR_ARCHIVE );
-	Cvar_SetDescription( cl_aimAssistPriorityWeapon, "Where one weapon disagrees with cl_aimAssistPriority, as weapon.name:weight - for instance rocket.near:70. Anything not named here follows the general list" );
+	Cvar_SetDescription( cl_aimAssistPriorityWeapon, "Where one weapon disagrees with cl_aimAssistPriority, as weapon.name:weight - for instance rocket.near:70. Anything not named here follows the general list. Read after baseq3/aimprio.cfg, so what is set here has the last word" );
+	// Reaching for another weapon when this one runs dry. The game only
+	// notices on the next pull of an empty trigger, and pays five hundred
+	// milliseconds for the notice; this notices on the round that emptied it.
+	cl_autoSwitchEmpty = Cvar_Get( "cl_autoSwitchEmpty", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_autoSwitchEmpty, 0, 2, qtrue );
+	Cvar_SetDescription( cl_autoSwitchEmpty, "Change weapons when the one in hand runs out of ammunition. 0 leaves it to the game, 1 changes on the round that empties it, 2 also leaves a weapon that is empty for any other reason" );
+	cl_autoSwitchEmptyOrder = Cvar_Get( "cl_autoSwitchEmptyOrder",
+		"railgun rocket lightning plasma shotgun machinegun grenade bfg gauntlet", CVAR_ARCHIVE );
+	Cvar_SetDescription( cl_autoSwitchEmptyOrder, "What to reach for when the weapon runs dry, best first, by name. Anything left out is reached for last, counting down, and never the grappling hook" );
 	cl_aimAssistHoldFire = Cvar_Get( "cl_aimAssistHoldFire", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistHoldFire, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistHoldFire, "While the aim key is held: keep the trigger shut when the shot cannot reach the point being aimed at - the led one, not the target - or would go off inside our own splash. Traced from the muzzle against the world and its movers. It delays a shot rather than cancelling it, because a command without the trigger zeroes the weapon timer" );

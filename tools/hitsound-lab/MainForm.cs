@@ -87,6 +87,14 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label statTuneBoxes = Number();
 	readonly Label statTuneSamples = Number();
 	readonly CheckBox aimHoldFire = new() { Text = "nicht schießen, solange der Schuss nicht durchkommt", AutoSize = true };
+	readonly CheckBox autoSwitch = new() { Text = "Waffe wechseln, wenn die Munition leer ist", Checked = true, AutoSize = true };
+	// Dieselbe Reihenfolge wie die Vorgabe von cl_autoSwitchEmptyOrder in
+	// code/client/cl_main.c, aus dem Gemessenen: Railgun 87 Prozent,
+	// Schrotflinte 78, Maschinengewehr 74, Rakete 45 - aber 85 auf kurze Sicht.
+	readonly TextBox autoSwitchOrder = new() {
+		Width = 420,
+		Text = "railgun rocket lightning plasma shotgun machinegun grenade bfg gauntlet",
+	};
 
 	// Was ein Ziel zum besseren Ziel macht. Die Reihenfolge ist das Gewicht:
 	// oben zaehlt am meisten. Schluessel wie in cl_aimAssistPriority.
@@ -672,7 +680,11 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( aimHoldFire ) ),
 			Row( Hint( "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." ) ),
 			Row( Hint( "Die Taste zielt nur; geschossen wird mit der Feuertaste." ) ),
-			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ) );
+			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ),
+			Row( Pad( autoSwitch ) ),
+			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ),
+			Row( Hint( "Beste zuerst. Das Spiel selbst merkt es erst beim Klick auf die leere Waffe" ) ),
+			Row( Hint( "und greift dann von hinten, also zum Enterhaken." ) ) );
 	}
 
 	// Wie weit vorgehalten wird
@@ -1043,6 +1055,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimExact=" + aimExact.Checked );
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
+		s.AppendLine( "autoSwitch=" + autoSwitch.Checked );
+		s.AppendLine( "autoSwitchOrder=" + autoSwitchOrder.Text );
 		s.AppendLine( "aimPriority=" + PriorityString() );
 		s.AppendLine( "aimPriorityWeapon=" + WeaponPriorityString() );
 		// nur eine wiederherstellbare Groesse merken, kein maximiertes Fenster
@@ -1101,6 +1115,8 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimExact, v, "aimExact" );
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
+		SetBool( autoSwitch, v, "autoSwitch" );
+		if ( v.TryGetValue( "autoSwitchOrder", out var swOrder ) && swOrder.Length > 0 ) autoSwitchOrder.Text = swOrder;
 		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
 		if ( v.TryGetValue( "aimPriorityWeapon", out var wprio ) ) ApplyWeaponPriorityString( wprio );
 		if ( v.TryGetValue( "windowWidth", out var ww ) && int.TryParse( ww, out int w2 )
@@ -1149,6 +1165,8 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistExact {( aimExact.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_autoSwitchEmpty {( autoSwitch.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_autoSwitchEmptyOrder \"{autoSwitchOrder.Text}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistPriority \"{PriorityString()}\"" );
 		// Leer, mit Absicht: die Waffenlisten stehen jetzt in aimprio.cfg, und
 		// ein alter Wert aus der q3config wuerde die Datei sonst ueberstimmen,
