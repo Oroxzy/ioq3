@@ -90,6 +90,7 @@ cvar_t	*cl_aimAssistLearn;
 cvar_t	*cl_aimAssistAttacker;
 cvar_t	*cl_botOutline;
 cvar_t	*cl_itemOutline;
+cvar_t	*cl_itemOutlineRange;
 cvar_t	*cl_hitPitch;
 cvar_t	*cl_hitPitchFull;
 cvar_t	*cl_hitPitchEmpty;
@@ -3610,6 +3611,13 @@ void CL_Init( void ) {
 	cl_itemOutline = Cvar_Get( "cl_itemOutline", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_itemOutline, 0, 2, qtrue );
 	Cvar_SetDescription( cl_itemOutline, "Outline weapons and powerups through walls on a local server and count them back in: 2 adds armor and mega health" );
+	// Fifteen hundred because two independent things land there: nine shots in
+	// ten in the record were fired inside about fifteen hundred units, and
+	// sixteen hundred is as far as anyone runs in the five seconds a weapon
+	// stays away.
+	cl_itemOutlineRange = Cvar_Get( "cl_itemOutlineRange", "1500", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_itemOutlineRange, 0, 8192, qtrue );
+	Cvar_SetDescription( cl_itemOutlineRange, "Fade item boxes and their clocks out with distance, in units: full strength to half of this and gone at it. Zero keeps them all at full strength" );
 	cl_botOutline = Cvar_Get( "cl_botOutline", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_botOutline, 0, 2, qtrue );
 	Cvar_SetDescription( cl_botOutline, "Outline enemy bots through walls on a local server; 2 also writes what they had left the last time they were hit" );

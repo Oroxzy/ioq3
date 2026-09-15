@@ -1590,6 +1590,52 @@ static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t moti
 
 /*
 =================
+CL_AimAssistShotGrade
+
+How good the record says this shot is, from nought to three.
+
+The measured table first: how many splash radii wide the shot still scatters at
+this flight time and this target speed. A box with too few samples to speak
+falls back to the flight bands the record was cut on. Then the footing moves it
+one step either way, because that splits a single band harder than the band
+splits itself - at eight hundred to twelve hundred milliseconds of flight the
+record ran twenty-five per cent against a target on its feet, eighty against one
+that stays in the air, and eight against one that comes down on the way.
+=================
+*/
+static int CL_AimAssistShotGrade( const entityState_t *entity, int weapon, float flight ) {
+	vec3_t	motion, mins, maxs;
+	float	pace, scatter, reach, touchdown, gravity;
+	int		grade;
+
+	CL_AimAssistVelocity( entity, motion );
+	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
+
+	scatter = CL_AimAssistScatter( weapon, flight, pace );
+	if ( scatter > 0.0f ) {
+		reach = CL_AimAssistHitRadius( weapon ) / scatter;
+		grade = reach >= 1.0f ? 3 : reach >= 0.5f ? 2 : reach >= 0.25f ? 1 : 0;
+	} else {
+		grade = flight >= 1.2f ? 0 : flight >= 0.8f ? 1 : flight >= 0.4f ? 2 : 3;
+	}
+
+	if ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) ) {
+		CL_AimAssistHull( entity, mins, maxs );
+		gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+		touchdown = CL_AimAssistLanding( entity, motion, gravity, flight, mins, maxs, NULL );
+		if ( touchdown >= 0.0f && flight > 0.4f ) {
+			grade--;			// its feet are back down before the shot arrives
+		} else if ( touchdown < 0.0f && flight > 0.8f ) {
+			grade++;			// a solved parabola the whole way
+		}
+	}
+
+	return grade < 0 ? 0 : grade > 3 ? 3 : grade;
+}
+
+
+/*
+=================
 CL_AimAssistImpact
 
 The point on the target the shot is meant to reach. A splash weapon at a
@@ -2512,6 +2558,15 @@ static void CL_AimAssistPriorities( void ) {
 
 
 static int	aimAssistTarget = -1;		// who the assist steered at last frame
+
+// The flight of the shot the steer just worked out, for the countdown drawn
+// over the bot. Seconds, as everything inside this file is; only the record
+// multiplies by a thousand when it prints. Minus one means there is nothing to
+// say, and the frame stamp keeps a stale number from being shown after the
+// steer has stopped running.
+static float	aimFlightTime = -1.0f;
+static int		aimFlightGrade;			// nought worst, three best
+static int		aimFlightFrame = -1;
 static int	aimAttacker = -1;			// the bot that last hurt us, if any
 static int	aimAttackerTime;			// server time it did
 static int	aimShotTarget = -1;			// who the last shot was aimed at
@@ -2687,6 +2742,31 @@ qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float 
 	*health = aimWoundHealth[clientNum];
 	*armor = aimWoundArmor[clientNum];
 	*freshness = left;
+	return qtrue;
+}
+
+
+/*
+=================
+CL_AimAssistShotFlight
+
+How long the shot in hand would take to reach the bot the assist is steering
+at, and what the record thinks of that shot.
+
+Nothing to say unless the assist is really steering, the weapon really throws
+something, and the answer was worked out this very frame. The frame stamp is
+safe because the command is built before the screen is drawn and the counter
+only moves at the end of both.
+=================
+*/
+qboolean CL_AimAssistShotFlight( int clientNum, float *seconds, int *grade ) {
+	if ( clientNum < 0 || clientNum != aimAssistTarget
+		|| aimFlightTime < 0.0f || aimFlightFrame != cls.framecount ) {
+		return qfalse;
+	}
+
+	*seconds = aimFlightTime;
+	*grade = aimFlightGrade;
 	return qtrue;
 }
 
@@ -3832,6 +3912,12 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	int				i, key, localTeam, weapon, hold;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
 
+	// Cleared here rather than at each way out. There are six of them, and two
+	// leave after the target has already been recorded - so anything keyed on
+	// the target alone would go on showing last frame's number while you stand
+	// on top of a bot.
+	aimFlightTime = -1.0f;
+
 	if ( clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
 		 clc.netchan.remoteAddress.type != NA_LOOPBACK ||
 		 cl.snap.ps.pm_type == PM_INTERMISSION || cl.snap.ps.pm_type == PM_DEAD ||
@@ -4013,6 +4099,15 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		return;
 	}
 	CL_AimAssistSkip( -1, weapon );			// steering again
+
+	// Past both ways out, so this only runs when the view is really being
+	// moved. Only a weapon that throws something has a flight worth counting
+	// down, and that is decided here rather than in the drawing.
+	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f ) {
+		aimFlightTime = flight;
+		aimFlightGrade = CL_AimAssistShotGrade( entity, weapon, flight );
+		aimFlightFrame = cls.framecount;
+	}
 	vectoangles( direction, desired );
 	desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
 	desired[YAW] -= SHORT2ANGLE( cl.snap.ps.delta_angles[YAW] );

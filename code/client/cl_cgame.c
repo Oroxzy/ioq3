@@ -76,6 +76,7 @@ typedef struct {
 	int		respawn;		// seconds it stays away
 	int		item;			// which entry of the item list it is, for its colour
 	float	x, y;			// where its label goes on the screen
+	float	alpha;			// how strongly it is drawn, by how far away it is
 	int		labelFrame;		// the frame that label was worked out for
 	char	label[8];
 } itemTimer_t;
@@ -1407,29 +1408,66 @@ static void CL_BotDamageColour( int health, float fresh, qboolean seen, byte *ou
 }
 
 
-// What a bot had left, ready to be written once the world is on the screen
+// What a bot had left and how long a shot would take to reach it, ready to be
+// written once the world is on the screen. Both live on one entry so the two
+// lines share an anchor and can never end up projected differently.
 typedef struct {
 	float	x, y;
 	byte	colour[3];
-	char	text[12];
+	char	text[12];			// what it had left, empty when nobody knows
+	byte	flightColour[3];
+	char	flight[8];			// seconds until the shot arrives, empty when not steered at
 } botLabel_t;
 
 static botLabel_t	botLabel[MAX_CLIENTS];
 static int			botLabels;
 
+// The same four shades the item clocks wear, so red already means the same
+// thing on this screen: what the record thinks of this shot.
+static void CL_AimFlightColour( int grade, byte *out ) {
+	static const byte	shade[4][3] = {
+		{ 255,  64,  64 },			// nothing comes of this
+		{ 255, 140,  38 },
+		{ 255, 230,  64 },
+		{  90, 255, 102 },			// worth the rocket
+	};
+	int	i = grade < 0 ? 0 : grade > 3 ? 3 : grade;
+
+	out[0] = shade[i][0];
+	out[1] = shade[i][1];
+	out[2] = shade[i][2];
+}
+
 static void CL_DrawBotLabels( void ) {
 	vec4_t	tint;
+	float	px, py;
 	int		i;
 
 	for ( i = 0; i < botLabels; i++ ) {
-		tint[0] = botLabel[i].colour[0] / 255.0f;
-		tint[1] = botLabel[i].colour[1] / 255.0f;
-		tint[2] = botLabel[i].colour[2] / 255.0f;
+		px = botLabel[i].x * 640.0f / cls.glconfig.vidWidth;
+		py = botLabel[i].y * 480.0f / cls.glconfig.vidHeight;
 		tint[3] = 1.0f;
-		SCR_DrawStringExt(
-			(int)( botLabel[i].x * 640.0f / cls.glconfig.vidWidth - strlen( botLabel[i].text ) * 5.0f ),
-			(int)( botLabel[i].y * 480.0f / cls.glconfig.vidHeight - 10.0f ),
-			10.0f, botLabel[i].text, tint, qtrue, qfalse );
+
+		if ( botLabel[i].text[0] ) {
+			tint[0] = botLabel[i].colour[0] / 255.0f;
+			tint[1] = botLabel[i].colour[1] / 255.0f;
+			tint[2] = botLabel[i].colour[2] / 255.0f;
+			SCR_DrawStringExt( (int)( px - strlen( botLabel[i].text ) * 5.0f ),
+				(int)( py - 10.0f ), 10.0f, botLabel[i].text, tint, qtrue, qfalse );
+		}
+
+		// One line higher when a health number sits under it, on the head when
+		// it does not. The gap is counted in screen pixels and not in world
+		// units: a world offset shrinks with distance, and the two lines would
+		// run into each other at exactly the range a rocket is worth leading at.
+		if ( botLabel[i].flight[0] ) {
+			tint[0] = botLabel[i].flightColour[0] / 255.0f;
+			tint[1] = botLabel[i].flightColour[1] / 255.0f;
+			tint[2] = botLabel[i].flightColour[2] / 255.0f;
+			SCR_DrawStringExt( (int)( px - strlen( botLabel[i].flight ) * 6.0f ),
+				(int)( py - 12.0f - ( botLabel[i].text[0] ? 13.0f : 0.0f ) ),
+				12.0f, botLabel[i].flight, tint, qtrue, qfalse );
+		}
 	}
 	botLabels = 0;
 }
@@ -1445,9 +1483,9 @@ static void CL_AddBotOutlines( void ) {
 	byte				shade[4];
 	trace_t				trace;
 	vec3_t				origin, corner[8], near[8], eye, label;
-	qboolean			ahead, seen;
-	float				top, fresh, x, y;
-	int					i, j, health = -1, armor = 0;
+	qboolean			ahead, seen, wantHealth, wantFlight;
+	float				top, fresh, x, y, flightSeconds = 0.0f;
+	int					i, j, health = -1, armor = 0, flightGrade = 0;
 
 	if ( !cl_botOutline->integer || clc.state != CA_ACTIVE || clc.demoplaying
 		|| clc.netchan.remoteAddress.type != NA_LOOPBACK || !cl.snap.valid ) {
@@ -1511,17 +1549,33 @@ static void CL_AddBotOutlines( void ) {
 		// The numbers are flat on the screen, and everything flat has to wait
 		// until the world has been painted or the world paints over it. So
 		// they are only worked out here and drawn later, with the item clocks.
-		if ( health >= 0 && cl_botOutline->integer > 1 && botLabels < MAX_CLIENTS ) {
+		// The countdown needs no setting of its own. There is one steered
+		// target at a time, it only appears while the aim key is held, and
+		// only for a weapon that throws something - so there is nothing there
+		// to switch off.
+		wantHealth = health >= 0 && cl_botOutline->integer > 1;
+		wantFlight = CL_AimAssistShotFlight( entity->clientNum, &flightSeconds, &flightGrade );
+
+		if ( ( wantHealth || wantFlight ) && botLabels < MAX_CLIENTS ) {
 			VectorCopy( origin, label );
 			label[2] += top + 14.0f;
 			if ( CL_ProjectToScreen( label, &x, &y ) ) {
-				Com_sprintf( botLabel[botLabels].text, sizeof( botLabel[0].text ),
-					armor > 0 ? "%i+%i" : "%i", health, armor );
+				botLabel[botLabels].text[0] = '\0';
+				botLabel[botLabels].flight[0] = '\0';
+				if ( wantHealth ) {
+					Com_sprintf( botLabel[botLabels].text, sizeof( botLabel[0].text ),
+						armor > 0 ? "%i+%i" : "%i", health, armor );
+					botLabel[botLabels].colour[0] = colour[0];
+					botLabel[botLabels].colour[1] = colour[1];
+					botLabel[botLabels].colour[2] = colour[2];
+				}
+				if ( wantFlight ) {
+					Com_sprintf( botLabel[botLabels].flight, sizeof( botLabel[0].flight ),
+						"%.1fs", Com_Clamp( 0.0f, 9.9f, flightSeconds ) );
+					CL_AimFlightColour( flightGrade, botLabel[botLabels].flightColour );
+				}
 				botLabel[botLabels].x = x;
 				botLabel[botLabels].y = y;
-				botLabel[botLabels].colour[0] = colour[0];
-				botLabel[botLabels].colour[1] = colour[1];
-				botLabel[botLabels].colour[2] = colour[2];
 				botLabels++;
 			}
 		}
@@ -1662,6 +1716,7 @@ static void CL_AddItemOutlines( void ) {
 	byte				colour[4];
 	vec3_t				corner[8], near[8], top;
 	qboolean			ahead;
+	float				alpha;
 	int					i, j, respawn, left, vanished = 0;
 
 	itemFrame++;
@@ -1729,6 +1784,30 @@ static void CL_AddItemOutlines( void ) {
 			left = 0;
 		}
 
+		// Far away things go quiet. The eye is the one this frame is really
+		// drawn from, and the place is remembered even while the item is gone,
+		// so a clock keeps fading properly over an empty spot. Full strength
+		// through the near half and then away quickly, reaching nothing exactly
+		// at the range so that nothing pops out of existence.
+		alpha = 1.0f;
+		if ( cl_itemOutlineRange->value > 0.0f ) {
+			float	range = cl_itemOutlineRange->value;
+			float	away = Distance( botOutlineView.vieworg, timer->origin );
+			float	half = range * 0.5f, t;
+
+			if ( away >= range ) {
+				continue;					// too far to be worth the room
+			}
+			if ( away > half ) {
+				t = ( away - half ) / ( range - half );
+				alpha = 1.0f - t * t;
+				if ( alpha < 0.05f ) {
+					continue;				// too faint to see, not too faint to cost twelve edges
+				}
+			}
+		}
+		timer->alpha = alpha;
+
 		for ( j = 0; j < 8; j++ ) {
 			corner[j][0] = timer->origin[0] + ( ( j & 1 ) ? maxs[0] : mins[0] );
 			corner[j][1] = timer->origin[1] + ( ( j & 2 ) ? maxs[1] : mins[1] );
@@ -1744,6 +1823,10 @@ static void CL_AddItemOutlines( void ) {
 		}
 
 		CL_ItemOutlineColour( &bg_itemlist[timer->item], timer->taken != 0, colour );
+		// after the colour, which sets the alpha to full itself. The box fades
+		// with its number because they are one thing: dimming only the number
+		// would leave the clutter and take away the information.
+		colour[3] = (byte)( 255.0f * alpha );
 		CL_BotOutlineWireBox( near, colour );
 
 		if ( !timer->taken ) {
@@ -1822,6 +1905,7 @@ static void CL_DrawItemTimers( void ) {
 		y = timer->y * 480.0f / cls.glconfig.vidHeight;
 
 		CL_ItemTimerColour( atoi( timer->label ), colour );
+		colour[3] = timer->alpha;		// the number fades with its box
 		SCR_DrawStringExt( (int)( x - strlen( timer->label ) * size * 0.5f ),
 			(int)( y - size ), size, timer->label, colour, qtrue, qfalse );
 	}

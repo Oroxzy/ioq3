@@ -55,6 +55,13 @@ public class MainForm : Form, IMessageFilter {
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
 	readonly CheckBox itemOutline = new() { Text = "Waffen und Powerups mit Respawn-Zeit", Checked = true, AutoSize = true };
 	readonly CheckBox itemOutlineAll = new() { Text = "auch Rüstung und Mega", Checked = true, AutoSize = true };
+	// Wie weit die Kästen und ihre Zähler zu sehen sind. Voll bis zur Hälfte
+	// dieser Strecke, dann rasch weg, damit die Karte nicht zugestellt ist.
+	readonly TrackBar itemRange = new() {
+		Minimum = 0, Maximum = 4000, Value = 1500, TickFrequency = 500,
+		SmallChange = 50, LargeChange = 250, Width = 220,
+	};
+	readonly Label itemRangeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	readonly TextBox aimKey = new() {
 		Text = "MOUSE4", Width = 110, ReadOnly = true,
 		BackColor = SystemColors.Window, Cursor = Cursors.Hand,
@@ -305,9 +312,11 @@ public class MainForm : Form, IMessageFilter {
 		aimKey.Click += ( _, _ ) => BeginAimKeyCapture();
 		aimAssist.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		aimLearn.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
-		itemOutline.CheckedChanged += ( _, _ ) => itemOutlineAll.Enabled = itemOutline.Checked;
+		itemOutline.CheckedChanged += ( _, _ ) => UpdateItemEnabled();
+		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
 		// die Folge-Felder auf den Standard-Hakenstand bringen
-		itemOutlineAll.Enabled = itemOutline.Checked;
+		UpdateItemEnabled();
+		ShowItemRange();
 		UpdateAimEnabled();
 
 		// das eigene Icon der App, auch in der Titelleiste und der Taskleiste
@@ -738,11 +747,25 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	// Was zu sehen ist - mit dem Zielen hat das nichts zu tun
+	void UpdateItemEnabled() {
+		itemOutlineAll.Enabled = itemOutline.Checked;
+		itemRange.Enabled = itemOutline.Checked;
+		itemRangeValue.Enabled = itemOutline.Checked;
+	}
+
+	void ShowItemRange() {
+		itemRangeValue.Text = itemRange.Value == 0 ? "immer voll sichtbar"
+			: $"voll bis {itemRange.Value / 2}, weg ab {itemRange.Value} Einheiten";
+	}
+
 	GroupBox BuildViewBox() {
 		return Group( "Anzeige",
 			Row( Pad( botOutline ), Pad( botDamage ) ),
 			Row( Pad( itemOutline ) ),
-			Row( Pad( itemOutlineAll ) ) );
+			Row( Pad( itemOutlineAll ) ),
+			Row( Labelled( "Sichtweite:", itemRange ), Pad( itemRangeValue ) ),
+			Row( Hint( "Weiter entfernte Gegenstände werden blasser und verschwinden ganz." ) ),
+			Row( Hint( "Bei Geschossen steht über dem Gegner, wie lange der Schuss bis dorthin braucht." ) ) );
 	}
 
 	static Label Hint( string text ) => new() {
@@ -1111,6 +1134,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botDamage=" + botDamage.Checked );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
 		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
+		s.AppendLine( "itemRange=" + itemRange.Value );
 
 		try {
 			Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath )! );
@@ -1170,10 +1194,20 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botDamage, v, "botDamage" );
 		SetBool( itemOutline, v, "itemOutline" );
 		SetBool( itemOutlineAll, v, "itemOutlineAll" );
+		SetBar( itemRange, v, "itemRange" );
 	}
 
 	static void SetBool( CheckBox box, Dictionary<string, string> v, string key ) {
 		if ( v.TryGetValue( key, out var s ) && bool.TryParse( s, out bool b ) ) box.Checked = b;
+	}
+
+	// SetNum nimmt nur NumericUpDown, und dessen Wert ist decimal - ein
+	// Schieber braucht einen eigenen. Das Begrenzen ist nicht Zierde: ein von
+	// Hand geaenderter Wert ausserhalb des Bereichs wirft beim Setzen.
+	static void SetBar( TrackBar bar, Dictionary<string, string> v, string key ) {
+		if ( v.TryGetValue( key, out var s ) && int.TryParse( s, out int i ) ) {
+			bar.Value = Math.Clamp( i, bar.Minimum, bar.Maximum );
+		}
 	}
 
 	static void SetNum( NumericUpDown box, Dictionary<string, string> v, string key ) {
@@ -1198,6 +1232,11 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( "seta g_hitSoundDebug 1" );
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
 		cfg.AppendLine( $"seta cl_itemOutline {( itemOutline.Checked ? ( itemOutlineAll.Checked ? 2 : 1 ) : 0 )}" );
+		// immer geschrieben, auch bei abgeschalteten Kaesten: die Variable wird
+		// archiviert, und ein hier ausgelassener Wert liesse einen alten aus
+		// der q3config stehen - der Schieber wuerde dann etwas anderes zeigen,
+		// als das Spiel wirklich benutzt
+		cfg.AppendLine( $"seta cl_itemOutlineRange {itemRange.Value}" );
 		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? ( botDamage.Checked ? 2 : 1 ) : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );

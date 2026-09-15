@@ -439,9 +439,11 @@ void CL_AimAssistFlush( void );		// cl_input.c, marks the learned lead for q3con
 void CL_AimAssistTuneDump( void );	// cl_input.c, prints the measured table
 qboolean CL_AimAssistCrouched( const entityState_t *entity );	// cl_input.c, records impacts for the test bench
 qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float *freshness );
+qboolean CL_AimAssistShotFlight( int clientNum, float *seconds, int *grade );	// cl_input.c, the flight of the shot being steered
 extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;
 extern	cvar_t	*cl_itemOutline;
+extern	cvar_t	*cl_itemOutlineRange;
 
 extern	cvar_t	*cl_hitPitch;
 extern	cvar_t	*cl_hitPitchFull;
