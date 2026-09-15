@@ -321,10 +321,18 @@ public class MainForm : Form, IMessageFilter {
 		rankView.Columns.Add( "Quote", 260 );
 		rankView.Columns.Add( "Fehlweite ø", 90, HorizontalAlignment.Right );
 
-		prioView.Columns.Add( "Kriterium", 190 );
-		prioView.Columns.Add( "Gewicht", 70, HorizontalAlignment.Right );
-		prioView.Columns.Add( "gilt", 70, HorizontalAlignment.Right );
-		prioView.Columns.Add( "was es bewirkt", 400 );
+		// Eine schmale erste Spalte nur fuer das Zeichen, dass diese Zeile von
+		// der Standardliste abweicht - so stehen die Namen darunter buendig,
+		// statt um zwei Zeichen zu verrutschen.
+		prioView.Columns.Add( "", 26, HorizontalAlignment.Center );
+		prioView.Columns.Add( "Kriterium", 180 );
+		prioView.Columns.Add( "Gewicht", 60, HorizontalAlignment.Right );
+		prioView.Columns.Add( "", 96 );
+		prioView.Columns.Add( "gilt", 60, HorizontalAlignment.Right );
+		prioView.Columns.Add( "was es bewirkt", 380 );
+		// Zeilen etwas hoeher: eine unsichtbare Bildliste ist der einzige Weg,
+		// die Zeilenhoehe einer ListView zu setzen
+		prioView.SmallImageList = new ImageList { ImageSize = new Size( 1, 22 ) };
 		for ( int i = 0; i < Priorities.Length; i++ ) {
 			prioWeight[Priorities[i].Key] = PriorityDefault[i];
 			prioTime[Priorities[i].Key] = Priorities[i].Life;
@@ -367,6 +375,28 @@ public class MainForm : Form, IMessageFilter {
 			FillPriorities( key );
 		};
 
+		// Mit der Tastatur: Plus und Minus verstellen das Gewicht der
+		// gewaehlten Zeile um fuenf, Bild-auf und Bild-ab schieben sie in der
+		// Reihenfolge. Fuer eine Feinabstimmung ist das schneller, als fuer
+		// jede Zahl zum Schieber zu greifen.
+		prioView.KeyDown += ( _, e ) => {
+			if ( prioView.SelectedItems.Count == 0 ) return;
+			var key = (string)prioView.SelectedItems[0].Tag!;
+			int step = e.KeyCode switch {
+				Keys.Add or Keys.Oemplus => 5,
+				Keys.Subtract or Keys.OemMinus => -5,
+				_ => 0,
+			};
+			if ( step != 0 ) {
+				SetWeight( key, Math.Clamp( Weight( key ) + step, 0, 100 ) );
+				FillPriorities( key );
+				e.Handled = e.SuppressKeyPress = true;
+				return;
+			}
+			if ( e.KeyCode == Keys.PageUp ) { MovePriority( -1 ); e.Handled = e.SuppressKeyPress = true; }
+			else if ( e.KeyCode == Keys.PageDown ) { MovePriority( 1 ); e.Handled = e.SuppressKeyPress = true; }
+		};
+
 		prioWeapon.Items.Add( "Standard (alle Waffen)" );
 		foreach ( var w in Weapons ) prioWeapon.Items.Add( w.Name );
 		prioWeapon.SelectedIndex = 0;
@@ -407,7 +437,14 @@ public class MainForm : Form, IMessageFilter {
 
 		Controls.Add( BuildLayout() );
 		Application.AddMessageFilter( this );
-		foreach ( var view in new[] { shotView, tuneView, rankView, prioView } ) FitOnResize( view );
+		// Die eingestellte Breite ist zugleich das Gewicht, nach dem beim
+		// Vergroessern verteilt wird. Ohne dieses Merken nimmt FitColumns die
+		// jeweils aktuelle Breite als Gewicht, und die Verhaeltnisse wandern
+		// bei jedem Ziehen am Fenster ein Stueck weiter.
+		foreach ( var view in new[] { shotView, tuneView, rankView, prioView } ) {
+			foreach ( ColumnHeader c in view.Columns ) c.Tag = c.Width;
+			FitOnResize( view );
+		}
 		FillPriorities();			// erst wenn die Liste im Fenster haengt
 		LoadSettings();
 		poll.Start();
@@ -752,10 +789,12 @@ public class MainForm : Form, IMessageFilter {
 			int weight = Weight( p.Key );
 			// Ein Pfeil sagt, dass diese Zeile von der Standardliste abweicht,
 			// damit auf einen Blick klar ist, was fuer diese Waffe eigens gilt
-			var row = new ListViewItem( ( Differs( p.Key ) ? "▸ " : "" ) + p.Name ) {
+			var row = new ListViewItem( Differs( p.Key ) ? "▸" : "" ) {
 				Tag = p.Key, Checked = weight > 0,
 			};
+			row.SubItems.Add( p.Name );
 			row.SubItems.Add( weight.ToString() );
+			row.SubItems.Add( WeightBar( weight ) );
 			row.SubItems.Add( IsTimed( p.Key ) ? Life( p.Key ).ToString( "0.0" ) + " s" : "—" );
 			row.SubItems.Add( Differs( p.Key )
 				? $"{p.Effect}  (Standard {prioWeight[p.Key]})" : p.Effect );
@@ -772,6 +811,14 @@ public class MainForm : Form, IMessageFilter {
 		prioView.EndUpdate();
 		prioUpdating = false;
 		ShowPrioritySelection();
+	}
+
+	// Das Gewicht als Balken: die Reihenfolge der Liste IST die Gewichtung,
+	// und ein Balken sagt auf einen Blick, wie weit die Abstaende sind - zwei
+	// Zeilen mit 80 und 70 stehen anders zueinander als 80 und 10.
+	static string WeightBar( int weight ) {
+		int full = Math.Clamp( ( weight + 5 ) / 10, 0, 10 );
+		return new string( '█', full ) + new string( '·', 10 - full );
 	}
 
 	// Nur die drei Regeln ueber etwas Geschehenes haben eine Gueltigkeit
