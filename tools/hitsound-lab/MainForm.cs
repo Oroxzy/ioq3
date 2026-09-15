@@ -59,7 +59,7 @@ public class MainForm : Form, IMessageFilter {
 	// dieser Strecke, dann rasch weg, damit die Karte nicht zugestellt ist.
 	readonly TrackBar itemRange = new() {
 		Minimum = 0, Maximum = 4000, Value = 1500, TickFrequency = 500,
-		SmallChange = 50, LargeChange = 250, Width = 220,
+		SmallChange = 50, LargeChange = 250, Width = 190,
 	};
 	readonly Label itemRangeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	readonly TextBox aimKey = new() {
@@ -98,8 +98,10 @@ public class MainForm : Form, IMessageFilter {
 	// Dieselbe Reihenfolge wie die Vorgabe von cl_autoSwitchEmptyOrder in
 	// code/client/cl_main.c, aus dem Gemessenen: Railgun 87 Prozent,
 	// Schrotflinte 78, Maschinengewehr 74, Rakete 45 - aber 85 auf kurze Sicht.
+	// Schmal genug fuer die linke Spalte: bei 420 lief das Feld aus der Gruppe
+	// heraus und der Text dahinter war abgeschnitten.
 	readonly TextBox autoSwitchOrder = new() {
-		Width = 420,
+		Width = 330,
 		Text = "railgun rocket lightning plasma shotgun machinegun grenade bfg gauntlet",
 	};
 
@@ -172,7 +174,7 @@ public class MainForm : Form, IMessageFilter {
 	};
 	readonly Dictionary<string, Dictionary<string, int>> weaponWeight = new();
 	readonly Dictionary<string, Dictionary<string, double>> weaponTime = new();
-	readonly ComboBox prioWeapon = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	readonly ComboBox prioWeapon = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 215 };
 	readonly Button prioReset = new() { Text = "wie Standard", Width = 110 };
 	// Eine cvar fasst 256 Zeichen. Laeuft die Liste der Abweichungen darueber,
 	// schneidet die Engine sie stillschweigend ab - also muss man es sehen.
@@ -239,13 +241,21 @@ public class MainForm : Form, IMessageFilter {
 	readonly Button prioUp = new() { Text = "▲ höher", Width = 90 };
 	readonly Button prioDown = new() { Text = "▼ tiefer", Width = 90 };
 	readonly TrackBar prioBar = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 200 };
-	readonly Label prioValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	// Feste Breiten: sonst wandert die halbe Zeile mit, sobald sich die Zahl
+	// von 9 auf 100 aendert oder aus "dauerhaft" "12.0 s" wird.
+	readonly Label prioValue = new() {
+		AutoSize = false, Width = 38, Height = 20, TextAlign = ContentAlignment.MiddleRight,
+		Font = new Font( "Segoe UI", 9, FontStyle.Bold ),
+	};
 	// in Zehntelsekunden, damit auch die Nachwirkung der Sichtlinie einstellbar
 	// ist - die liegt bei Bruchteilen einer Sekunde, nicht bei ganzen. Die
 	// Reichweite bleibt dieselbe wie zuvor in ganzen Sekunden, sonst wuerde
 	// ein geladener Wert darueber beim ersten Anfassen stillschweigend gekappt.
 	readonly TrackBar prioLifeBar = new() { Minimum = 0, Maximum = 600, TickFrequency = 100, Width = 160 };
-	readonly Label prioLifeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	readonly Label prioLifeValue = new() {
+		AutoSize = false, Width = 118, Height = 20, TextAlign = ContentAlignment.MiddleLeft,
+		ForeColor = Color.DimGray,
+	};
 	bool prioUpdating;
 	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
 	SplitContainer? splitMain;
@@ -362,7 +372,7 @@ public class MainForm : Form, IMessageFilter {
 		// Eine schmale erste Spalte nur fuer das Zeichen, dass diese Zeile von
 		// der Standardliste abweicht - so stehen die Namen darunter buendig,
 		// statt um zwei Zeichen zu verrutschen.
-		prioView.Columns.Add( "", 26, HorizontalAlignment.Center );
+		prioView.Columns.Add( "", 38, HorizontalAlignment.Center );
 		prioView.Columns.Add( "Kriterium", 180 );
 		prioView.Columns.Add( "Gewicht", 60, HorizontalAlignment.Right );
 		prioView.Columns.Add( "", 96 );
@@ -734,8 +744,8 @@ public class MainForm : Form, IMessageFilter {
 			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ),
 			Row( Pad( autoSwitch ) ),
 			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ),
-			Row( Hint( "Beste zuerst. Das Spiel selbst merkt es erst beim Klick auf die leere Waffe" ) ),
-			Row( Hint( "und greift dann von hinten, also zum Enterhaken." ) ) );
+			Row( Hint( "Beste zuerst. Ohne dies merkt es das Spiel erst beim" ) ),
+			Row( Hint( "Klick auf die leere Waffe und greift zum Enterhaken." ) ) );
 	}
 
 	// Wie weit vorgehalten wird
@@ -760,12 +770,16 @@ public class MainForm : Form, IMessageFilter {
 
 	GroupBox BuildViewBox() {
 		return Group( "Anzeige",
-			Row( Pad( botOutline ), Pad( botDamage ) ),
+			// eigene Zeilen: nebeneinander lief die zweite aus der Gruppe heraus
+			Row( Pad( botOutline ) ),
+			Row( Pad( botDamage ) ),
 			Row( Pad( itemOutline ) ),
 			Row( Pad( itemOutlineAll ) ),
-			Row( Labelled( "Sichtweite:", itemRange ), Pad( itemRangeValue ) ),
-			Row( Hint( "Weiter entfernte Gegenstände werden blasser und verschwinden ganz." ) ),
-			Row( Hint( "Bei Geschossen steht über dem Gegner, wie lange der Schuss bis dorthin braucht." ) ) );
+			Row( Labelled( "Sichtweite:", itemRange ) ),
+			Row( Pad( itemRangeValue ) ),
+			Row( Hint( "Ferne Gegenstände werden blasser und verschwinden ganz." ) ),
+			Row( Hint( "Über dem Gegner steht bei Geschossen die Zeit bis zum" ) ),
+			Row( Hint( "Einschlag, gefärbt danach, was der Schuss taugt." ) ) );
 	}
 
 	static Label Hint( string text ) => new() {
@@ -807,7 +821,14 @@ public class MainForm : Form, IMessageFilter {
 		return flow;
 	}
 
-	static Control Row( params Control[] items ) {
+	// Ein senkrechter Strich, der zusammengehoerige Bedienelemente trennt.
+	// Billiger und ruhiger als jede Gruppenbox in einer Werkzeugzeile.
+	static Control Divider() => new Label {
+		AutoSize = false, Width = 1, Height = 24, BorderStyle = BorderStyle.Fixed3D,
+		Margin = new Padding( 6, 4, 10, 0 ),
+	};
+
+	static FlowLayoutPanel Row( params Control[] items ) {
 		var flow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false };
 		flow.Controls.AddRange( items );
 		return flow;
@@ -831,23 +852,44 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Rangliste",
 			Row( Counter( "beste Waffe:", statBestWeapon ) ),
 			rankView ) );
-		// Eigene Karteikarte statt Page(): die Bedienzeile bekommt eine feste
-		// Hoehe, sonst nimmt sie sich mit dem Schieber darin den ganzen Platz
-		// und die Liste bleibt einen Pixel hoch
+		// Eigene Karteikarte statt Page(): die Bedienung bekommt eine feste
+		// Hoehe, sonst nimmt sie sich mit den Schiebern darin den ganzen Platz
+		// und die Liste bleibt einen Pixel hoch.
+		//
+		// Zwei Zeilen statt einer, weil es zwei Fragen sind: oben WEN die
+		// Liste betrifft, unten WAS an der gewaehlten Zeile verstellt wird.
+		// In einer Reihe stand die Waffenauswahl neben dem Gewichtsschieber,
+		// und dazwischen schwebte eine Meldung wie ein Fehler.
 		var prioPage = new TabPage( "Vorrang" ) { Padding = new Padding( 10 ), BackColor = SystemColors.Control };
-		var prioGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-		prioGrid.RowStyles.Add( new RowStyle( SizeType.Absolute, 56 ) );
+		var prioGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+		prioGrid.RowStyles.Add( new RowStyle( SizeType.Absolute, 40 ) );
+		prioGrid.RowStyles.Add( new RowStyle( SizeType.Absolute, 46 ) );
 		prioGrid.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
 		prioGrid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
-		prioGrid.Controls.Add( Row(
-			Pad( new Label { Text = "für:", AutoSize = true, Margin = new Padding( 0, 10, 4, 0 ) } ),
-			Pad( prioWeapon ), Pad( prioReset ), Pad( prioWarn ),
+
+		var prioWho = Row(
+			Pad( new Label { Text = "Liste für:", AutoSize = true, Margin = new Padding( 0, 7, 6, 0 ) } ),
+			Pad( prioWeapon ), Pad( prioReset ), Pad( prioWarn ) );
+		prioWho.AutoSize = false;			// sonst streitet sich AutoSize mit Dock
+		prioWho.Dock = DockStyle.Fill;
+		prioWho.BackColor = Color.FromArgb( 244, 245, 248 );
+		prioWho.Padding = new Padding( 8, 2, 8, 2 );
+
+		var prioWhat = Row(
 			Pad( prioUp ), Pad( prioDown ),
-			Pad( new Label { Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
+			Pad( Divider() ),
+			Pad( new Label { Text = "Gewicht", AutoSize = true, Margin = new Padding( 0, 7, 6, 0 ) } ),
 			Pad( prioBar ), Pad( prioValue ),
-			Pad( new Label { Text = "gilt (s):", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
-			Pad( prioLifeBar ), Pad( prioLifeValue ) ), 0, 0 );
-		prioGrid.Controls.Add( prioView, 0, 1 );
+			Pad( Divider() ),
+			Pad( new Label { Text = "gilt", AutoSize = true, Margin = new Padding( 0, 7, 6, 0 ) } ),
+			Pad( prioLifeBar ), Pad( prioLifeValue ) );
+		prioWhat.AutoSize = false;
+		prioWhat.Dock = DockStyle.Fill;
+		prioWhat.Padding = new Padding( 8, 4, 8, 0 );
+
+		prioGrid.Controls.Add( prioWho, 0, 0 );
+		prioGrid.Controls.Add( prioWhat, 0, 1 );
+		prioGrid.Controls.Add( prioView, 0, 2 );
 		prioPage.Controls.Add( prioGrid );
 		tabs.TabPages.Add( prioPage );
 		return tabs;
@@ -905,12 +947,19 @@ public class MainForm : Form, IMessageFilter {
 		Array.Find( Priorities, p => p.Key == key ).Life > 0;
 
 	void ShowPrioritySelection() {
+		// Die Zahl bleibt eine Zahl: der Hinweis, dass nichts gewaehlt ist,
+		// gehoert in das breite Feld daneben, nicht in das schmale fuer das
+		// Gewicht, wo er auf drei Zeichen abgeschnitten wuerde.
 		if ( prioView.SelectedItems.Count == 0 ) {
-			prioValue.Text = "(Zeile wählen)";
-			prioLifeValue.Text = "";
+			prioValue.Text = "–";
+			prioLifeValue.Text = "Zeile wählen";
+			prioBar.Enabled = false;
 			prioLifeBar.Enabled = false;
+			prioUp.Enabled = prioDown.Enabled = false;
 			return;
 		}
+		prioBar.Enabled = true;
+		prioUp.Enabled = prioDown.Enabled = true;
 
 		var key = (string)prioView.SelectedItems[0].Tag!;
 		bool timed = IsTimed( key );
