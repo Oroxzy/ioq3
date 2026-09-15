@@ -122,6 +122,10 @@ public class MainForm : Form, IMessageFilter {
 		( "machinegun", "Maschinengewehr" ),
 		( "bfg",        "BFG" ),
 		( "gauntlet",   "Gauntlet" ),
+		// Der Enterhaken gehoert dazu, weil die Engine ihn kennt: eine von
+		// Hand geschriebene Abweichung dafuer wuerde sonst beim ersten
+		// Speichern stillschweigend verschwinden.
+		( "hook",       "Enterhaken" ),
 	};
 	// Was die Engine von Haus aus anders haelt, aus dem Gemessenen: ein Schuss
 	// mit Flugzeit verliert mit der Entfernung, einer ohne kaum. Muss zur
@@ -161,9 +165,20 @@ public class MainForm : Form, IMessageFilter {
 			|| ( weaponTime.TryGetValue( w, out var b ) && b.ContainsKey( key ) );
 	}
 
+	// Ein Wert, der dem Standard gleicht, ist keine Abweichung und darf auch
+	// keine werden. Sonst legt schon ein Verschieben der Reihenfolge beim
+	// Nachbarn einen Eintrag an, der nichts aendert, aber als abweichend
+	// angezeigt und in die Zeichenkette geschrieben wird.
 	void SetWeight( string key, int value ) {
 		var w = CurWeapon;
 		if ( w is null ) { prioWeight[key] = value; return; }
+		if ( value == prioWeight[key] ) {
+			if ( weaponWeight.TryGetValue( w, out var had ) ) {
+				had.Remove( key );
+				if ( had.Count == 0 ) weaponWeight.Remove( w );
+			}
+			return;
+		}
 		if ( !weaponWeight.TryGetValue( w, out var over ) ) weaponWeight[w] = over = new();
 		over[key] = value;
 	}
@@ -171,6 +186,13 @@ public class MainForm : Form, IMessageFilter {
 	void SetLife( string key, double value ) {
 		var w = CurWeapon;
 		if ( w is null ) { prioTime[key] = value; return; }
+		if ( value == prioTime[key] ) {
+			if ( weaponTime.TryGetValue( w, out var had ) ) {
+				had.Remove( key );
+				if ( had.Count == 0 ) weaponTime.Remove( w );
+			}
+			return;
+		}
 		if ( !weaponTime.TryGetValue( w, out var over ) ) weaponTime[w] = over = new();
 		over[key] = value;
 	}
@@ -1417,7 +1439,12 @@ public class MainForm : Form, IMessageFilter {
 						break;
 					// Wann die Fuesse des Ziels wieder aufkommen sollten, in ms,
 					// oder -1 wenn es beim Einschlag noch in der Luft ist.
-					case "land": int.TryParse( f[i + 1], out shot.Land ); break;
+					// nur bei Erfolg zuweisen: TryParse schreibt sonst eine Null
+					// in den Ausgabewert und macht aus "keine Landung" ein
+					// "landet sofort"
+					case "land":
+						if ( int.TryParse( f[i + 1], out int land ) ) shot.Land = land;
+						break;
 					case "at":
 						if ( i + 3 < f.Length ) shot.Position = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
 						break;

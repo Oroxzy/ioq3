@@ -1367,6 +1367,15 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	// the game gives it no friction and next to no steering - so its whole
 	// course is kept, the rise and the fall included. Swimming and flying can
 	// turn, and are damped like running.
+	//
+	// Two of those three do nothing for a landing target, and it is worth
+	// saying so rather than letting the call list imply otherwise. The turn
+	// damping is measured by comparing two snapshots' velocities, and a target
+	// in the air has no turn to measure, so it answers one whatever is asked.
+	// The learned factor is read at the band of the leftover time, but no
+	// airborne shot ever teaches that table - those samples are dropped on
+	// purpose - so it answers with the prior. What actually shortens the guess
+	// is the hold time, and that is the one that should.
 	if ( fall >= 0.0f ) {
 		rest = time - fall;
 		sideways = fall + CL_AimAssistSideways( rest ) * CL_AimAssistTrust( entity, rest )
@@ -1488,8 +1497,15 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	if ( blocked ) {
 		*blocked = stopped;
 	}
+	// A guess that comes down on its floor within the flight is pinned there
+	// just as surely as one the floor trace set down, and it matters that the
+	// caller hears so: the smoothing correction asks this before deciding how
+	// fast the point is moving upward, and a landing point is not moving at
+	// all. Without it a jumping target made the aim bob by up to ninety units
+	// between shots, because the correction went on treating a point that had
+	// already settled as one still falling.
 	if ( pinned ) {
-		*pinned = snapped;
+		*pinned = snapped || fall >= 0.0f;
 	}
 }
 
@@ -1516,17 +1532,23 @@ static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t moti
 		float gravity, float limit, vec3_t mins, vec3_t maxs, float *floorOut ) {
 	vec3_t		from, to;
 	trace_t		trace;
-	float		fall, drop, root, floor;
+	float		fall, drop, root, floor, answer, best;
 	int			i;
 
 	if ( gravity <= 0.0f || limit <= 0.0f ) {
 		return -1.0f;
 	}
 
-	fall = limit;
-	floor = entity->pos.trBase[2];
+	// The first probe goes straight down from where the target is now, not out
+	// at the far end of the flight. Probing at the far end asks about ground
+	// the target may never reach: a bot hopping a gap was asked about the pit
+	// it was jumping over, came back with a fall of three seconds, and the
+	// whole model was abandoned for exactly the shot it was written for.
+	answer = -1.0f;
+	best = 0.0f;
+	fall = 0.0f;
 
-	for ( i = 0; i < 2; i++ ) {
+	for ( i = 0; i < 3; i++ ) {
 		from[0] = entity->pos.trBase[0] + motion[0] * fall;
 		from[1] = entity->pos.trBase[1] + motion[1] * fall;
 		// looked for from the height it set out at, so the trace never starts
@@ -1536,26 +1558,29 @@ static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t moti
 		to[2] -= 8192.0f;
 		CM_BoxTrace( &trace, from, to, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
 		if ( trace.startsolid || trace.allsolid || trace.fraction >= 1.0f ) {
-			return -1.0f;			// nothing under the arc to come down on
+			break;					// no ground under that point; keep what stands
 		}
 		floor = trace.endpos[2];
 
 		// half g t squared less the climb, solved for the moment it arrives
 		drop = entity->pos.trBase[2] - floor;
 		root = motion[2] * motion[2] + 2.0f * gravity * drop;
-		if ( root < 0.0f ) {
-			return -1.0f;			// never falls that far in the first place
-		}
 		fall = ( motion[2] + sqrt( root ) ) / gravity;
 		if ( fall <= 0.0f || fall >= limit ) {
-			return -1.0f;			// still in the air when the shot arrives
+			break;					// still in the air when the shot arrives
 		}
+
+		// A landing found is kept. A later pass may refine where it happens,
+		// but if the refined probe finds nothing this answer still stands -
+		// giving up on the second look would be worse than the first look.
+		answer = fall;
+		best = floor;
 	}
 
-	if ( floorOut ) {
-		*floorOut = floor;
+	if ( answer >= 0.0f && floorOut ) {
+		*floorOut = best;
 	}
-	return fall;
+	return answer;
 }
 
 
@@ -2332,7 +2357,12 @@ static void CL_AimAssistPriorityDump( void ) {
 				Com_Printf( "aim prio: %s", CL_AimAssistWeaponName( weapon ) );
 				said = qtrue;
 			}
-			if ( aimPriorityLife[i] > 0.0f ) {
+			// The duration is shown whenever this weapon holds a different one,
+			// not only where the criterion has a clock by default: without
+			// that, a line that changed only the seconds printed exactly what
+			// the general list already said and looked like a typo.
+			if ( aimPriorityLife[i] > 0.0f
+				|| aimWeaponTime[weapon][i] != aimPriorityTime[i] ) {
 				Com_Printf( " %s %.0f for %.2fs", aimPriorityName[i],
 					aimWeaponWeight[weapon][i], aimWeaponTime[weapon][i] );
 			} else {
