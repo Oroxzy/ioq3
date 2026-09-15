@@ -123,10 +123,20 @@ public class MainForm : Form, IMessageFilter {
 		( "bfg",        "BFG" ),
 		( "gauntlet",   "Gauntlet" ),
 	};
+	// Was die Engine von Haus aus anders haelt, aus dem Gemessenen: ein Schuss
+	// mit Flugzeit verliert mit der Entfernung, einer ohne kaum. Muss zur
+	// Vorgabe von cl_aimAssistPriorityWeapon in code/client/cl_main.c passen.
+	static readonly (string Key, int Near)[] WeaponNearDefault = {
+		( "rocket", 70 ), ( "grenade", 85 ), ( "plasma", 60 ), ( "shotgun", 80 ),
+		( "lightning", 95 ), ( "railgun", 10 ), ( "machinegun", 25 ),
+	};
 	readonly Dictionary<string, Dictionary<string, int>> weaponWeight = new();
 	readonly Dictionary<string, Dictionary<string, double>> weaponTime = new();
 	readonly ComboBox prioWeapon = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
 	readonly Button prioReset = new() { Text = "wie Standard", Width = 110 };
+	// Eine cvar fasst 256 Zeichen. Laeuft die Liste der Abweichungen darueber,
+	// schneidet die Engine sie stillschweigend ab - also muss man es sehen.
+	readonly Label prioWarn = new() { AutoSize = true, ForeColor = Color.Firebrick };
 
 	// null = die Standardliste, sonst der Schluessel der gewaehlten Waffe
 	string? CurWeapon => prioWeapon.SelectedIndex <= 0 ? null
@@ -282,6 +292,14 @@ public class MainForm : Form, IMessageFilter {
 		for ( int i = 0; i < Priorities.Length; i++ ) {
 			prioWeight[Priorities[i].Key] = PriorityDefault[i];
 			prioTime[Priorities[i].Key] = Priorities[i].Life;
+		}
+		// Dieselben Abweichungen, die die Engine von sich aus mitbringt. Ohne
+		// sie wuerde ein Speichern ohne jede Aenderung eine leere Zeichenkette
+		// schreiben und damit genau die Vorgaben loeschen, die gemessen wurden.
+		foreach ( var w in Weapons ) {
+			int near = Array.FindIndex( WeaponNearDefault, x => x.Key == w.Key );
+			if ( near < 0 ) continue;
+			weaponWeight[w.Key] = new Dictionary<string, int> { ["near"] = WeaponNearDefault[near].Near };
 		}
 		prioUp.Click += ( _, _ ) => MovePriority( -1 );
 		prioDown.Click += ( _, _ ) => MovePriority( 1 );
@@ -664,7 +682,7 @@ public class MainForm : Form, IMessageFilter {
 		prioGrid.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
 		prioGrid.Controls.Add( Row(
 			Pad( new Label { Text = "für:", AutoSize = true, Margin = new Padding( 0, 10, 4, 0 ) } ),
-			Pad( prioWeapon ), Pad( prioReset ),
+			Pad( prioWeapon ), Pad( prioReset ), Pad( prioWarn ),
 			Pad( prioUp ), Pad( prioDown ),
 			Pad( new Label { Text = "Gewicht:", AutoSize = true, Margin = new Padding( 16, 10, 4, 0 ) } ),
 			Pad( prioBar ), Pad( prioValue ),
@@ -703,6 +721,9 @@ public class MainForm : Form, IMessageFilter {
 		}
 
 		prioReset.Enabled = CurWeapon is not null;
+		int room = WeaponPriorityString().Length;
+		prioWarn.Text = room > 255 ? $"zu lang: {room} von 255 Zeichen, die Engine kürzt"
+			: room > 200 ? $"{room} von 255 Zeichen" : "";
 		prioView.EndUpdate();
 		prioUpdating = false;
 		ShowPrioritySelection();

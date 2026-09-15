@@ -125,6 +125,10 @@ Gegner nehmen, eine ohne den, auf den das Fadenkreuz ohnehin zeigt.
 Nicht nur Gewichte lassen sich so trennen, auch die Dauern: `rocket.keep:30:2.5`
 heißt, dass die Rakete ihr Ziel nur 2,5 Sekunden lang bevorzugt behält.
 
+Eine Engine-Variable fasst 256 Zeichen. Das reicht für rund zwanzig
+Abweichungen, und wenn es eng wird, steht die Zahl neben dem Knopf. Wird es zu
+lang, schneidet die Engine stillschweigend ab — deshalb die Warnung.
+
 Drei Dinge sind dabei erwähnenswert, weil sie nicht selbstverständlich sind:
 
 *Freie Sichtlinie* hat als einzige Eigenschaft des Augenblicks eine Uhr, und
