@@ -77,9 +77,17 @@ toten Einstellung nicht zu unterscheiden.
 | --- | --- |
 | Trefferton | Schaden, Treffer, gespielte Töne, fehlende Töne, und das Protokoll |
 | Zielhilfe | jeden Schuss einzeln: Entfernung, Vorhalt, Ergebnis, Fehlweite und in welche Richtung er danebenging |
-| pro Waffe | was das Spiel über sich selbst gemessen hat: je Waffe und Flugzeit der Vorhalt-Faktor, die Streuung und ob der Schuss sicher, brauchbar oder eine Lotterie ist |
+| pro Waffe | was das Spiel über seinen **Vorhalt** gemessen hat: je Waffe und Flugzeit der Faktor, die Streuung und ob der Schuss sicher, brauchbar oder eine Lotterie ist |
 | Rangliste | welche Waffe wirklich trifft, mit Balken und mittlerer Fehlweite |
+| Trefferquote | welche Waffe auf welche **Entfernung** ankommt — eine Matrix, Waffe nach unten, fünf Entfernungsfächer nach rechts |
+| Korrekturen | jede einzelne Nachregelung: welches Fach, warum, und wohin sein Wert sich dadurch bewegt hat |
 | Vorrang | die Prioritätenliste der Zielwahl |
+
+Die beiden mittleren beantworten verschiedene Fragen und sind deshalb zwei.
+„pro Waffe" misst, **wie weit** vorgehalten werden muss; „Trefferquote" misst,
+**ob der Schuss ankommt**. Beides hängt an verschiedenen Größen, und für drei
+der vier meistbenutzten Waffen gibt es die erste Tabelle gar nicht — Hitscan
+hat keine Flugzeit und lernt nie etwas.
 
 ## Vorrang: was ein Ziel zum besseren Ziel macht
 
@@ -210,7 +218,13 @@ einer Entfernung gilt, gehört auf diese Entfernung.
 | | was es ist |
 | --- | --- |
 | `cl_aimAssistLead` („Richtung halten") | **deine Vorgabe**, nicht gelernt: sie gibt dem Vorhalt seine Form |
+| `baseq3/aimprio.cfg` | **deine Listen**: die allgemeine Vorrangliste und jede Abweichung je Waffe |
 | `baseq3/aimtune.cfg` | **das Gemessene**: je Waffe × Flugzeitband ein Faktor und die Streuung |
+| `baseq3/aimrate.cfg` | **das Gemessene**: je Waffe × Entfernungsfach Schüsse und Treffer |
+
+Die beiden gemessenen Dateien werden alle fünfzehn Sekunden geschrieben, nicht
+erst am Rundenende: ein Fach füllt sich mit einer Handvoll Schüssen pro Abend,
+und ein Spiel, das anders als sauber endet, nahm vorher den ganzen Abend mit.
 
 Vier Bänder (bis 0,4 s / 0,8 s / 1,3 s / darüber). Geschrieben wird scharf in
 ein Fach, **gelesen weich**: zwischen den Mitten zweier Fächer wird
@@ -225,8 +239,7 @@ Einheiten quer. Die Streuung stand damit bei zwei Dritteln ihrer wahren Größe,
 und ein gemessenes Fach wirkte zuverlässiger als ein ungemessenes. Eine ältere
 `aimtune.cfg` wird deshalb verworfen statt weitergeschrieben.
 
-Die Datei überlebt die Sitzung, weil ein Fach sich langsam füllt — eine
-Handvoll Schüsse pro Abend. Der Konsolenbefehl `aimtune` gibt die Tabelle
+Der Konsolenbefehl `aimtune` gibt die Tabelle
 jederzeit aus, samt der Gewichte, wie die Engine sie verstanden hat — die
 Standardliste, und darunter je eine Zeile für jede Waffe, die davon abweicht.
 Steht dort nichts, wurde auch nichts anders verstanden: ein Tippfehler im
@@ -235,6 +248,113 @@ Waffennamen fällt genau dadurch auf.
 Nichts davon weiß etwas über die mitgelieferten Bots. Gemessen wird, was vor
 der Waffe steht — andere Bots oder unvorhersehbare Bewegung ergeben einfach
 andere Zahlen.
+
+## Welche Waffe auf welche Entfernung ankommt
+
+Die Tabelle darüber sagt nichts darüber, ob ein Schuss trifft — und kann es für
+die halbe Waffenkammer auch nie sagen. Dafür gibt es eine zweite, `aimrate.cfg`,
+und sie nimmt **jede** Waffe.
+
+Gemessen wurde an rund viereinhalb Megabyte eigener Protokolle, 4182
+unterstützten Schüssen aus sieben Sitzungen, was davon überhaupt etwas erklärt.
+Ergebnis: die Entfernung, und sonst fast nichts.
+
+| Waffe | bis 500 | 500–1000 | 1000–1500 | 1500–2000 | ab 2000 |
+| --- | --- | --- | --- | --- | --- |
+| Railgun | 92 % | 77 % | 82 % | 80 % | 88 % |
+| Schrotflinte | 98 % | 77 % | 35 % | 38 % | – |
+| Maschinengewehr | 90 % | 80 % | 67 % | 48 % | 26 % |
+| Rakete | 73 % | 41 % | 9 % | 0 % | 0 % |
+
+Dass die Railgun flach ist, ist der nützlichste einzelne Satz darin — und der
+Grund, warum die Waffe eine eigene Achse braucht: auf 1000 bis 1500 Einheiten
+steht die Rakete bei 9 und die Railgun bei 82 Prozent. Der Tab schreibt einer
+solchen Waffe darum auch keine Lieblingsentfernung zu, sondern „überall",
+sobald sich die Vertrauensbereiche ihres besten und schlechtesten Fachs
+überschneiden.
+
+**Was nicht zählt.** Das Tempo des Ziels — die zweite Achse der
+Vorhalte-Tabelle — trennt hier nichts: am dortigen Schnitt bei 200 u/s ist die
+schnelle Hälfte sogar 4,5 Punkte besser, und oberhalb von 400 sind es 11,7
+Punkte bei einem Fehler von 5,1. Das eigene Tempo ist null, geduckt kommt in 13
+von 2524 Schüssen vor. Alles das wurde gemessen und verworfen, statt geraten.
+
+**Eines zählt doch**, und steht als zweites Zählerpaar im selben Fach statt als
+dritte Achse: ob das Ziel während des Fluges aufsetzt. Das sind 23 Punkte, nach
+Entfernung bereinigt. Als eigene Dimension würde es das dünnste Fach von 184
+Schüssen auf 31 kürzen; als Zählerpaar kostet es acht Byte und keine Probe. Im
+Tab ist es der dünne zweite Balken am unteren Rand einer Zelle — bei
+Hitscan-Waffen gibt es ihn nie, und dass er fehlt, ist auch eine Aussage.
+
+**Die Grenzen sind fest verdrahtet.** Gesucht wurden sie mit einer
+Rasterschätzung über alle Schnitte in Hundertern: 500/1000/1500 kommt sowohl
+für die Rakete allein als auch für alle vier Waffen zusammen heraus, und jedes
+weitere Fach bringt danach immer gleich viel — das Kennzeichen dafür, dass nur
+noch Rauschen angepasst wird. Eine mitwandernde Grenze liefe diesem Rauschen
+nach und würde bei jedem Schritt alle gespeicherten Fächer still umbenennen.
+
+**Drei Zustände je Zelle**, und sie sehen mit Absicht verschieden aus:
+
+| Proben | Zelle |
+| --- | --- |
+| keine | leerer Kasten, „–" — nie getestet ist nicht dasselbe wie schlecht |
+| 1–7 | Umriss, „misst noch (n)" — darunter ist das Wilson-Intervall breiter als 30 Punkte |
+| 8–24 | schraffierter Balken, „NN % ±XX" — die Zahl gilt, ein Rang daraus nicht |
+| ab 25 | voller Balken, „NN % (n)" |
+
+Ein Fach behält 0,99 von sich je gebuchtem Schuss, langsamer als die 0,98 der
+Vorhalte-Tabelle: ein Zähler braucht mehr Proben als ein Mittelwert, weil jede
+Probe nur ein Bit trägt. Je gebuchtem Schuss und nicht je Sekunde — so behalten
+die fünf Schüsse, die die Railgun pro Abend in ein Fach legt, vier Abende
+Geschichte, während das Maschinengewehr den letzten beiden folgt. Eine
+gemessene Notwendigkeit ist das Altern nicht: über sieben Sitzungen und vier
+Baustände steht das Fach 500–1000 der Rakete bei 40/38/41/41/41/43/41 Prozent.
+Es ist eine Versicherung gegen einen anderen Gegner oder einen anderen Server,
+und darum darf es langsam sein.
+
+**Was sich nicht ehrlich zuordnen lässt**, steht im Quelltext neben dem Code,
+der damit lebt, und soll auch hier stehen:
+
+* Zwei Raketen auf dasselbe Ziel — bei knapp fünfzehn Prozent kommt eine zweite
+  innerhalb von hundert Millisekunden an. Gebucht wird trotzdem die ältere:
+  93 Prozent dieser Paare liegen im selben Fach, das Raten kostet also rund ein
+  Prozent falsch einsortierte Schüsse, beide wegzuwerfen kostete fünfzehn.
+* Splash auf einen Umstehenden — `PERS_ATTACKEE_REMAINING` nennt nur die
+  Gesundheit des zuletzt Verletzten, keinen Namen. Die Raketenzeile steht damit
+  etwa fünf Prozent zu hoch, und daran ist nichts zu machen.
+* Die einzelne MG-Kugel ist nicht zuzuordnen, bei keinem Versatz — fast neun
+  von zehn liegen in einer Salve. Das **Fach** stimmt trotzdem: zwei
+  aufeinanderfolgende Kugeln liegen dreißig Einheiten auseinander, tief in einem
+  fünfhundert Einheiten breiten Fach.
+
+Der Konsolenbefehl `aimrate` gibt die Tabelle jederzeit aus. Der Tab liest aber
+die Datei und nicht das Protokoll — sie wird alle fünfzehn Sekunden
+geschrieben, steht also live, braucht `cl_aimAssistDebug` nicht und überlebt
+jedes Aufräumen der Protokolle.
+
+## Welche Korrektur wann gemacht wurde
+
+Der Tab „Korrekturen" zeigt jede einzelne Nachregelung: in welches Fach der
+Schuss ging, was das Ziel tun sollte, was es stattdessen tat, wie weit der
+Schuss am Ende danebenlag — und den Wert des Fachs **vor und nach** diesem
+Schuss.
+
+Dieses Paar ist der Grund, warum die Engine `was` und `now` mitschreibt. Der
+`factor` auf derselben Zeile ist etwas anderes: der über bis zu vier Fächer
+verblendete Wert an genau diesem Vorhalt, also was die Zielhilfe für diesen
+einen Schuss gegeben hätte. Die einzelnen Korrekturen summierten sich deshalb
+nie zur Bewegung des Fachs auf, in einem Topf sogar mit umgekehrtem Vorzeichen.
+
+Der Balken wächst aus der Mitte statt von links, weil eine Korrektur eine
+Richtung hat und kein Urteil: blau stärker, orange schwächer, unter einem
+halben Hundertstel gar kein Balken — eine eingeschwungene Tabelle soll ruhig
+aussehen, und ein Viertel aller Korrekturen ist so klein. Die Uhr läuft je
+Runde, mit der Rundennummer davor, sobald es mehr als eine gab.
+
+Für die meisten Waffen bleibt der Tab leer, und er sagt auch warum: gemessen
+wird nur, was fliegt. In viereinhalb Megabyte Protokoll stammen **alle** 359
+Proben von der Rakete, gegen 2743 Schüsse mit dem Maschinengewehr, die null
+ergaben.
 
 ## Was im Protokoll steht
 
@@ -251,8 +371,20 @@ statt stillschweigend Felder zu lesen, die es damals nicht gab.
 | `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame |
 | `aim hold:` | jede Sperre des Abzugs mit Grund und Entfernung, und wie lange sie hielt |
 | `land` auf der Schusszeile | wann die Fußlage des Ziels wieder erwartet wird, oder −1 |
-| `aim tune:` | der Stand eines Fachs nach jeder Änderung |
+| `aim tune:` | die **Korrektur**, die auf die Lernzeile darüber folgt: welches Fach, und mit `was`/`now` sein Wert davor und danach |
+| `aim table:` | der **Abzug** der ganzen Vorhalte-Tabelle, vom Befehl `aimtune` und beim Verbindungsende |
+| `aim rate:` | der Abzug der Trefferquoten-Tabelle, vom Befehl `aimrate` — je Fach Schüsse, Treffer, das Paar für aufsetzende Ziele und wieviel es sagen darf |
+| `aim rated:` | ein abgeschlossener Schuss: Waffe, Entfernungsfach, getroffen oder daneben |
 | `aim impact:` / `aim missile:` | jeder Einschlag mit den Stellungen aller Bots, jedes Geschoss beim Start |
+
+Fassung 7 hat die beiden `aim tune:`-Arten getrennt. Bis dahin sahen eine
+Korrektur und ein Abzug der ganzen Tabelle gleich aus, und kein Feld sagte,
+welche von beiden es war: `frame 0` als Kennzeichen zu nehmen ist für die 74
+Abzüge falsch, die bei stehender Verbindung gemacht wurden, und die Nachbarschaft
+zur Lernzeile stimmte nur, weil die zwei `Com_Printf` im selben Schleifendurchlauf
+nebeneinanderstehen. Das hatte niemand aufgeschrieben, und die erste Zeile
+zwischen den beiden hätte jeden Leser still kaputtgemacht. Jetzt heißt der Abzug
+`aim table:` und die Frage stellt sich nicht.
 
 Die Schusszeile hat in Fassung 5 aufgeräumt. `speed` war die **eigene**
 Geschwindigkeit, obwohl die zweite Achse der Tabelle die des Ziels ist — jetzt
