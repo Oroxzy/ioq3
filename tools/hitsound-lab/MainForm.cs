@@ -110,7 +110,11 @@ public class MainForm : Form, IMessageFilter {
 	// Life > 0: eine Regel ueber etwas, das geschehen ist - die verfaellt.
 	// Life = 0: eine Eigenschaft des Augenblicks, die keine Uhr braucht.
 	static readonly (string Key, string Name, string Effect, double Life)[] Priorities = {
-		( "sight",    "freie Sichtlinie",      "nur, worauf ein Schuss durchkommt – plus Nachwirkung", 0.1 ),
+		// Die Sichtlinie ist ein Tor, keine Auswahl: wer sichtbar ist, bekommt
+		// ihre vollen Punkte, also alle dasselbe. Ihr Gewicht entscheidet
+		// nichts, nur ihre Dauer tut es - sie traegt ein Ziel ueber ein
+		// kurzes Verschwinden hinweg.
+		( "sight",    "freie Sichtlinie",      "Tor, kein Vorzug: gibt allen Sichtbaren gleich viel", 0.1 ),
 		( "cursor",   "Nähe zum Fadenkreuz",   "wohin du ohnehin schon zielst", 0 ),
 		( "attacker", "wer mich zuletzt traf", "sofort zurückschlagen, solange es frisch ist", 6 ),
 		( "sure",     "Treffsicherheit",       "was die Waffe auf die Entfernung gemessen trifft", 0 ),
@@ -926,8 +930,19 @@ public class MainForm : Form, IMessageFilter {
 		prioReset.Enabled = CurWeapon is not null;
 		// Keine Zeichengrenze mehr - die Listen gehen als Datei ins Spiel.
 		// Stattdessen steht hier, wie viele Waffen eigene Regeln haben.
+		// Die Liste ist keine Rangfolge, sondern ein Punktebudget: jede Regel
+		// gibt einem Bewerber bis zu ihrem Gewicht, und alles wird addiert.
+		// Deshalb koennen zwei Regeln dieselbe Zahl tragen - sie stehen nicht
+		// auf demselben Platz, sie geben beide bis zu hundert Punkte. Ohne
+		// diesen Satz sieht die nach Gewicht sortierte Liste wie ein Ranking
+		// aus, und dann wirkt ein zweimal vergebenes Hundert wie ein Fehler.
 		int eigen = Weapons.Count( w => weaponWeight.ContainsKey( w.Key ) || weaponTime.ContainsKey( w.Key ) );
-		prioWarn.Text = eigen == 0 ? "" : eigen == 1 ? "1 Waffe weicht ab" : $"{eigen} Waffen weichen ab";
+		int summe = Priorities.Sum( p => Weight( p.Key ) );
+		var teile = new List<string>();
+		if ( eigen == 1 ) teile.Add( "1 Waffe weicht ab" );
+		else if ( eigen > 1 ) teile.Add( $"{eigen} Waffen weichen ab" );
+		teile.Add( $"die Gewichte addieren sich, höchstens {summe} Punkte" );
+		prioWarn.Text = string.Join( "   ·   ", teile );
 		prioWarn.ForeColor = Color.DimGray;
 		prioView.EndUpdate();
 		prioUpdating = false;
