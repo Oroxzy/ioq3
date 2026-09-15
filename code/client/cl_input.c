@@ -1345,27 +1345,40 @@ Die Vorhalte-Tabelle darueber misst, WIE WEIT vorgehalten werden muss. Diese
 hier misst etwas anderes: ob der Schuss ankommt. Beide Fragen haengen an
 verschiedenen Groessen, und darum stehen hier andere Achsen.
 
-Gemessen wurde das an rund viereinhalb Megabyte eigener Protokolle, gut
-viertausend Schuessen aus sieben Sitzungen. Die Entfernung ist die einzige
-Groesse, die etwas erklaert: die Rakete faellt ueber die fuenf Faecher von
-74 auf 1 Prozent, das Maschinengewehr von 90 auf 26, waehrend die Railgun
-ueberall bei etwa 83 steht. Alles andere, was auf der Schusszeile steht, hat
-sich im gleichen Fach als wirkungslos erwiesen: das Tempo des Ziels trennt
-0,6 Punkte, das eigene Tempo nichts, geduckt kommt in 29 von 2553 Schuessen
-vor. Nur eines kommt noch hinzu, und das steht als zweites Zaehlerpaar im
-selben Fach statt als dritte Achse: ob das Ziel waehrend des Fluges aufsetzt.
-Das kostet die Rakete zwei Drittel ihrer Quote und gibt es fuer Hitscan gar
-nicht.
+Gemessen wurde das an rund viereinhalb Megabyte eigener Protokolle, 4182
+unterstuetzten Schuessen aus sieben Sitzungen. Die Entfernung traegt am
+meisten: die Rakete faellt ueber die fuenf Faecher von 73 auf 0 Prozent, das
+Maschinengewehr von 90 auf 26, waehrend die Railgun ueberall bei etwa 83
+steht. Dass die Railgun flach ist, ist der nuetzlichste einzelne Satz, den
+diese Tabelle sagen kann - und der Grund, warum die Waffe eine eigene Achse
+braucht: auf 1000 bis 1500 Einheiten steht die Rakete bei 9 und die Railgun
+bei 82 Prozent.
+
+Das Tempo des Ziels, die zweite Achse der Vorhalte-Tabelle, taugt hier nicht:
+am dortigen Schnitt bei 200 u/s ist die schnelle Haelfte sogar 4,5 Punkte
+BESSER, und erst oberhalb von 400 zeigt sich ein Unterschied, der mit 11,7
+Punkten bei einem Fehler von 5,1 nichts entscheidet. Das eigene Tempo ist
+null, geduckt kommt in 13 Schuessen vor.
+
+Eines kommt noch hinzu, und das steht als zweites Zaehlerpaar im selben Fach
+statt als dritte Achse: ob das Ziel waehrend des Fluges aufsetzt. Das sind
+23 Punkte, nach Entfernung bereinigt, und es gibt sie fuer Hitscan nicht. Als
+dritte Dimension wuerde es das duennste Fach von 184 Schuessen auf 31 kuerzen;
+als Zaehlerpaar kostet es acht Byte und keine einzige Probe.
 
 Die Faecher blenden nicht ineinander, anders als die Vorhalte-Tabelle. Die
 blendet, weil ein Schuss dicht an der Grenze sonst eine andere Korrektur
 bekaeme. Hier wird gezaehlt, und ein halb gezaehlter Schuss ist keine Zahl.
 
-Die Grenzen sind fest verdrahtet und lernen nicht mit. Auf der ersten Haelfte
-der Aufzeichnung liegt das Optimum bei 500/900/1050/1450, auf der zweiten bei
-400/850/1050/1750: eine mitwandernde Grenze wuerde diesem Rauschen nachlaufen
-und bei jedem Schritt alle gespeicherten Faecher still umbenennen. Nur die
-erste Grenze, 500, kommt aus jeder Anpassung zurueck.
+Die Grenzen sind fest verdrahtet und lernen nicht mit. Gesucht wurden sie mit
+einer Rasterschaetzung ueber alle Schnitte in Hundertern, freie Quote je Fach:
+fuer die Rakete allein kommen 500/1000/1500 heraus, fuer alle vier Waffen
+zusammen dieselben, und jedes weitere Fach bringt danach immer gleich viel -
+das Kennzeichen dafuer, dass nur noch Rauschen angepasst wird. Die runde
+Fassung 500/1000/1500/2000 kostet gegen das freie Optimum vier Einheiten
+Plausibilitaet und laesst die Rakete auf ihrem eigenen Bestwert. Eine
+mitwandernde Grenze wuerde dem Rauschen nachlaufen und bei jedem Schritt alle
+gespeicherten Faecher still umbenennen.
 =================
 */
 #define AIM_RANGES		5
@@ -1379,10 +1392,16 @@ erste Grenze, 500, kommt aus jeder Anpassung zurueck.
 // mehr Proben als ein Mittelwert, weil jede Probe nur ein Bit traegt. Bei 0,98
 // zaehlt ein Fach effektiv 99 Schuesse und rauscht mit +-4,9 Punkten - die
 // Raketenfaecher liegen weit draussen 11 Punkte auseinander, das waere schon
-// halb verschluckt. Bei 0,99 sind es 199 Schuesse und +-3,5. Gemessen ueber
-// alle 4022 Schuesse liegt das flache Optimum bei 0,99; 0,95 und schneller
-// sind nachweislich schlechter, 1,00 und 0,98 kann die Aufzeichnung nicht
-// voneinander trennen.
+// halb verschluckt. Bei 0,99 sind es 199 Schuesse und +-3,5.
+//
+// Was das Altern NICHT ist: eine gemessene Notwendigkeit. Ueber sieben
+// Sitzungen und vier verschiedene Baustaende steht das Fach 500-1000 der
+// Rakete bei 40/38/41/41/41/43/41 Prozent - da ist keine Drift, der man
+// nachlaufen muesste. Es ist eine Versicherung gegen einen anderen Gegner
+// oder einen anderen Server, und darum darf es langsam sein. Je gebuchtem
+// Schuss und nicht je Sekunde: so behalten die fuenf Schuesse, die die
+// Railgun pro Abend in ein Fach legt, vier Abende Geschichte, waehrend das
+// Maschinengewehr den letzten beiden folgt.
 #define AIM_RATE_DECAY	0.99f
 #define AIM_RATE_SPEAK	8		// darunter sagt ein Fach gar nichts
 #define AIM_RATE_FIRM	25		// und darunter beansprucht es keinen Rang
@@ -1407,7 +1426,7 @@ static int CL_AimAssistRange( float dist ) {
 	if ( dist < 1000.0f ) {
 		return 1;
 	}
-	if ( dist < 1450.0f ) {
+	if ( dist < 1500.0f ) {
 		return 2;
 	}
 	if ( dist < 2000.0f ) {
@@ -1417,7 +1436,7 @@ static int CL_AimAssistRange( float dist ) {
 }
 
 static float CL_AimAssistRangeStart( int range ) {
-	static const float	start[AIM_RANGES] = { 0.0f, 500.0f, 1000.0f, 1450.0f, 2000.0f };
+	static const float	start[AIM_RANGES] = { 0.0f, 500.0f, 1000.0f, 1500.0f, 2000.0f };
 
 	return start[range < 0 ? 0 : ( range >= AIM_RANGES ? AIM_RANGES - 1 : range )];
 }
@@ -1541,28 +1560,29 @@ Vorhalt richtig und fuer die Trefferquote falsch - drei der vier Waffen in der
 Aufzeichnung sind Hitscan, und der Fall "Ziel setzt auf" ist hier gerade die
 interessanteste Zeile.
 
-Was sich ehrlich nicht zuordnen laesst, wird auch nicht zugeordnet:
+Drei Grenzen der Zuordnung, alle nachgemessen, alle hier und nicht in einer
+Fussnote:
 
-Zwei Raketen auf dasselbe Ziel. Ein Viertel aller Raketen geht raus, waehrend
-eine fruehere auf denselben Bot noch fliegt; bei neun Prozent liegen die
-Ankunftsfenster so dicht, dass kein Merkmal beim Klienten sagt, welchem der
-beiden der Schaden gehoert. Dann werden beide als Zwilling markiert und
-KEINER gebucht. Die aeltere zu nehmen waere kein Ausweg, sondern eine
-Schlagseite: Paare fliegen auf die schwereren Ziele.
+Zwei Raketen auf dasselbe Ziel. Bei knapp fuenfzehn Prozent der Raketen kommt
+eine zweite innerhalb von hundert Millisekunden an, und kein Merkmal beim
+Klienten sagt, welcher der beiden der Schaden gehoert. Trotzdem wird die
+aeltere gebucht und nicht etwa beide verworfen: 93 Prozent dieser Paare liegen
+im selben Entfernungsfach, die Reihenfolge kostet also rund ein Prozent falsch
+einsortierte Raketen - und beide wegzuwerfen kostete fuenfzehn.
 
-Splash auf einen Umstehenden. PERS_ATTACKEE_REMAINING nennt nur den zuletzt
-Verletzten. Eine Rakete, die neben dem gemeinten Ziel noch jemanden erwischt,
-ist von einer, die nur den Umstehenden erwischt, beim Klienten nicht zu
-unterscheiden. Etwa fuenf Prozent der Raketentreffer sind darum zu viel
-gezaehlt; das steht hier, weil es sich nicht beheben laesst.
+Splash auf einen Umstehenden. PERS_ATTACKEE_REMAINING nennt nur die
+Gesundheit des zuletzt Verletzten, keinen Namen. Eine Rakete, die neben dem
+gemeinten Ziel noch jemanden erwischt, ist von einer, die nur den Umstehenden
+erwischt, beim Klienten nicht zu unterscheiden: knapp fuenf Prozent der
+Schadensereignisse in der Aufzeichnung fielen so. Die Raketenzeile steht damit
+etwa fuenf Prozent zu hoch, und daran ist nichts zu machen.
 
 Das Maschinengewehr. Es schiesst alle 100 ms, das Trefferfenster ist 50 ms
-breit, und waehrend einer Salve traegt fast jedes Bild ein Schadensereignis:
-die einzelne Kugel ist nicht zuzuordnen, bei keinem Versatz. Was stimmt, ist
-die Zahl - jede Kugel macht hoechstens ein Ereignis - und das Fach, denn zwei
-aufeinanderfolgende Kugeln liegen bei 320 u/s Annaeherung 32 Einheiten
-auseinander, tief in einem 450 Einheiten breiten Fach. Die Quote je Fach
-stimmt also, die Zuordnung der einzelnen Kugel nicht.
+breit, und fast neun von zehn Kugeln liegen in einer Salve: die einzelne Kugel
+ist nicht zuzuordnen, bei keinem Versatz. Was stimmt, ist das Fach, denn zwei
+aufeinanderfolgende Kugeln liegen bei 320 u/s Annaeherung dreissig Einheiten
+auseinander, tief in einem fuenfhundert Einheiten breiten Fach. Die Quote je
+Fach stimmt also, die Zuordnung der einzelnen Kugel nicht.
 =================
 */
 #define AIM_RATE_PENDING	32
@@ -1572,9 +1592,9 @@ typedef struct {
 	int			weapon;
 	int			range;
 	int			open, shut;		// Serverzeit, in der der Schaden zaehlt
+	int			fired;			// wann er losging, fuer die Reihenfolge der Anspruecke
 	qboolean	landing;		// das Ziel sollte im Flug aufsetzen
 	qboolean	hit;
-	qboolean	twin;			// ein zweiter offener Schuss auf dasselbe Ziel ueberlappt
 	qboolean	live;
 } aimRatePending_t;
 
@@ -1586,7 +1606,7 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 		const vec3_t viewOrigin, qboolean landing ) {
 	aimRatePending_t	*p;
 	vec3_t				offset;
-	int					arrive, open, shut, i;
+	int					arrive, open, shut;
 
 	if ( !cl_aimAssistLearn->integer || !entity ) {
 		return;
@@ -1601,12 +1621,15 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 
 	arrive = cl.snap.serverTime + (int)( flight * 1000.0f + 0.5f );
 	if ( flight > 0.0f ) {
-		// gemessen, nicht geraten: der Versatz zwischen erwarteter Ankunft und
-		// gemeldetem Schaden lag bei 318 Raketen auf 0, bei 141 auf +50, bei
-		// 51 auf -50 und bei 27 auf +100
-		open = arrive - 100;
-		shut = arrive + 150;
+		// Gemessen an Schuessen, die allein standen - kein zweiter auf
+		// dasselbe Ziel mit derselben Waffe binnen 700 ms. Der Versatz
+		// zwischen erwarteter Ankunft und gemeldetem Schaden lag bei 274
+		// Raketen auf 0, bei 114 auf +50, bei 45 auf -50 und bei 25 auf +100.
+		open = arrive - 50;
+		shut = arrive + 100;
 	} else {
+		// Hitscan trifft im selben Bild: 173 von 188 allein stehenden
+		// Railgun-Schuessen auf Versatz null, der Rest auf +50.
 		open = cl.snap.serverTime;
 		shut = cl.snap.serverTime + 50;
 	}
@@ -1617,23 +1640,10 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 	p->range = CL_AimAssistRange( VectorLength( offset ) );
 	p->open = open;
 	p->shut = shut;
+	p->fired = cl.snap.serverTime;
 	p->landing = landing;
 	p->hit = qfalse;
-	p->twin = qfalse;
 	p->live = qtrue;
-
-	// Zwei offene Schuesse auf dasselbe Ziel mit sich ueberschneidenden
-	// Fenstern: beide markieren, beide spaeter verwerfen.
-	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
-		if ( &aimRatePending[i] == p || !aimRatePending[i].live
-			|| aimRatePending[i].target != p->target ) {
-			continue;
-		}
-		if ( aimRatePending[i].open <= p->shut && p->open <= aimRatePending[i].shut ) {
-			aimRatePending[i].twin = qtrue;
-			p->twin = qtrue;
-		}
-	}
 }
 
 /*
@@ -1651,40 +1661,29 @@ Schadensereignisse ist nicht die Zahl der Treffer.
 Wer getroffen wurde, sagt der Server nicht. PERS_ATTACKEE_REMAINING traegt die
 Gesundheit des zuletzt Verletzten und keinen Namen dazu; aimShotTarget kennt
 nur den letzten Schuss, und eine Rakete ist eine Sekunde unterwegs. Also wird
-ueber die Zeit zugeordnet und nicht ueber den Namen: passt genau ein offener
-Schuss in dieses Bild, gehoert ihm der Schaden. Passen zwei, sagt nichts beim
-Klienten, welcher es war - dann werden beide zu Zwillingen und keiner gebucht.
-Dass das fast immer eindeutig ist, liegt an den Waffen selbst: das
-Maschinengewehr schiesst alle 100 ms auf ein 50 ms breites Fenster, die
-Schrotflinte alle 1000, und nur Raketen ueberholen einander.
+ueber die Zeit zugeordnet und nicht ueber den Namen: wessen Fenster dieses Bild
+enthaelt, dem gehoert der Schaden, und bei mehreren der aelteste Schuss zuerst.
+
+Der aelteste und nicht keiner. Wo zwei Fenster einander ueberschneiden, ist die
+Reihenfolge geraten - aber zu 93 Prozent liegen solche Paare ohnehin im selben
+Entfernungsfach, also kostet das Raten etwa ein Prozent falsch einsortierte
+Schuesse, waehrend beide zu verwerfen fuenfzehn Prozent der Proben kosten
+wuerde. Genauigkeit, die mehr Messung kostet als sie Fehler spart, ist keine.
 =================
 */
 static void CL_AimAssistRateCredit( void ) {
 	aimRatePending_t	*p, *best = NULL;
-	int					i, open = 0;
+	int					i;
 
 	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
 		p = &aimRatePending[i];
-		if ( !p->live || p->twin
+		if ( !p->live || p->hit
 			|| cl.snap.serverTime < p->open || cl.snap.serverTime > p->shut ) {
 			continue;
 		}
-		open++;
-		if ( !best || p->open < best->open ) {
+		if ( !best || p->fired < best->fired ) {
 			best = p;
 		}
-	}
-
-	if ( open > 1 ) {
-		// zwei Kandidaten, kein Merkmal: keiner von beiden wird gebucht
-		for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
-			p = &aimRatePending[i];
-			if ( p->live && !p->twin
-				&& cl.snap.serverTime >= p->open && cl.snap.serverTime <= p->shut ) {
-				p->twin = qtrue;
-			}
-		}
-		return;
 	}
 	if ( best ) {
 		best->hit = qtrue;
@@ -1716,9 +1715,6 @@ static void CL_AimAssistRateClose( void ) {
 			continue;
 		}
 		p->live = qfalse;
-		if ( p->twin ) {
-			continue;		// nicht zuzuordnen, also nicht gezaehlt
-		}
 		CL_AimAssistRateBook( p->weapon, p->range, p->hit, p->landing );
 		aimRateBooked++;
 		if ( cl_aimAssistDebug->integer ) {

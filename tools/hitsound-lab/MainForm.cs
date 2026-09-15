@@ -284,10 +284,17 @@ public class MainForm : Form, IMessageFilter {
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
 
+	readonly Label statBestRange = Number();
+	readonly ListView rateView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
+	};
+	readonly ToolTip rateTip = new() { AutoPopDelay = 20000, InitialDelay = 300 };
+
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 6;
+	const int LogVersion = 7;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -376,6 +383,23 @@ public class MainForm : Form, IMessageFilter {
 		tuneView.Columns.Add( "Streuung", 80, HorizontalAlignment.Right );
 		tuneView.Columns.Add( "Wirkradius", 80, HorizontalAlignment.Right );
 		tuneView.Columns.Add( "Aussicht", 110 );
+
+		// Die Trefferquote ist eine Matrix, keine Liste: die Waffe nach unten,
+		// die Entfernung nach rechts. So steht die Frage gezeichnet da, statt
+		// in Prosa beantwortet zu werden.
+		// Die Antwort steht vorne: die Spalte, die die Frage beantwortet, soll
+		// nicht die sein, die beim Schmalerziehen als erste leidet. Eine
+		// Spalte "Proben" gibt es nicht - jedes Fach nennt seine Zahl selbst.
+		rateView.Columns.Add( "Waffe", 170 );
+		rateView.Columns.Add( "am besten", 110 );
+		foreach ( var band in RangeNames ) {
+			rateView.Columns.Add( band, 118, HorizontalAlignment.Center );
+		}
+		// Eigene Aufteilung statt FitColumns: in einer Matrix muessen die
+		// Faecher gleich breit sein, sonst liest sich ein breiteres Fach wie
+		// ein wichtigeres. Die beiden vorderen Spalten behalten ihr Mass, der
+		// Rest wird zu gleichen Teilen auf die fuenf Entfernungen verteilt.
+		rateView.Resize += ( _, _ ) => FitBands();
 
 		rankView.Columns.Add( "Waffe", 120 );
 		rankView.Columns.Add( "Schüsse", 70, HorizontalAlignment.Right );
@@ -512,6 +536,59 @@ public class MainForm : Form, IMessageFilter {
 				Color.Black, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter );
 		};
 
+		// Dieselbe Zeichnung, nur fuenfmal je Zeile und mit drei Zustaenden:
+		// ein Fach, das noch nichts sagen darf, sieht anders aus als eines,
+		// das eine Zahl nennt, und beide anders als eines, das vergleichbar
+		// ist. Ohne das liest sich ein Fach mit vier Proben wie ein Urteil.
+		rateView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
+		rateView.DrawItem += ( _, _ ) => { };
+		rateView.DrawSubItem += ( _, e ) => {
+			int band = e.ColumnIndex - RateFirstBand;
+			if ( band < 0 || band >= RangeNames.Length || e.Item?.Tag is not Cell[] cells ) {
+				e.DrawDefault = true;
+				return;
+			}
+			e.DrawBackground();
+
+			var cell = cells[band];
+			var bar = e.Bounds;
+			bar.Inflate( -3, -3 );
+			using ( var back = new SolidBrush( Color.FromArgb( 232, 232, 232 ) ) ) {
+				e.Graphics.FillRectangle( back, bar );
+			}
+
+			int width = (int)( bar.Width * Math.Clamp( cell.Share, 0, 1 ) );
+			if ( cell.Samples >= RateFirm ) {
+				using var fill = new SolidBrush( RateColour( cell.Share ) );
+				e.Graphics.FillRectangle( fill, bar.X, bar.Y, width, bar.Height );
+			} else if ( cell.Samples >= RateSpeak ) {
+				// Schraffiert heisst: das ist die Zahl, aber verlass dich nicht
+				// darauf. Unter fuenfundzwanzig Proben ist das Wilson-Intervall
+				// breiter als der Abstand zweier Nachbarfaecher.
+				using var fill = new System.Drawing.Drawing2D.HatchBrush(
+					System.Drawing.Drawing2D.HatchStyle.Percent50,
+					RateColour( cell.Share ), Color.FromArgb( 232, 232, 232 ) );
+				e.Graphics.FillRectangle( fill, bar.X, bar.Y, width, bar.Height );
+			} else if ( cell.Samples > 0 ) {
+				using var edge = new Pen( Color.DimGray );
+				e.Graphics.DrawRectangle( edge, bar.X, bar.Y, bar.Width - 1, bar.Height - 1 );
+			}
+
+			// Der zweite, duenne Balken am unteren Rand: dieselbe Quote, aber
+			// nur fuer die Schuesse, deren Ziel im Flug aufsetzen sollte. Fuer
+			// Hitscan gibt es ihn nie, weil es dort keine Flugzeit gibt.
+			if ( cell.LandSamples >= RateSpeak ) {
+				using var fill = new SolidBrush( RateColour( cell.LandShare ) );
+				e.Graphics.FillRectangle( fill, bar.X, bar.Bottom - 4,
+					(int)( bar.Width * Math.Clamp( cell.LandShare, 0, 1 ) ), 4 );
+			}
+
+			TextRenderer.DrawText( e.Graphics, e.SubItem?.Text ?? "", rateView.Font, bar,
+				cell.Samples >= RateSpeak ? Color.Black : Color.DimGray,
+				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter );
+		};
+		rateView.MouseMove += ( _, e ) => ShowRateTip( e.Location );
+
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
 		start.Click += ( _, _ ) => StartGame();
@@ -538,8 +615,17 @@ public class MainForm : Form, IMessageFilter {
 
 		// Beim ersten Start gross aufmachen - fuenf Karten voller Tabellen
 		// wollen Platz. Danach gilt, was der Benutzer zuletzt eingestellt hat.
+		//
+		// Auf den Bildschirm beschnitten: die gemerkte Groesse kommt von dem
+		// Rechner, an dem zuletzt gearbeitet wurde, und der naechste kann
+		// einen kleineren Schirm haben. Ohne das haengt das Fenster hinaus,
+		// ohne dass es auffaellt - der Rahmen ist ja nicht zu sehen - und in
+		// jeder Karteikarte fehlt die letzte Spalte.
+		var room = Screen.FromPoint( Cursor.Position ).WorkingArea;
 		if ( windowSize.Width > 400 && windowSize.Height > 300 ) {
-			ClientSize = windowSize;
+			ClientSize = new Size(
+				Math.Min( windowSize.Width, room.Width ),
+				Math.Min( windowSize.Height, room.Height ) );
 			CenterToScreen();
 		} else {
 			WindowState = FormWindowState.Maximized;
@@ -877,6 +963,9 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Rangliste",
 			Row( Counter( "beste Waffe:", statBestWeapon ) ),
 			rankView ) );
+		tabs.TabPages.Add( Page( "Trefferquote",
+			Row( Counter( "am besten:", statBestRange ) ),
+			rateView ) );
 		// Eigene Karteikarte statt Page(): die Bedienung bekommt eine feste
 		// Hoehe, sonst nimmt sie sich mit den Schiebern darin den ganzen Platz
 		// und die Liste bleibt einen Pixel hoch.
@@ -1430,6 +1519,11 @@ public class MainForm : Form, IMessageFilter {
 		bool exited;
 		try { exited = game is { HasExited: true }; } catch ( InvalidOperationException ) { exited = false; }
 
+		// Vor dem Protokoll, weil die Trefferquote nicht daran haengt: sie
+		// steht in einer eigenen Datei und ueberlebt jedes Aufraeumen der
+		// Protokolle.
+		UpdateRates();
+
 		if ( logPath.Length == 0 || !File.Exists( logPath ) ) {
 			// ein Spiel, das zu Ende ist, ohne je ein Protokoll geschrieben zu
 			// haben, darf kein spaeteres, von Hand gestartetes beglaubigen
@@ -1954,6 +2048,254 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	const int RankBarColumn = 3;
+
+	/*
+	Die Trefferquote je Waffe und Entfernung.
+
+	Gelesen wird baseq3/aimrate.cfg und nicht das Protokoll: die Engine
+	schreibt die Datei alle fuenfzehn Sekunden, also steht dort der laufende
+	Stand, ohne dass cl_aimAssistDebug an sein muss und ohne auf das Ende des
+	Spiels zu warten. Die Datei traegt Waffennummern, keine Namen, darum die
+	Tabelle darunter - sie muss zu CL_AimAssistWeaponName in
+	code/client/cl_input.c passen, so wie WeaponDefault zu aimWeaponDefault.
+
+	Die Grenzen 500/1000/1450/2000 stehen in CL_AimAssistRange und stecken in
+	dem, was ein Fach bedeutet. Verschieben sie sich dort, steigt die
+	Formatnummer der Datei und die Faecher werden verworfen - hier reicht es
+	darum, die Beschriftung nachzuziehen.
+	*/
+	static readonly string[] RateWeapons = {
+		"none", "gauntlet", "machinegun", "shotgun", "grenade", "rocket",
+		"lightning", "railgun", "plasma", "bfg", "hook",
+	};
+	static readonly string[] RangeNames = {
+		"bis 500", "500–1000", "1000–1500", "1500–2000", "ab 2000",
+	};
+	// Die beiden Schranken der Engine, AIM_RATE_SPEAK und AIM_RATE_FIRM. Sie
+	// kommen aus dem Wilson-Intervall bei p = 0,5: bei acht Proben faellt die
+	// halbe Breite zum ersten Mal unter 30 Punkte, bei fuenfundzwanzig unter
+	// 18 - und 18 Punkte ist der Abstand, ab dem sich zwei Nachbarfaecher
+	// ueberhaupt unterscheiden lassen.
+	const int RateSpeak = 8;
+	const int RateFirm = 25;
+	// Waffe, dann "am besten", dann erst die fuenf Faecher
+	const int RateFirstBand = 2;
+
+	// Wird auch bei jedem Auffrischen gerufen und nicht nur beim Groessern:
+	// diese Karteikarte ist beim Start nicht die gewaehlte, und eine
+	// Karteikarte, die noch nie zu sehen war, hat ihre Groesse noch nicht -
+	// die Spalten standen darum einmal so breit, dass die letzten beiden
+	// Entfernungen rechts aus dem Fenster fielen.
+	void FitBands() {
+		if ( rateView.Columns.Count < RateFirstBand + RangeNames.Length ) return;
+
+		// ClientSize schliesst die senkrechte Bildlaufleiste schon aus; die
+		// vier Pixel sind der Rahmen, den die Liste selbst noch braucht.
+		int room = rateView.ClientSize.Width - 4
+			- rateView.Columns[0].Width - rateView.Columns[1].Width;
+		int each = room / RangeNames.Length;
+		if ( each < 90 ) return;			// zu schmal: lieber quer scrollen als unlesbar
+
+		for ( int i = 0; i < RangeNames.Length; i++ ) {
+			// der Rest geht an das letzte Fach, sonst bleibt rechts eine Luecke
+			int want = i == RangeNames.Length - 1
+				? room - each * ( RangeNames.Length - 1 ) : each;
+			var column = rateView.Columns[RateFirstBand + i];
+			if ( column.Width != want ) column.Width = want;
+		}
+	}
+
+	sealed class Cell {
+		public double Shots, Hits, LandShots, LandHits;
+		public int Samples;
+		public double Share => Shots > 0 ? Hits / Shots : 0;
+		public double LandShare => LandShots > 0 ? LandHits / LandShots : 0;
+		public int LandSamples => (int)Math.Round( LandShots );
+	}
+
+	// Die halbe Breite des Wilson-Intervalls in Punkten, damit neben einer
+	// duennen Zahl steht, wie duenn sie ist. Ein Mittelwert braucht dafuer
+	// keinen eigenen Rechenweg, ein Zaehler schon: bei acht Proben sind es
+	// 28 Punkte, bei fuenfundzwanzig 18, bei hundertzwanzig 9.
+	static double WilsonHalf( double p, int n ) {
+		if ( n <= 0 ) return 100;
+		const double z = 1.96;
+		double denom = 1 + z * z / n;
+		double half = z / denom * Math.Sqrt( p * ( 1 - p ) / n + z * z / ( 4.0 * n * n ) );
+		return half * 100;
+	}
+
+	Dictionary<string, Cell[]> ReadRates() {
+		var table = new Dictionary<string, Cell[]>();
+		string path = Path.Combine( HomePath, "aimrate.cfg" );
+		string[] lines;
+		try {
+			if ( !File.Exists( path ) ) return table;
+			using var stream = new FileStream( path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite );
+			using var reader = new StreamReader( stream );
+			lines = reader.ReadToEnd().Split( '\n' );
+		} catch ( IOException ) {
+			return table;			// das Spiel schreibt gerade
+		}
+
+		foreach ( var raw in lines ) {
+			var line = raw.Trim();
+			// Alles nach // ist Beiwerk, und "format 1" ist keine Zeile mit
+			// Zahlen darin. Stimmt die Fassung nicht, ist die Datei von einem
+			// Bau mit anderen Grenzen und wird ganz verworfen.
+			int remark = line.IndexOf( "//", StringComparison.Ordinal );
+			if ( remark >= 0 ) line = line[..remark].Trim();
+			if ( line.Length == 0 ) continue;
+			if ( line.StartsWith( "format", StringComparison.Ordinal ) ) {
+				if ( line != "format 1" ) return new Dictionary<string, Cell[]>();
+				continue;
+			}
+
+			var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			if ( f.Length < 7 ) continue;
+			if ( !int.TryParse( f[0], out int weapon ) || !int.TryParse( f[1], out int range ) ) continue;
+			if ( weapon <= 0 || weapon >= RateWeapons.Length || range < 0 || range >= RangeNames.Length ) continue;
+
+			var name = RateWeapons[weapon];
+			if ( !table.TryGetValue( name, out var cells ) ) {
+				cells = new Cell[RangeNames.Length];
+				for ( int i = 0; i < cells.Length; i++ ) cells[i] = new Cell();
+				table[name] = cells;
+			}
+			var cell = cells[range];
+			cell.Shots = Num( f[2] );
+			cell.Hits = Num( f[3] );
+			cell.LandShots = Num( f[4] );
+			cell.LandHits = Num( f[5] );
+			int.TryParse( f[6], out cell.Samples );
+		}
+
+		return table;
+	}
+
+	static double Num( string s ) =>
+		double.TryParse( s, System.Globalization.NumberStyles.Any,
+			System.Globalization.CultureInfo.InvariantCulture, out double v ) ? v : 0;
+
+	string rateStamp = "";
+
+	void UpdateRates() {
+		FitBands();
+		var table = ReadRates();
+		var rows = new List<ListViewItem>();
+		string best = "–";
+		double bestShare = -1;
+
+		// Die Reihenfolge ist die der Rangliste: erst die Waffe mit der besten
+		// Quote ueber alles. Zwei Karteikarten, die dieselben Waffen anders
+		// sortieren, lesen sich wie zwei verschiedene Messungen.
+		foreach ( var entry in table.OrderByDescending( e => {
+					double shots = e.Value.Sum( c => c.Shots );
+					return shots > 0 ? e.Value.Sum( c => c.Hits ) / shots : -1;
+				} ).ThenByDescending( e => e.Value.Sum( c => c.Shots ) ) ) {
+			var cells = entry.Value;
+			var row = new ListViewItem( WeaponName( entry.Key ) ) { Tag = cells };
+
+			int firmBand = -1, worstBand = -1, firmCount = 0;
+			double firmShare = -1, worstShare = 2;
+			var texts = new string[cells.Length];
+			for ( int i = 0; i < cells.Length; i++ ) {
+				var cell = cells[i];
+				if ( cell.Samples == 0 ) {
+					texts[i] = "—";
+				} else if ( cell.Samples < RateSpeak ) {
+					texts[i] = $"misst noch ({cell.Samples})";
+				} else if ( cell.Samples < RateFirm ) {
+					texts[i] = $"{cell.Share * 100:0} % ±{WilsonHalf( cell.Share, cell.Samples ):0}";
+				} else {
+					texts[i] = $"{cell.Share * 100:0} % ({cell.Samples})";
+					firmCount++;
+					if ( cell.Share < worstShare ) { worstShare = cell.Share; worstBand = i; }
+					if ( cell.Share > firmShare ) { firmShare = cell.Share; firmBand = i; }
+				}
+			}
+
+			// Nur ein Fach mit genug Proben darf "am besten" heissen, sonst
+			// gewinnt regelmaessig das Fach mit drei Schuessen darin.
+			//
+			// Und eine Waffe, die ueberall gleich gut trifft, bekommt keine
+			// Lieblingsentfernung angedichtet. Ueberschneiden sich die
+			// Vertrauensbereiche des besten und des schlechtesten Faches, ist
+			// der Unterschied keiner - das trifft die Railgun, und dass sie
+			// flach ist, ist der nuetzlichste Satz in dieser Tabelle.
+			string bestText = "—";
+			if ( firmBand >= 0 ) {
+				bool flat = firmCount >= 2 && worstBand >= 0
+					&& firmShare * 100 - WilsonHalf( firmShare, cells[firmBand].Samples )
+						< worstShare * 100 + WilsonHalf( worstShare, cells[worstBand].Samples );
+				bestText = flat ? "überall" : RangeNames[firmBand];
+			}
+			row.SubItems.Add( bestText );
+			foreach ( var text in texts ) row.SubItems.Add( text );
+			rows.Add( row );
+
+			if ( firmBand >= 0 && firmShare > bestShare ) {
+				bestShare = firmShare;
+				best = $"{WeaponName( entry.Key )}, {bestText}";
+			}
+		}
+
+		statBestRange.Text = best;
+
+		var stamp = string.Join( ";", rows.Select( r => r.Text + ":"
+			+ string.Join( ",", r.SubItems.Cast<ListViewItem.ListViewSubItem>().Select( s => s.Text ) ) ) );
+		if ( stamp == rateStamp ) return;
+		rateStamp = stamp;
+
+		var keep = SelectedKey( rateView );
+		rateView.BeginUpdate();
+		rateView.Items.Clear();
+		rateView.Items.AddRange( rows.ToArray() );
+		Reselect( rateView, keep );
+		rateView.EndUpdate();
+	}
+
+	static string WeaponName( string key ) {
+		foreach ( var w in Weapons ) {
+			if ( w.Key == key ) return w.Name;
+		}
+		return key;
+	}
+
+	// Was in einem Fach steckt, wenn die Maus darauf steht. Der zweite,
+	// duenne Balken hat keine Beschriftung - seine Zahl steht hier.
+	string rateTipShown = "";
+
+	void ShowRateTip( Point at ) {
+		var hit = rateView.HitTest( at );
+		int band = hit.Item is null || hit.SubItem is null
+			? -1 : hit.Item.SubItems.IndexOf( hit.SubItem ) - RateFirstBand;
+		if ( band < 0 || band >= RangeNames.Length || hit.Item?.Tag is not Cell[] cells ) {
+			if ( rateTipShown.Length > 0 ) { rateTip.SetToolTip( rateView, "" ); rateTipShown = ""; }
+			return;
+		}
+
+		var cell = cells[band];
+		string text;
+		if ( cell.Samples == 0 ) {
+			text = $"{hit.Item.Text}, {RangeNames[band]}\nAuf diese Entfernung wurde noch nicht geschossen.";
+		} else {
+			text = $"{hit.Item.Text}, {RangeNames[band]}\n"
+				+ $"{cell.Share * 100:0} % von {cell.Shots:0} gewerteten Schüssen"
+				+ $" (±{WilsonHalf( cell.Share, cell.Samples ):0} Punkte)\n"
+				+ $"{cell.Samples} Proben insgesamt, ältere zählen weniger";
+			if ( cell.LandSamples >= RateSpeak ) {
+				text += $"\nund {cell.LandShare * 100:0} %, wenn das Ziel im Flug aufsetzt"
+					+ $" ({cell.LandShots:0} Schüsse)";
+			} else if ( cell.LandShots >= 1 ) {
+				text += "\nzu wenige Schüsse auf ein aufsetzendes Ziel, um das zu trennen";
+			}
+		}
+
+		if ( text == rateTipShown ) return;
+		rateTipShown = text;
+		rateTip.SetToolTip( rateView, text );
+	}
 
 	// Ampel fuer eine Quote: was trifft, was geht so, was geht daneben
 	static Color RateColour( double share ) {
