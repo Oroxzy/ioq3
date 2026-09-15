@@ -80,6 +80,7 @@ cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_aimAssistPriority;
 cvar_t	*cl_aimAssistPriorityWeapon;
+cvar_t	*cl_aimAssistHoldLottery;
 cvar_t	*cl_autoSwitchEmpty;
 cvar_t	*cl_autoSwitchEmptyOrder;
 cvar_t	*cl_aimAssistHoldFire;
@@ -3634,6 +3635,14 @@ void CL_Init( void ) {
 	// overrules it for good.
 	cl_aimAssistPriorityWeapon = Cvar_Get( "cl_aimAssistPriorityWeapon", "", 0 );
 	Cvar_SetDescription( cl_aimAssistPriorityWeapon, "Where one weapon disagrees with cl_aimAssistPriority, as weapon.name:weight - for instance rocket.near:70. Anything not named here follows the general list. Read after baseq3/aimprio.cfg, so what is set here has the last word" );
+	// Off by default, because this is the one hold that refuses a shot the
+	// player can see is possible rather than one that is blocked. The number
+	// is how many times its own hit radius the measured spread may reach
+	// before the trigger is kept shut: two means a rocket whose corrected shot
+	// still scatters wider than two hundred and forty units.
+	cl_aimAssistHoldLottery = Cvar_Get( "cl_aimAssistHoldLottery", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_aimAssistHoldLottery, 0, 10, qfalse );
+	Cvar_SetDescription( cl_aimAssistHoldLottery, "Keep the trigger shut when the measured spread of this weapon at this flight time is more than this many times its hit radius. 0 never does. Needs cl_aimAssistHoldFire" );
 	// Reaching for another weapon when this one runs dry. The game only
 	// notices on the next pull of an empty trigger, and pays five hundred
 	// milliseconds for the notice; this notices on the round that emptied it.

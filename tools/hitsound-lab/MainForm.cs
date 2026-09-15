@@ -94,6 +94,14 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label statTuneBoxes = Number();
 	readonly Label statTuneSamples = Number();
 	readonly CheckBox aimHoldFire = new() { Text = "nicht schießen, solange der Schuss nicht durchkommt", AutoSize = true };
+	readonly TrackBar holdLottery = new() {
+		Minimum = 0, Maximum = 60, Value = 0, TickFrequency = 10,
+		SmallChange = 1, LargeChange = 5, Width = 190,
+	};
+	readonly Label holdLotteryValue = new() {
+		AutoSize = false, Width = 210, Height = 20, TextAlign = ContentAlignment.MiddleLeft,
+		ForeColor = Color.DimGray,
+	};
 	readonly CheckBox autoSwitch = new() { Text = "Waffe wechseln, wenn die Munition leer ist", Checked = true, AutoSize = true };
 	// Dieselbe Reihenfolge wie die Vorgabe von cl_autoSwitchEmptyOrder in
 	// code/client/cl_main.c, aus dem Gemessenen: Railgun 87 Prozent,
@@ -328,6 +336,8 @@ public class MainForm : Form, IMessageFilter {
 		aimLearn.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		itemOutline.CheckedChanged += ( _, _ ) => UpdateItemEnabled();
 		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
+		holdLottery.ValueChanged += ( _, _ ) => ShowHoldLottery();
+		ShowHoldLottery();
 		// die Folge-Felder auf den Standard-Hakenstand bringen
 		UpdateItemEnabled();
 		ShowItemRange();
@@ -743,6 +753,8 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( aimExact ) ),
 			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
+			Row( Labelled( "auch aussichtslose:", holdLottery ) ),
+			Row( Pad( holdLotteryValue ) ),
 			Row( Hint( "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." ) ),
 			Row( Hint( "Die Taste zielt nur; geschossen wird mit der Feuertaste." ) ),
 			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ),
@@ -765,6 +777,15 @@ public class MainForm : Form, IMessageFilter {
 		itemOutlineAll.Enabled = itemOutline.Checked;
 		itemRange.Enabled = itemOutline.Checked;
 		itemRangeValue.Enabled = itemOutline.Checked;
+	}
+
+	// Der Wert ist ein Vielfaches des Wirkradius, in Zehnteln eingestellt. Null
+	// heisst: nie zurueckhalten. Die Zahl daneben nennt es fuer die Rakete in
+	// Einheiten, damit es greifbar bleibt.
+	void ShowHoldLottery() {
+		double f = holdLottery.Value / 10.0;
+		holdLotteryValue.Text = f <= 0 ? "aus – es wird immer geschossen"
+			: $"ab {f:0.0}× Wirkradius, Rakete {f * 120:0} Einheiten";
 	}
 
 	void ShowItemRange() {
@@ -1184,6 +1205,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimExact=" + aimExact.Checked );
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
+		s.AppendLine( "holdLottery=" + holdLottery.Value );
 		s.AppendLine( "autoSwitch=" + autoSwitch.Checked );
 		s.AppendLine( "autoSwitchOrder=" + autoSwitchOrder.Text );
 		s.AppendLine( "aimPriority=" + PriorityString() );
@@ -1245,6 +1267,7 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimExact, v, "aimExact" );
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
+		SetBar( holdLottery, v, "holdLottery" );
 		SetBool( autoSwitch, v, "autoSwitch" );
 		if ( v.TryGetValue( "autoSwitchOrder", out var swOrder ) && swOrder.Length > 0 ) autoSwitchOrder.Text = swOrder;
 		if ( v.TryGetValue( "aimPriority", out var prio ) && prio.Length > 0 ) ApplyPriorityString( prio );
@@ -1310,6 +1333,10 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistExact {( aimExact.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
+		// Der Punkt muss ein Punkt bleiben, die Engine liest mit atof
+		var lottery = ( holdLottery.Value / 10.0 ).ToString( "0.0",
+			System.Globalization.CultureInfo.InvariantCulture );
+		cfg.AppendLine( $"seta cl_aimAssistHoldLottery {lottery}" );
 		cfg.AppendLine( $"seta cl_autoSwitchEmpty {( autoSwitch.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_autoSwitchEmptyOrder \"{autoSwitchOrder.Text}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistPriority \"{PriorityString()}\"" );

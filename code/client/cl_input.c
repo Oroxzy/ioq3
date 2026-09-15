@@ -2081,6 +2081,7 @@ land on the wrong command in the meantime.
 */
 #define AIM_HOLD_COVER		0
 #define AIM_HOLD_SPLASH		1
+#define AIM_HOLD_LOTTERY	2
 
 // which weapons take the frame-quantised point, decided beside the weapon
 // timer further down and wanted here to ask about the very same point
@@ -2088,8 +2089,8 @@ static qboolean CL_AimAssistSingleShot( int weapon );
 
 static int CL_AimAssistHoldReason( const entityState_t *entity, int weapon, const vec3_t eye,
 		float *distanceOut ) {
-	vec3_t		aim, body, offset;
-	float		lead, splash, distance;
+	vec3_t		aim, body, offset, motion;
+	float		lead, splash, distance, spread;
 	qboolean	exact;
 
 	if ( distanceOut ) {
@@ -2114,6 +2115,29 @@ static int CL_AimAssistHoldReason( const entityState_t *entity, int weapon, cons
 	distance = VectorLength( offset );
 	if ( distanceOut ) {
 		*distanceOut = distance;
+	}
+
+	// A shot the measurement already calls a lottery. The table keeps, per
+	// weapon and per flight time, how wide the corrected shot still scattered;
+	// where that is several times the radius the shot can do anything within,
+	// nothing comes of it. Over four hundred and forty-five rockets the record
+	// ran seventy-four per cent inside four hundred milliseconds of flight and
+	// eleven per cent past twelve hundred, and a third of them were fired into
+	// that last band - a hundred and forty-four rockets for sixteen hits.
+	//
+	// Off unless somebody asks for it: this is the one hold that refuses a
+	// shot the player can see is possible, rather than one that is blocked.
+	if ( cl_aimAssistHoldLottery->value > 0.0f ) {
+		CL_AimAssistVelocity( entity, motion );
+		spread = CL_AimAssistScatter( weapon, lead,
+			sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) );
+		if ( spread > 0.0f
+			&& spread > CL_AimAssistHitRadius( weapon ) * cl_aimAssistHoldLottery->value ) {
+			if ( distanceOut ) {
+				*distanceOut = spread;		// the spread is the news here, not the range
+			}
+			return AIM_HOLD_LOTTERY;
+		}
 	}
 
 	// A splash weapon going off within its own reach of us did not get through
@@ -3064,7 +3088,7 @@ static int	aimHoldFrom;
 static int	aimHoldRun;					// commands in a row that found no way through
 
 static void CL_AimAssistLogHold( int reason, int weapon, float distance ) {
-	static const char	*names[] = { "behind cover", "own splash" };
+	static const char	*names[] = { "behind cover", "own splash", "a lottery" };
 	int					held;
 
 	if ( reason == aimHoldLast ) {

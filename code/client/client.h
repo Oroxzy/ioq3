@@ -430,6 +430,7 @@ extern	cvar_t	*cl_aimAssistLead;
 extern	cvar_t	*cl_aimAssistLearn;
 extern	cvar_t	*cl_aimAssistPriority;
 extern	cvar_t	*cl_aimAssistPriorityWeapon;
+extern	cvar_t	*cl_aimAssistHoldLottery;
 extern	cvar_t	*cl_autoSwitchEmpty;
 extern	cvar_t	*cl_autoSwitchEmptyOrder;
 extern	cvar_t	*cl_aimAssistHoldFire;
