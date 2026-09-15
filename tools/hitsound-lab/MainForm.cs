@@ -284,6 +284,27 @@ public class MainForm : Form, IMessageFilter {
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
 
+	readonly Label statFixes = Number();
+	readonly Label statFixUp = Number();
+	readonly Label statFixDown = Number();
+	readonly Label statFixFlat = Number();
+	readonly Label histLast = new() {
+		AutoSize = true, Font = new Font( "Segoe UI", 11, FontStyle.Bold ),
+		Margin = new Padding( 4, 2, 4, 6 ),
+	};
+	readonly ComboBox histWeapon = new() {
+		DropDownStyle = ComboBoxStyle.DropDownList, Width = 150,
+		Margin = new Padding( 0, 8, 14, 0 ),
+	};
+	readonly Label histEmpty = new() {
+		Dock = DockStyle.Fill, ForeColor = Color.DimGray, TextAlign = ContentAlignment.MiddleCenter,
+		Visible = false,
+	};
+	readonly ListView histView = new() {
+		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
+		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
+	};
+
 	readonly Label statBestRange = Number();
 	readonly ListView rateView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
@@ -387,6 +408,18 @@ public class MainForm : Form, IMessageFilter {
 		// Die Trefferquote ist eine Matrix, keine Liste: die Waffe nach unten,
 		// die Entfernung nach rechts. So steht die Frage gezeichnet da, statt
 		// in Prosa beantwortet zu werden.
+		histView.Columns.Add( "#", 50, HorizontalAlignment.Right );
+		histView.Columns.Add( "Zeit", 85, HorizontalAlignment.Right );
+		histView.Columns.Add( "Waffe", 90 );
+		histView.Columns.Add( "Topf", 150 );
+		histView.Columns.Add( "Ziel", 80 );
+		histView.Columns.Add( "erwartet", 75, HorizontalAlignment.Right );
+		histView.Columns.Add( "gelaufen", 75, HorizontalAlignment.Right );
+		histView.Columns.Add( "daneben", 75, HorizontalAlignment.Right );
+		histView.Columns.Add( "Fach", 110, HorizontalAlignment.Right );
+		histView.Columns.Add( "Änderung", 150 );
+		histView.Columns.Add( "warum", 190 );
+
 		// Die Antwort steht vorne: die Spalte, die die Frage beantwortet, soll
 		// nicht die sein, die beim Schmalerziehen als erste leidet. Eine
 		// Spalte "Proben" gibt es nicht - jedes Fach nennt seine Zahl selbst.
@@ -589,6 +622,54 @@ public class MainForm : Form, IMessageFilter {
 		};
 		rateView.MouseMove += ( _, e ) => ShowRateTip( e.Location );
 
+		// Der Balken der Korrekturen sitzt anders als die beiden anderen: er
+		// waechst aus der Mitte nach beiden Seiten, weil eine Korrektur eine
+		// Richtung hat und kein Urteil. Blau hinauf, orange hinunter - keine
+		// Ampel, denn "staerker" ist nicht besser als "schwaecher".
+		histView.DrawColumnHeader += ( _, e ) => e.DrawDefault = true;
+		histView.DrawItem += ( _, _ ) => { };
+		histView.DrawSubItem += ( _, e ) => {
+			if ( e.ColumnIndex != HistBarColumn || e.Item?.Tag is not double moved ) {
+				e.DrawDefault = true;
+				return;
+			}
+			e.DrawBackground();
+
+			var bar = e.Bounds;
+			bar.Inflate( -3, -3 );
+			using ( var back = new SolidBrush( Color.FromArgb( 232, 232, 232 ) ) ) {
+				e.Graphics.FillRectangle( back, bar );
+			}
+			int middle = bar.X + bar.Width / 2;
+			using ( var tick = new Pen( Color.FromArgb( 200, 200, 200 ) ) ) {
+				e.Graphics.DrawLine( tick, middle, bar.Y, middle, bar.Bottom - 1 );
+			}
+
+			// Voller Ausschlag ist eine halbe Zehntelstelle. Gemessen liegt die
+			// Haelfte aller Korrekturen unter 0,01 und ein Zwanzigstel darueber -
+			// wer anschlaegt, bekommt eine Kerbe an der Spitze statt stiller
+			// Kappung.
+			double full = 0.05;
+			int half = bar.Width / 2 - 1;
+			int width = (int)( half * Math.Min( Math.Abs( moved ) / full, 1.0 ) );
+			if ( Math.Abs( moved ) >= 0.005 ) {
+				var colour = moved > 0 ? Color.FromArgb( 120, 160, 215 ) : Color.FromArgb( 215, 150, 110 );
+				using var fill = new SolidBrush( colour );
+				e.Graphics.FillRectangle( fill, moved > 0 ? middle : middle - width,
+					bar.Y, width, bar.Height );
+				if ( Math.Abs( moved ) > full ) {
+					using var edge = new SolidBrush( Color.FromArgb( 90, 90, 90 ) );
+					e.Graphics.FillRectangle( edge, moved > 0 ? middle + width - 3 : middle - width,
+						bar.Y, 3, bar.Height );
+				}
+			}
+
+			TextRenderer.DrawText( e.Graphics, e.SubItem?.Text ?? "", histView.Font, bar,
+				Math.Abs( moved ) < 0.005 ? Color.DimGray : Color.Black,
+				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter );
+		};
+		histWeapon.SelectedIndexChanged += ( _, _ ) => { histStamp = ""; RefreshStats(); };
+
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
 		start.Click += ( _, _ ) => StartGame();
@@ -601,7 +682,7 @@ public class MainForm : Form, IMessageFilter {
 		// Vergroessern verteilt wird. Ohne dieses Merken nimmt FitColumns die
 		// jeweils aktuelle Breite als Gewicht, und die Verhaeltnisse wandern
 		// bei jedem Ziehen am Fenster ein Stueck weiter.
-		foreach ( var view in new[] { shotView, tuneView, rankView, prioView } ) {
+		foreach ( var view in new[] { shotView, tuneView, rankView, histView, prioView } ) {
 			foreach ( ColumnHeader c in view.Columns ) c.Tag = c.Width;
 			FitOnResize( view );
 		}
@@ -945,6 +1026,17 @@ public class MainForm : Form, IMessageFilter {
 		return flow;
 	}
 
+	// Dasselbe untereinander. Der Kopf einer Karteikarte ist AutoSize, also
+	// darf dort auch ein Stapel stehen und nicht nur eine Reihe.
+	static FlowLayoutPanel Column( params Control[] items ) {
+		var flow = new FlowLayoutPanel {
+			AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+			FlowDirection = FlowDirection.TopDown, WrapContents = false,
+		};
+		flow.Controls.AddRange( items );
+		return flow;
+	}
+
 	Control BuildStatsBox() {
 		var tabs = new TabControl { Dock = DockStyle.Fill };
 		tabs.TabPages.Add( Page( "Trefferton",
@@ -966,6 +1058,21 @@ public class MainForm : Form, IMessageFilter {
 		tabs.TabPages.Add( Page( "Trefferquote",
 			Row( Counter( "am besten:", statBestRange ) ),
 			rateView ) );
+
+		// Zwei Zeilen Kopf: oben die Zaehler und die Waffenauswahl, darunter
+		// die letzte Korrektur als ganzer Satz - so muss fuer die Frage
+		// „was hat sich zuletzt geaendert" niemand die Liste lesen.
+		var histBody = new Panel { Dock = DockStyle.Fill };
+		histBody.Controls.Add( histView );
+		histBody.Controls.Add( histEmpty );
+		tabs.TabPages.Add( Page( "Korrekturen",
+			Column(
+				Row( Counter( "Korrekturen:", statFixes ), Counter( "stärker:", statFixUp ),
+					Counter( "schwächer:", statFixDown ), Counter( "ohne Wirkung:", statFixFlat ),
+					Divider(), Pad( new Label { Text = "Waffe:", AutoSize = true,
+						Margin = new Padding( 0, 12, 4, 0 ) } ), histWeapon ),
+				histLast ),
+			histBody ) );
 		// Eigene Karteikarte statt Page(): die Bedienung bekommt eine feste
 		// Hoehe, sonst nimmt sie sich mit den Schiebern darin den ganzen Platz
 		// und die Liste bleibt einen Pixel hoch.
@@ -1549,6 +1656,9 @@ public class MainForm : Form, IMessageFilter {
 		var impacts = new List<Impact>();
 		var missiles = new List<Missile>();
 		var tunes = new Dictionary<string, Tune>();
+		var corrections = new List<Correction>();
+		Learn? pending = null;
+		int segment = 0, clockFrom = 0, clockLast = 0;
 		var learned = "";
 		var stamp = "";
 
@@ -1602,13 +1712,42 @@ public class MainForm : Form, IMessageFilter {
 				}
 			} else if ( trimmed.StartsWith( "aim learn: " ) ) {
 				learned = trimmed;
+				// Der Partner steht in der naechsten Zeile. Steht dort etwas
+				// anderes, gehoert diese hier zu nichts und faellt weg.
+				pending = Learn.Parse( trimmed[11..] );
+				continue;
 			} else if ( trimmed.StartsWith( "aim log: " ) ) {
 				stamp = trimmed;
-			} else if ( trimmed.StartsWith( "aim tune: " ) ) {
-				var tune = Tune.Parse( trimmed );
+			} else if ( trimmed.StartsWith( "aim tune: " ) || trimmed.StartsWith( "aim table: " ) ) {
+				bool fromLearn = trimmed[4] == 't' && trimmed[5] == 'u';
+				var tune = Tune.Parse( trimmed[( fromLearn ? 10 : 11 )..] );
 				// je Waffe und Flugzeitband zaehlt der zuletzt gemessene Stand
 				if ( tune is not null ) tunes[tune.Weapon + "|" + tune.Band + "|" + tune.Pace] = tune;
+
+				// Eine Korrektur ist das Paar aus beiden Zeilen. Der Abzug der
+				// ganzen Tabelle heisst "aim table:" und ist keine.
+				if ( fromLearn && tune is not null && pending is not null
+					&& pending.Weapon == tune.Weapon ) {
+					// Eine neue Runde stellt die Serveruhr zurueck; ab da laeuft
+					// die Uhr in der Liste wieder von vorn. Verglichen wird mit
+					// der vorigen Korrektur und nicht mit dem Anfang der Runde:
+					// die Uhr faellt beim Kartenwechsel von neunhunderttausend
+					// auf vierzigtausend, was immer noch weit ueber dem Anfang
+					// liegt - so blieb ein Wechsel unbemerkt und zwei Zeilen
+					// hintereinander lasen 14:50 und 0:32.
+					if ( clockLast > 0 && tune.Frame < clockLast ) {
+						segment++;
+						clockFrom = tune.Frame;
+					}
+					if ( clockFrom == 0 ) clockFrom = tune.Frame;
+					clockLast = tune.Frame;
+					corrections.Add( new Correction {
+						What = pending, Box = tune,
+						Segment = segment, Since = tune.Frame - clockFrom,
+					} );
+				}
 			}
+			pending = null;
 		}
 
 		ShowLogVersion( stamp );
@@ -1629,6 +1768,7 @@ public class MainForm : Form, IMessageFilter {
 
 		UpdateShots( shots, damageFrames, impacts, missiles );
 		UpdateTune( tunes );
+		UpdateHistory( corrections );
 		ShowLearned( learned );
 
 		// Das Spiel ist zu Ende und sein Protokoll gelesen: was es an Vorhalt
@@ -1922,11 +2062,15 @@ public class MainForm : Form, IMessageFilter {
 	// Flugzeitband ueber sich selbst gemessen hat
 	sealed class Tune {
 		public string Weapon = "";
-		public int Band, Pace, Samples;
+		public int Band, Pace, Samples, Frame;
 		public double From, Above, Factor, Scatter, Reach;
+		// Das Fach selbst, vor und nach diesem Schuss. Nur die Korrekturzeile
+		// traegt sie; der Abzug der ganzen Tabelle nicht, denn dort hat sich
+		// nichts bewegt. Minus eins heisst: steht nicht auf dieser Zeile.
+		public double Was = -1, Now = -1;
 
-		public static Tune? Parse( string line ) {
-			var f = line[10..].Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+		public static Tune? Parse( string payload ) {
+			var f = payload.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 			if ( f.Length < 3 ) return null;
 
 			var t = new Tune { Weapon = f[0], Scatter = -1 };
@@ -1940,6 +2084,9 @@ public class MainForm : Form, IMessageFilter {
 				case "factor": t.Factor = Num( f[i + 1] ); break;
 				case "scatter": t.Scatter = Num( f[i + 1] ); break;
 				case "reach": t.Reach = Num( f[i + 1] ); break;
+				case "was": t.Was = Num( f[i + 1] ); break;
+				case "now": t.Now = Num( f[i + 1] ); break;
+				case "frame": int.TryParse( f[i + 1], out t.Frame ); break;
 				}
 			}
 			return t.Samples > 0 ? t : null;
@@ -1948,6 +2095,67 @@ public class MainForm : Form, IMessageFilter {
 		static double Num( string s ) =>
 			double.TryParse( s, System.Globalization.NumberStyles.Any,
 				System.Globalization.CultureInfo.InvariantCulture, out double v ) ? v : 0;
+	}
+
+	// Eine Zeile "aim learn:" - ein einzelner nachgeregelter Schuss. Die Zeile
+	// darunter, "aim tune:", sagt in welches Fach er ging und wohin der Wert
+	// dieses Faches sich dadurch bewegt hat; die beiden gehoeren zusammen.
+	sealed class Learn {
+		public string Weapon = "", Target = "";
+		public int Samples, Frame;
+		public double Ran, Straight, Expected, Aside, Error, Weight, Pace, MySpeed, Hold;
+
+		// Die Flugzeit steht nicht auf der Zeile, aber "of" ist Tempo mal
+		// Flugzeit, also faellt sie heraus. Genauer als das Band, das die
+		// Tune-Zeile nennt, und ohne den Schuss dazu suchen zu muessen.
+		public double Flight => Pace > 0 ? Straight / Pace : 0;
+
+		// Genau die Groesse, die die Engine quadriert in das Fach legt: wie
+		// weit der Schuss am Ende danebenlag, laengs und quer zusammen.
+		public double Missed => Math.Sqrt( ( Ran - Expected ) * ( Ran - Expected ) + Aside * Aside );
+
+		public static Learn? Parse( string payload ) {
+			var f = payload.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			if ( f.Length < 3 ) return null;
+
+			var l = new Learn { Weapon = f[0] };
+			for ( int i = 1; i < f.Length - 1; i++ ) {
+				switch ( f[i] ) {
+				case "target": l.Target = f[i + 1]; break;
+				case "ran": l.Ran = Num( f[i + 1] ); break;
+				case "of": l.Straight = Num( f[i + 1] ); break;
+				case "expected": l.Expected = Num( f[i + 1] ); break;
+				case "aside": l.Aside = Num( f[i + 1] ); break;
+				case "error": l.Error = Num( f[i + 1] ); break;
+				case "weight": l.Weight = Num( f[i + 1] ); break;
+				case "pace": l.Pace = Num( f[i + 1] ); break;
+				case "myspeed": l.MySpeed = Num( f[i + 1] ); break;
+				case "hold": l.Hold = Num( f[i + 1] ); break;
+				case "n": int.TryParse( f[i + 1], out l.Samples ); break;
+				case "frame": int.TryParse( f[i + 1], out l.Frame ); break;
+				}
+			}
+			return l.Samples > 0 ? l : null;
+		}
+
+		static double Num( string s ) =>
+			double.TryParse( s, System.Globalization.NumberStyles.Any,
+				System.Globalization.CultureInfo.InvariantCulture, out double v ) ? v : 0;
+	}
+
+	sealed class Correction {
+		public Learn What = null!;
+		public Tune Box = null!;
+		public int Segment;			// welcher Abschnitt des Abends, fuer die Uhr
+		public int Since;			// ms seit dessen Anfang
+
+		// Wie weit sich das Fach bewegt hat. Das ist der Eintrag im Hauptbuch -
+		// nicht der verblendete Wert, den die Zielhilfe fuer diesen einen
+		// Schuss gegeben haette.
+		// Ein aelteres Protokoll kennt die beiden Felder nicht. Dann steht hier
+		// nichts - und nicht etwa null, was wie "nichts bewegt" aussaehe.
+		public bool Known => Box.Was >= 0 && Box.Now >= 0;
+		public double Moved => Known ? Box.Now - Box.Was : 0;
 	}
 
 	// Die Tabelle, die das Spiel ueber sich selbst fuehrt: pro Waffe und
@@ -2048,6 +2256,134 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	const int RankBarColumn = 3;
+	const int HistBarColumn = 9;
+
+	string histStamp = "";
+
+	/*
+	Welche Nachregelung wann gemacht wurde, eine Zeile je Schuss, neueste oben.
+
+	Eine Zeile ist das Paar aus "aim learn:" und der "aim tune:" darunter. Die
+	Spalte "Fach" ist der eigentliche Eintrag: der Wert des Faches vor und nach
+	diesem Schuss. Frueher stand dort der verblendete Wert an genau diesem
+	Vorhalt, und der ist etwas anderes - er mischt bis zu vier Faecher, und
+	darum summierten sich die einzelnen Korrekturen auch nicht zur Bewegung des
+	Faches auf, in einem Topf sogar mit umgekehrtem Vorzeichen. Seit die Engine
+	"was" und "now" mitschreibt, ist die Spalte das, wonach sie aussieht.
+
+	Gemessen wird nur, was fliegt. Hitscan-Waffen haben keine Flugzeit und
+	lehren diese Tabelle nichts - in viereinhalb Megabyte Protokoll stammen
+	alle 359 Proben von der Rakete, gegen 2743 Schuesse mit dem Maschinengewehr,
+	die null ergaben. Darum steht das auch so da, wenn die Liste leer ist:
+	sonst liest sie sich wie ein Fehler.
+	*/
+	void UpdateHistory( List<Correction> corrections ) {
+		string pick = histWeapon.SelectedItem as string ?? "alle";
+
+		// Die Auswahl bietet nur an, was auch vorkommt
+		var seen = corrections.Select( c => c.What.Weapon ).Distinct().OrderBy( w => w ).ToList();
+		if ( histWeapon.Items.Count != seen.Count + 1 ) {
+			histWeapon.Items.Clear();
+			histWeapon.Items.Add( "alle" );
+			foreach ( var w in seen ) histWeapon.Items.Add( w );
+			histWeapon.SelectedItem = histWeapon.Items.Contains( pick ) ? pick : "alle";
+			pick = histWeapon.SelectedItem as string ?? "alle";
+		}
+
+		var shown = pick == "alle" ? corrections
+			: corrections.Where( c => c.What.Weapon == pick ).ToList();
+
+		int up = 0, down = 0, flat = 0;
+		int rounds = shown.Count == 0 ? 0 : shown.Max( c => c.Segment ) + 1;
+		var rows = new List<ListViewItem>();
+		foreach ( var c in Enumerable.Reverse( shown ).Take( 500 ) ) {
+			double moved = c.Moved;
+			if ( !c.Known ) { }
+			else if ( moved >= 0.005 ) up++;
+			else if ( moved <= -0.005 ) down++;
+			else flat++;
+
+			var row = new ListViewItem( c.What.Samples.ToString() ) { Tag = moved };
+			// Die Uhr laeuft je Runde; die Nummer steht nur davor, wenn es
+			// mehr als eine gab. Ohne sie folgt in der Liste auf 0:32 ploetzlich
+			// 14:50, und das sieht nach einem Fehler aus statt nach einem
+			// Kartenwechsel.
+			row.SubItems.Add( ( rounds > 1 ? $"{c.Segment + 1} · " : "" )
+				+ $"{c.Since / 60000}:{c.Since / 1000 % 60:00}" );
+			row.SubItems.Add( c.What.Weapon );
+			row.SubItems.Add( BoxName( c.Box ) );
+			row.SubItems.Add( c.What.Target );
+			row.SubItems.Add( $"{c.What.Expected:0} u" );
+			row.SubItems.Add( $"{c.What.Ran:0} u" );
+			row.SubItems.Add( $"{c.What.Missed:0} u" );
+			row.SubItems.Add( c.Known ? $"{c.Box.Was:0.00} → {c.Box.Now:0.00}" : "—" );
+			row.SubItems.Add( !c.Known ? "—"
+				: Math.Abs( moved ) < 0.005 ? "±0,00" : $"{moved:+0.00;−0.00}" );
+			row.SubItems.Add( WhyText( c.What ) );
+
+			// Wie weit der Schuss am Ende danebenlag, nach denselben Schwellen
+			// gefaerbt, die die Engine selbst zum Gewichten benutzt
+			var reach = c.Box.Reach > 0 ? c.Box.Reach : 120;
+			row.SubItems[7].ForeColor = c.What.Missed < reach * 0.5 ? Color.ForestGreen
+				: c.What.Missed < reach ? Color.DarkGoldenrod : Color.Firebrick;
+			row.UseItemStyleForSubItems = false;
+			rows.Add( row );
+		}
+
+		statFixes.Text = shown.Count.ToString();
+		statFixUp.Text = up.ToString();
+		statFixDown.Text = down.ToString();
+		statFixFlat.Text = flat.ToString();
+
+		if ( rows.Count == 0 ) {
+			histLast.Text = "";
+			histEmpty.Text = corrections.Count == 0
+				? "Noch nichts nachgeregelt.\n\n"
+					+ "Gemessen wird nur, was fliegt: Rakete, Granate, Plasma, BFG, Enterhaken.\n"
+					+ "Hitscan-Waffen – Maschinengewehr, Railgun, Schrotflinte, Blitzwerfer –\n"
+					+ "haben keine Flugzeit und lehren die Tabelle nichts."
+				: $"Mit dieser Waffe wurde nichts nachgeregelt.";
+			histEmpty.Visible = true;
+			histView.Visible = false;
+		} else {
+			var top = shown[^1];
+			histLast.Text = $"zuletzt #{top.What.Samples} · {top.What.Weapon} · {BoxName( top.Box )}"
+				+ $" · {top.What.Target} lief {top.What.Ran:0} statt {top.What.Expected:0} Einheiten"
+				+ $" – {WhyText( top.What )}"
+				+ ( top.Known ? $" · {top.Box.Was:0.00} → {top.Box.Now:0.00}" : "" );
+			histEmpty.Visible = false;
+			histView.Visible = true;
+		}
+
+		var stamp = rows.Count + "|" + pick + "|" + histLast.Text;
+		if ( stamp == histStamp ) return;
+		histStamp = stamp;
+
+		var keep = SelectedKey( histView );
+		histView.BeginUpdate();
+		histView.Items.Clear();
+		histView.Items.AddRange( rows.ToArray() );
+		Reselect( histView, keep );
+		histView.EndUpdate();
+	}
+
+	static string BoxName( Tune t ) {
+		string when = t.Band >= 3 ? $"ab {t.From:0.0} s"
+			: $"{t.From:0.0}–{( t.Band == 0 ? 0.4 : t.Band == 1 ? 0.8 : 1.3 ):0.0} s";
+		return when + ( t.Pace == 0 ? " · langsam" : " · schnell" );
+	}
+
+	// Warum dieser Schuss das Fach bewegt hat, in der Sprache der Sache. Die
+	// Reihenfolge ist die der Engine: die beiden Anschlaege zuerst, denn sie
+	// bedeuten etwas anderes als ein zu langer oder zu kurzer Vorhalt.
+	static string WhyText( Learn l ) {
+		string why = l.Error <= -0.999 ? "Ziel kehrte um"
+			: l.Error >= 0.999 ? "Ziel zog davon"
+			: l.Error <= -0.05 ? "zu weit geführt"
+			: l.Error >= 0.05 ? "zu kurz geführt"
+			: "Vorhalt saß";
+		return l.Weight < 0.6 ? why + " · viel seitwärts" : why;
+	}
 
 	/*
 	Die Trefferquote je Waffe und Entfernung.
