@@ -1386,6 +1386,15 @@ gespeicherten Faecher still umbenennen.
 // Die Form der Datei. Steigt, sobald sich CL_AimAssistRange aendert: die
 // Grenzen stecken darin, was ein Fach bedeutet, und eine verschobene Grenze
 // macht aus jeder gespeicherten Zahl still eine Aussage ueber etwas anderes.
+//
+// Einmal ist sie bewusst NICHT gestiegen: die dritte Grenze wurde noch vor dem
+// ersten ausgelieferten Bau von 1450 auf 1500 nachgezogen, weil die
+// Rasterschaetzung auf 1500 fiel. Das sind fuenfzig Einheiten auf einer Kante,
+// also ein knappes Zehntel eines Fachs; in der einzigen Datei, die es damals
+// gab, betraf es eine Handvoll Proben von neunhundert, und das Altern loescht
+// sie ohnehin in wenigen hundert Schuessen aus. Dafuer einen ganzen Abend
+// Messung wegzuwerfen waere derselbe schlechte Tausch wie bei den Zwillingen
+// weiter unten: Genauigkeit, die mehr Messung kostet als sie Fehler spart.
 #define AIM_RATE_FORMAT	1
 // Was ein Fach je gebuchtem Schuss von seiner Vergangenheit behaelt. Langsamer
 // als die 0,98 der Vorhalte-Tabelle, und das mit Absicht: ein Zaehler braucht
