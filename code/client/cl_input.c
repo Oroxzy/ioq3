@@ -2171,6 +2171,89 @@ static int		aimPriorityCount = -1;		// modification count the weights were read 
 // These are the whole effective list per weapon, filled from the defaults and
 // then from whatever the player named, so the pick never has to work out where
 // a number came from.
+// What each weapon holds differently, in the order of aimPriorityName:
+// sight, cursor, attacker, sure, near, wounded, keep, powerup, air. A minus
+// one means "whatever the general list says", so the hook and the mission-pack
+// weapons need no numbers invented for them.
+//
+// Where these come from, weapon by weapon:
+//
+// sure is nought on every hitscan weapon because it is an exact no-op there -
+// with no flight time there is no measured scatter, so it hands every
+// candidate the same half-weight and orders nothing. Leaving it at sixty only
+// made the totals in the record unreadable.
+//
+// near follows each weapon's own distance curve. Measured hit rate by band:
+// the machinegun holds 87 to 91 per cent inside eight hundred units and falls
+// to 61 at twelve hundred and 52 past sixteen hundred; plasma runs 94, 70, 56,
+// 38, 20; the rocket 86, 83, 60, 35, 23 and 12 past twelve hundred - the same
+// shape, because plasma's speed advantage is spent exactly on its smaller
+// splash. The railgun is flat across the whole map, 86 to 100 at every range,
+// and keeps the lowest near of all. The lightning cannot reach past 768 units
+// at all, and the grenade's arc comes down by about 660, so both take the
+// maximum. The gauntlet reaches forty-six units, which even a hundred cannot
+// really express.
+//
+// cursor separates a weapon the view is snapped onto from one it is steered
+// towards. The single-shot weapons log an aiming error of exactly nought, so
+// distance from the crosshair costs them nothing; the machinegun and plasma
+// are steered and pay for it - inside eight hundred units the machinegun hit
+// 97 per cent within a degree of swing and 50 beyond eight.
+//
+// sure is high on the splash weapons because it is the strongest single
+// predictor in the record and the only criterion that knows a shot is
+// hopeless: rockets whose measured scatter sat inside the splash radius landed
+// 81 per cent, those past four hundred units of scatter 14. Nearly a third of
+// all rockets went into a band that lands under six.
+//
+// The three that name a target for a reason unrelated to whether the shot can
+// land - who hit me, who is hurt, who carries a powerup - are nought on the
+// weapons with a second of flight, and kept on the ones that arrive at once.
+//
+// Without shots to go by, the lightning, grenade, BFG and gauntlet are argued
+// from their reach and their splash rather than measured. They are marked in
+// the bench as guesses and should be settled by play.
+static const float	aimWeaponDefault[WP_NUM_WEAPONS][AIM_PRIO_COUNT] = {
+	{  -1, -1, -1, -1,  -1, -1, -1, -1, -1 },		// none
+	{ 100, 70, 60,  0, 100, 20, 25,  0,  0 },		// gauntlet
+	{ 100, 80,100,  0,  55, 35, 35, 15,  0 },		// machinegun
+	{ 100, 85, 90,  0,  75, 25, 20, 15,  0 },		// shotgun
+	{ 100, 60,  0, 85, 100,  0, 30,  0,  0 },		// grenade
+	{ 100, 70,  0, 95,  80,  0, 30,  0, 35 },		// rocket
+	{ 100, 55, 85,  0, 100, 30, 45, 10,  0 },		// lightning
+	{ 100, 95, 80,  0,  10, 45, 15, 35,  0 },		// railgun
+	{ 100, 85, 90, 45,  80, 30, 35, 10,  0 },		// plasma
+	{ 100, 75,  0, 90,  45,  0, 30,  0, 25 },		// bfg
+	{  -1, -1, -1, -1,  -1, -1, -1, -1, -1 },		// hook: it does no damage
+#ifdef MISSIONPACK
+	{  -1, -1, -1, -1,  -1, -1, -1, -1, -1 },		// nailgun
+	{  -1, -1, -1, -1,  -1, -1, -1, -1, -1 },		// prox
+	{  -1, -1, -1, -1,  -1, -1, -1, -1, -1 },		// chaingun
+#endif
+};
+
+// Only the two slow single-shot weapons hold a target for less time than the
+// rest: their cycle is a second and a half, so four seconds of extra loyalty
+// would span several independent decisions.
+static const float	aimWeaponLifeDefault[WP_NUM_WEAPONS][AIM_PRIO_COUNT] = {
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// none
+	{ -1, -1, -1, -1, -1, -1,  2, -1, -1 },			// gauntlet
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// machinegun
+	{ -1, -1, -1, -1, -1, -1,  2, -1, -1 },			// shotgun
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// grenade
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// rocket
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// lightning
+	{ -1, -1, -1, -1, -1, -1,  2, -1, -1 },			// railgun
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// plasma
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// bfg
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },			// hook
+#ifdef MISSIONPACK
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{ -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+#endif
+};
+
 static float	aimWeaponWeight[WP_NUM_WEAPONS][AIM_PRIO_COUNT];
 static float	aimWeaponTime[WP_NUM_WEAPONS][AIM_PRIO_COUNT];
 static int		aimWeaponCount = -1;
@@ -2270,6 +2353,16 @@ static void CL_AimAssistParsePriorities( const char *text, qboolean perWeapon ) 
 			if ( Q_stricmp( name, aimPriorityName[j] ) ) {
 				continue;
 			}
+			// Sight at nought takes the visibility gate out altogether, and
+			// then a bot behind a wall can win the pick - which strands the
+			// steering on a target it can do nothing with while a reachable
+			// one stands in the open. A cvar was a thin enough channel that
+			// nobody did it by accident; a file invites hand editing.
+			if ( j == AIM_PRIO_SIGHT && value < 1.0f ) {
+				Com_Printf( "aim prio: sight cannot be nought, it is the only thing keeping"
+					" a bot behind a wall out of the running - taken as one\n" );
+				value = 1.0f;
+			}
 			if ( !perWeapon ) {
 				aimPriorityWeight[j] = Com_Clamp( 0.0f, 100.0f, value );
 				if ( life >= 0.0f ) {
@@ -2305,19 +2398,73 @@ no such ceiling, and the cvar stays as a last word for anyone at the console.
 static char		aimPrioText[8192];
 static qboolean	aimPrioLoaded;
 
+#define AIM_PRIO_FORMAT	1
+
+// What the weapon lists used to be shipped as, before they became a table.
+// Anyone who never touched them has exactly this sitting in their q3config,
+// and must not be frozen on it; anyone who changed it meant it.
+#define AIM_PRIO_LEGACY	"rocket.near:70 grenade.near:85 plasma.near:60 shotgun.near:80" \
+						" lightning.near:95 railgun.near:10 machinegun.near:25"
+
+static qboolean CL_AimAssistSameWords( const char *a, const char *b ) {
+	while ( *a && *b ) {
+		while ( *a == ' ' || *a == '\t' || *a == '\n' || *a == '\r' ) {
+			a++;
+		}
+		while ( *b == ' ' || *b == '\t' || *b == '\n' || *b == '\r' ) {
+			b++;
+		}
+		if ( *a != *b ) {
+			return qfalse;
+		}
+		if ( *a ) {
+			a++;
+			b++;
+		}
+	}
+	return *a == *b;
+}
+
 static void CL_AimAssistPriorityLoad( void ) {
 	union { char *c; void *v; } file;
-	int		length;
+	int		length, format;
 
 	aimPrioLoaded = qtrue;
 	aimPrioText[0] = '\0';
 
 	length = FS_ReadFile( AIM_PRIO_FILE, &file.v );
-	if ( length <= 0 || !file.c ) {
+	if ( length > 0 && file.c ) {
+		// Said out loud, unlike the learned table, which breaks off without a
+		// word: a priority file that quietly does nothing looks exactly like a
+		// bench that is broken.
+		if ( sscanf( file.c, "format %i", &format ) == 1 && format != AIM_PRIO_FORMAT ) {
+			Com_Printf( "aim prio: %s is format %i and this build reads %i, so it was passed over\n",
+				AIM_PRIO_FILE, format, AIM_PRIO_FORMAT );
+			FS_FreeFile( file.v );
+			return;
+		}
+		if ( length >= (int)sizeof( aimPrioText ) ) {
+			Com_Printf( "aim prio: %s is %i bytes and only the first %i were read\n",
+				AIM_PRIO_FILE, length, (int)sizeof( aimPrioText ) - 1 );
+		}
+		Q_strncpyz( aimPrioText, file.c, sizeof( aimPrioText ) );
+		FS_FreeFile( file.v );
 		return;
 	}
-	Q_strncpyz( aimPrioText, file.c, sizeof( aimPrioText ) );
-	FS_FreeFile( file.v );
+
+	// No file, but a cvar that somebody set by hand: keep it, in the place it
+	// now belongs. The old shipped string is passed over, or everyone who
+	// never touched it would be pinned to yesterday's numbers for good.
+	if ( !cl_aimAssistPriorityWeapon->string[0]
+		|| CL_AimAssistSameWords( cl_aimAssistPriorityWeapon->string, AIM_PRIO_LEGACY ) ) {
+		return;
+	}
+	Com_sprintf( aimPrioText, sizeof( aimPrioText ),
+		"format %i\n// Taken over from cl_aimAssistPriorityWeapon, which used to hold this.\n%s\n",
+		AIM_PRIO_FORMAT, cl_aimAssistPriorityWeapon->string );
+	FS_WriteFile( AIM_PRIO_FILE, aimPrioText, strlen( aimPrioText ) );
+	Cvar_Set( "cl_aimAssistPriorityWeapon", "" );
+	Com_Printf( "aim prio: the weapon lists moved from the cvar into %s\n", AIM_PRIO_FILE );
 }
 
 void CL_AimAssistPriorityReload( void ) {
@@ -2345,12 +2492,15 @@ static void CL_AimAssistPriorities( void ) {
 	}
 	CL_AimAssistParsePriorities( cl_aimAssistPriority->string, qfalse );
 
-	// the per-weapon list starts as a copy of the general one, so the pick
-	// reads one number and never has to ask where it came from
+	// The per-weapon list starts from what that weapon is known to want, and
+	// falls back to the general one wherever the table says nothing. The pick
+	// then reads one number and never has to ask where it came from.
 	for ( weapon = 0; weapon < WP_NUM_WEAPONS; weapon++ ) {
 		for ( i = 0; i < AIM_PRIO_COUNT; i++ ) {
-			aimWeaponWeight[weapon][i] = aimPriorityWeight[i];
-			aimWeaponTime[weapon][i] = aimPriorityTime[i];
+			aimWeaponWeight[weapon][i] = aimWeaponDefault[weapon][i] >= 0.0f
+				? aimWeaponDefault[weapon][i] : aimPriorityWeight[i];
+			aimWeaponTime[weapon][i] = aimWeaponLifeDefault[weapon][i] >= 0.0f
+				? aimWeaponLifeDefault[weapon][i] : aimPriorityTime[i];
 		}
 	}
 
@@ -2592,13 +2742,13 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	entityState_t	*entity, *best = NULL;
 	const char		*info;
 	trace_t			trace;
-	vec3_t			targetOrigin, direction, desired, motion;
+	vec3_t			targetOrigin, direction, desired, motion, hullMins, hullMaxs;
 	float			bestScore = -1.0f, score, angle, pitchDelta, yawDelta, distance;
-	float			speed, scatter, fresh, weight[AIM_PRIO_COUNT];
+	float			speed, scatter, fresh, flight, weight[AIM_PRIO_COUNT];
 	float			part[AIM_PRIO_COUNT], bestPart[AIM_PRIO_COUNT];
 	char			others[768];
 	int				i, k, targetTeam;
-	qboolean		visible;
+	qboolean		visible, airborne;
 
 	others[0] = '\0';
 	Com_Memset( bestPart, 0, sizeof( bestPart ) );
@@ -2711,7 +2861,6 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 			? weight[AIM_PRIO_KEEP] * ( 0.5f + 0.5f
 				* CL_AimAssistFade( aimKeepSince, CL_AimAssistLife( weapon, AIM_PRIO_KEEP ) ) )
 			: 0.0f;
-		part[AIM_PRIO_AIR] = CL_AimAssistAirborne( entity ) ? weight[AIM_PRIO_AIR] : 0.0f;
 		part[AIM_PRIO_POWERUP] = ( entity->powerups & ( ( 1 << PW_QUAD ) | ( 1 << PW_REGEN )
 			| ( 1 << PW_BATTLESUIT ) | ( 1 << PW_HASTE ) | ( 1 << PW_INVIS ) ) )
 			? weight[AIM_PRIO_POWERUP] : 0.0f;
@@ -2720,8 +2869,27 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		// a shot that scatters wider than it reaches counts for little.
 		speed = CL_AimAssistProjectileSpeed( weapon );
 		CL_AimAssistVelocity( entity, motion );
-		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, distance / speed,
+		flight = speed > 0.0f ? distance / speed : 0.0f;
+		scatter = speed > 0.0f ? CL_AimAssistScatter( weapon, flight,
 			sqrt( motion[0] * motion[0] + motion[1] * motion[1] ) ) : -1.0f;
+
+		// A target off the ground counts only while it is still off the ground
+		// when the shot gets there. One that comes down on the way is the
+		// worst target on the map and not the best: the record split those two
+		// sixty-three per cent against sixteen, with a target on its feet at
+		// fifty-two in between and the same average distance on either side,
+		// so that is the footing talking and not the range. What was asked
+		// before - whether sixty units under the target are clear - is about a
+		// third of a second of falling, and these shots fly for over one.
+		airborne = qfalse;
+		if ( flight > 0.0f && entity->groundEntityNum == ENTITYNUM_NONE
+			&& !CL_AimAssistFloats( entity ) ) {
+			CL_AimAssistHull( entity, hullMins, hullMaxs );
+			airborne = CL_AimAssistLanding( entity, motion,
+				cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY,
+				flight, hullMins, hullMaxs, NULL ) < 0.0f;
+		}
+		part[AIM_PRIO_AIR] = airborne ? weight[AIM_PRIO_AIR] : 0.0f;
 		part[AIM_PRIO_SURE] = scatter >= 0.0f
 			? weight[AIM_PRIO_SURE] / ( 1.0f + scatter / CL_AimAssistHitRadius( weapon ) )
 			: weight[AIM_PRIO_SURE] * 0.5f;		// nothing measured yet

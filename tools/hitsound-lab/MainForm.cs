@@ -135,12 +135,33 @@ public class MainForm : Form, IMessageFilter {
 		// Speichern stillschweigend verschwinden.
 		( "hook",       "Enterhaken" ),
 	};
-	// Was die Engine von Haus aus anders haelt, aus dem Gemessenen: ein Schuss
-	// mit Flugzeit verliert mit der Entfernung, einer ohne kaum. Muss zur
-	// Vorgabe von cl_aimAssistPriorityWeapon in code/client/cl_main.c passen.
-	static readonly (string Key, int Near)[] WeaponNearDefault = {
-		( "rocket", 70 ), ( "grenade", 85 ), ( "plasma", 60 ), ( "shotgun", 80 ),
-		( "lightning", 95 ), ( "railgun", 10 ), ( "machinegun", 25 ),
+	// Was die Engine von Haus aus je Waffe anders haelt, in der Reihenfolge von
+	// Priorities: sight, cursor, attacker, sure, near, wounded, keep, powerup,
+	// air. Muss zu aimWeaponDefault in code/client/cl_input.c passen - die
+	// beiden sind schon einmal auseinandergelaufen, also gehoeren Aenderungen
+	// daran in denselben Commit.
+	//
+	// Kurz, woher die Zahlen kommen: "Treffsicherheit" ist bei Hitscan-Waffen
+	// wirkungslos, weil ohne Flugzeit nichts gemessen wird, also steht sie dort
+	// auf null. "Nähe im Raum" folgt der gemessenen Entfernungskurve jeder
+	// Waffe - Railgun flach über die ganze Karte, Blitzwerfer bei 768 Einheiten
+	// zu Ende, Granate bei etwa 660. "Nähe zum Fadenkreuz" trennt geschnappte
+	// Waffen von geführten: geführte zahlen für den Schwenk, geschnappte nicht.
+	static readonly Dictionary<string, int[]> WeaponDefault = new() {
+		["gauntlet"]   = new[] { 100, 70, 60,  0, 100, 20, 25,  0,  0 },
+		["machinegun"] = new[] { 100, 80,100,  0,  55, 35, 35, 15,  0 },
+		["shotgun"]    = new[] { 100, 85, 90,  0,  75, 25, 20, 15,  0 },
+		["grenade"]    = new[] { 100, 60,  0, 85, 100,  0, 30,  0,  0 },
+		["rocket"]     = new[] { 100, 70,  0, 95,  80,  0, 30,  0, 35 },
+		["lightning"]  = new[] { 100, 55, 85,  0, 100, 30, 45, 10,  0 },
+		["railgun"]    = new[] { 100, 95, 80,  0,  10, 45, 15, 35,  0 },
+		["plasma"]     = new[] { 100, 85, 90, 45,  80, 30, 35, 10,  0 },
+		["bfg"]        = new[] { 100, 75,  0, 90,  45,  0, 30,  0, 25 },
+	};
+	// Nur zwei Waffen halten ihr Ziel kuerzer fest: die langsamen Einzelschuss-
+	// waffen, deren Takt anderthalb Sekunden ist.
+	static readonly Dictionary<string, double> WeaponKeepLife = new() {
+		["gauntlet"] = 2, ["shotgun"] = 2, ["railgun"] = 2,
 	};
 	readonly Dictionary<string, Dictionary<string, int>> weaponWeight = new();
 	readonly Dictionary<string, Dictionary<string, double>> weaponTime = new();
@@ -346,12 +367,20 @@ public class MainForm : Form, IMessageFilter {
 			prioTime[Priorities[i].Key] = Priorities[i].Life;
 		}
 		// Dieselben Abweichungen, die die Engine von sich aus mitbringt. Ohne
-		// sie wuerde ein Speichern ohne jede Aenderung eine leere Zeichenkette
+		// sie wuerde ein Speichern ohne jede Aenderung eine leere Datei
 		// schreiben und damit genau die Vorgaben loeschen, die gemessen wurden.
+		// Nur was vom Standard abweicht wird gemerkt, sonst stuende in der
+		// Liste ueberall ein Pfeil, der nichts bedeutet.
 		foreach ( var w in Weapons ) {
-			int near = Array.FindIndex( WeaponNearDefault, x => x.Key == w.Key );
-			if ( near < 0 ) continue;
-			weaponWeight[w.Key] = new Dictionary<string, int> { ["near"] = WeaponNearDefault[near].Near };
+			if ( !WeaponDefault.TryGetValue( w.Key, out var row ) ) continue;
+			for ( int i = 0; i < Priorities.Length && i < row.Length; i++ ) {
+				if ( row[i] == prioWeight[Priorities[i].Key] ) continue;
+				if ( !weaponWeight.TryGetValue( w.Key, out var over ) ) weaponWeight[w.Key] = over = new();
+				over[Priorities[i].Key] = row[i];
+			}
+			if ( WeaponKeepLife.TryGetValue( w.Key, out double life ) ) {
+				weaponTime[w.Key] = new Dictionary<string, double> { ["keep"] = life };
+			}
 		}
 		prioUp.Click += ( _, _ ) => MovePriority( -1 );
 		prioDown.Click += ( _, _ ) => MovePriority( 1 );
@@ -409,11 +438,24 @@ public class MainForm : Form, IMessageFilter {
 		foreach ( var w in Weapons ) prioWeapon.Items.Add( w.Name );
 		prioWeapon.SelectedIndex = 0;
 		prioWeapon.SelectedIndexChanged += ( _, _ ) => FillPriorities();
+		// Zurueck auf das, was diese Waffe von Haus aus will - nicht auf die
+		// Standardliste. Sonst faellt die Rakete beim Zuruecksetzen auf eine
+		// Nähe von 40, die fuer sie nie gemeint war.
 		prioReset.Click += ( _, _ ) => {
 			var w = CurWeapon;
 			if ( w is null ) return;
 			weaponWeight.Remove( w );
 			weaponTime.Remove( w );
+			if ( WeaponDefault.TryGetValue( w, out var row ) ) {
+				for ( int i = 0; i < Priorities.Length && i < row.Length; i++ ) {
+					if ( row[i] == prioWeight[Priorities[i].Key] ) continue;
+					if ( !weaponWeight.TryGetValue( w, out var over ) ) weaponWeight[w] = over = new();
+					over[Priorities[i].Key] = row[i];
+				}
+			}
+			if ( WeaponKeepLife.TryGetValue( w, out double life ) ) {
+				weaponTime[w] = new Dictionary<string, double> { ["keep"] = life };
+			}
 			FillPriorities();
 		};
 		// Die Quote bekommt einen Balken statt einer Zahl, der Rest bleibt Text

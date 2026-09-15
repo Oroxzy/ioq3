@@ -3619,14 +3619,12 @@ void CL_Init( void ) {
 	cl_aimAssistPriority = Cvar_Get( "cl_aimAssistPriority",
 		"sight:100 cursor:80 attacker:100:6 sure:60 near:40 wounded:40:12 keep:30:4 powerup:20 air:0", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistPriority, "What makes one bot the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );
-	// What one weapon wants differently, as weapon.name:weight. The defaults
-	// are what the record measured: a shot that has to fly loses to distance
-	// and wants the near enemy, one that arrives at once does not care. Plasma
-	// landed 72 per cent inside four hundred units and 18 per cent past eight
-	// hundred; the machinegun held ninety-something across the same span.
-	cl_aimAssistPriorityWeapon = Cvar_Get( "cl_aimAssistPriorityWeapon",
-		"rocket.near:70 grenade.near:85 plasma.near:60 shotgun.near:80 lightning.near:95 "
-		"railgun.near:10 machinegun.near:25", CVAR_ARCHIVE );
+	// Empty on purpose, and deliberately not archived. What each weapon wants
+	// is a table in cl_input.c now, and this is read after baseq3/aimprio.cfg
+	// - so a default here would silently overrule the file, and an archived
+	// one would turn a console experiment into something permanent that
+	// overrules it for good.
+	cl_aimAssistPriorityWeapon = Cvar_Get( "cl_aimAssistPriorityWeapon", "", 0 );
 	Cvar_SetDescription( cl_aimAssistPriorityWeapon, "Where one weapon disagrees with cl_aimAssistPriority, as weapon.name:weight - for instance rocket.near:70. Anything not named here follows the general list. Read after baseq3/aimprio.cfg, so what is set here has the last word" );
 	// Reaching for another weapon when this one runs dry. The game only
 	// notices on the next pull of an empty trigger, and pays five hundred
