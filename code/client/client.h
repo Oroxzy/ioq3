@@ -438,6 +438,7 @@ extern	cvar_t	*cl_aimAssistHoldFire;
 void CL_AimAssistSnapshot( void );
 void CL_AimAssistFlush( void );		// cl_input.c, marks the learned lead for q3config.cfg
 void CL_AimAssistTuneDump( void );	// cl_input.c, prints the measured table
+void CL_AimAssistRateDump( void );	// cl_input.c, prints the measured hit rate
 qboolean CL_AimAssistCrouched( const entityState_t *entity );	// cl_input.c, records impacts for the test bench
 qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float *freshness );
 qboolean CL_AimAssistShotFlight( int clientNum, float *seconds, int *grade );	// cl_input.c, the flight of the shot being steered

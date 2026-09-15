@@ -870,7 +870,12 @@ in seconds, and the learner tunes it from what the bots really do.
 */
 // Die Fassung der Protokollzeilen. Hochzaehlen, sobald ein Feld dazukommt,
 // verschwindet oder seine Bedeutung wechselt.
-#define AIM_LOG_VERSION	6
+//
+// Sieben: die Trefferquoten-Tabelle schreibt mit ("aim rate:", "aim rated:"),
+// die Korrekturzeile nennt das Fach vor und nach dem Schuss ("was", "now"),
+// und der Abzug der ganzen Tabelle heisst jetzt "aim table:" statt "aim tune:",
+// damit eine Korrektur und ein Abzug nicht mehr gleich aussehen.
+#define AIM_LOG_VERSION	7
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -899,6 +904,8 @@ next session stamps the log afresh.
 */
 static void CL_AimAssistTuneSave( void );
 void CL_AimAssistTuneDump( void );
+static void CL_AimAssistRateSave( void );
+void CL_AimAssistRateDump( void );
 static void CL_AimAssistPriorityDump( void );
 void CL_AimAssistPriorityReload( void );
 
@@ -908,7 +915,9 @@ void CL_AimAssistFlush( void ) {
 	// a disconnect is the right moment to look at that file again
 	CL_AimAssistPriorityReload();
 	CL_AimAssistTuneSave();
+	CL_AimAssistRateSave();
 	CL_AimAssistTuneDump();
+	CL_AimAssistRateDump();
 }
 
 static float CL_AimAssistSideways( float time ) {
@@ -1277,9 +1286,18 @@ static float CL_AimAssistHitRadius( int weapon ) {
 =================
 CL_AimAssistTuneDump
 
-The whole table in one go, in the same lines the learner writes, so the bench
-can show it whenever it likes and not only while shots are arriving. Bound to
-the aimtune command and written once when the connection goes.
+The whole table in one go, so the bench can show it whenever it likes and not
+only while shots are arriving. Bound to the aimtune command and written once
+when the connection goes.
+
+These lines used to say "aim tune:", exactly like the one the learner writes
+after a correction, and nothing on them said which kind they were. A reader
+could only tell the two apart by the frame being zero - which is wrong for
+every dump made while connected, 74 of 223 of them - or by the line happening
+to follow a learn line, which is true only because the two Com_Printf calls
+are neighbours in the same loop. Nobody wrote that down, and the first person
+to put a line between them would have broken every reader silently. So the
+dump says "aim table:" and the question does not arise.
 =================
 */
 void CL_AimAssistTuneDump( void ) {
@@ -1298,7 +1316,7 @@ void CL_AimAssistTuneDump( void ) {
 					continue;
 				}
 				boxes++;
-				Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f factor %.2f"
+				Com_Printf( "aim table: %s band %i from %.1f pace %i above %.0f factor %.2f"
 					" scatter %.0f reach %.0f n %i frame %i\n",
 					CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
 					pace, CL_AimAssistSpeedStart( pace ),
@@ -1310,12 +1328,460 @@ void CL_AimAssistTuneDump( void ) {
 	}
 
 	if ( !boxes ) {
-		Com_Printf( "aim tune: nothing measured yet\n" );
+		Com_Printf( "aim table: nothing measured yet\n" );
 	}
 
 	// and what the priorities were understood as, so a typo in the string is
 	// visible instead of quietly leaving a default in place
 	CL_AimAssistPriorityDump();
+}
+
+
+/*
+=================
+Die Trefferquote, je Waffe und Entfernung
+
+Die Vorhalte-Tabelle darueber misst, WIE WEIT vorgehalten werden muss. Diese
+hier misst etwas anderes: ob der Schuss ankommt. Beide Fragen haengen an
+verschiedenen Groessen, und darum stehen hier andere Achsen.
+
+Gemessen wurde das an rund viereinhalb Megabyte eigener Protokolle, gut
+viertausend Schuessen aus sieben Sitzungen. Die Entfernung ist die einzige
+Groesse, die etwas erklaert: die Rakete faellt ueber die fuenf Faecher von
+74 auf 1 Prozent, das Maschinengewehr von 90 auf 26, waehrend die Railgun
+ueberall bei etwa 83 steht. Alles andere, was auf der Schusszeile steht, hat
+sich im gleichen Fach als wirkungslos erwiesen: das Tempo des Ziels trennt
+0,6 Punkte, das eigene Tempo nichts, geduckt kommt in 29 von 2553 Schuessen
+vor. Nur eines kommt noch hinzu, und das steht als zweites Zaehlerpaar im
+selben Fach statt als dritte Achse: ob das Ziel waehrend des Fluges aufsetzt.
+Das kostet die Rakete zwei Drittel ihrer Quote und gibt es fuer Hitscan gar
+nicht.
+
+Die Faecher blenden nicht ineinander, anders als die Vorhalte-Tabelle. Die
+blendet, weil ein Schuss dicht an der Grenze sonst eine andere Korrektur
+bekaeme. Hier wird gezaehlt, und ein halb gezaehlter Schuss ist keine Zahl.
+
+Die Grenzen sind fest verdrahtet und lernen nicht mit. Auf der ersten Haelfte
+der Aufzeichnung liegt das Optimum bei 500/900/1050/1450, auf der zweiten bei
+400/850/1050/1750: eine mitwandernde Grenze wuerde diesem Rauschen nachlaufen
+und bei jedem Schritt alle gespeicherten Faecher still umbenennen. Nur die
+erste Grenze, 500, kommt aus jeder Anpassung zurueck.
+=================
+*/
+#define AIM_RANGES		5
+#define AIM_RATE_FILE	"aimrate.cfg"
+// Die Form der Datei. Steigt, sobald sich CL_AimAssistRange aendert: die
+// Grenzen stecken darin, was ein Fach bedeutet, und eine verschobene Grenze
+// macht aus jeder gespeicherten Zahl still eine Aussage ueber etwas anderes.
+#define AIM_RATE_FORMAT	1
+// Was ein Fach je gebuchtem Schuss von seiner Vergangenheit behaelt. Langsamer
+// als die 0,98 der Vorhalte-Tabelle, und das mit Absicht: ein Zaehler braucht
+// mehr Proben als ein Mittelwert, weil jede Probe nur ein Bit traegt. Bei 0,98
+// zaehlt ein Fach effektiv 99 Schuesse und rauscht mit +-4,9 Punkten - die
+// Raketenfaecher liegen weit draussen 11 Punkte auseinander, das waere schon
+// halb verschluckt. Bei 0,99 sind es 199 Schuesse und +-3,5. Gemessen ueber
+// alle 4022 Schuesse liegt das flache Optimum bei 0,99; 0,95 und schneller
+// sind nachweislich schlechter, 1,00 und 0,98 kann die Aufzeichnung nicht
+// voneinander trennen.
+#define AIM_RATE_DECAY	0.99f
+#define AIM_RATE_SPEAK	8		// darunter sagt ein Fach gar nichts
+#define AIM_RATE_FIRM	25		// und darunter beansprucht es keinen Rang
+
+typedef struct {
+	float	shots;			// gebucht und gealtert
+	float	hits;
+	float	landShots;		// davon die, deren Ziel im Flug aufsetzen sollte
+	float	landHits;
+	int		samples;		// ungealtert: die Schranke und die ehrliche Spalte
+} aimRate_t;
+
+static aimRate_t	aimRate[WP_NUM_WEAPONS][AIM_RANGES];
+static qboolean		aimRateLoaded;
+static qboolean		aimRateDirty;
+static int			aimRateWritten;		// wann die Tabelle zuletzt auf der Platte war
+
+static int CL_AimAssistRange( float dist ) {
+	if ( dist <  500.0f ) {
+		return 0;
+	}
+	if ( dist < 1000.0f ) {
+		return 1;
+	}
+	if ( dist < 1450.0f ) {
+		return 2;
+	}
+	if ( dist < 2000.0f ) {
+		return 3;
+	}
+	return 4;
+}
+
+static float CL_AimAssistRangeStart( int range ) {
+	static const float	start[AIM_RANGES] = { 0.0f, 500.0f, 1000.0f, 1450.0f, 2000.0f };
+
+	return start[range < 0 ? 0 : ( range >= AIM_RANGES ? AIM_RANGES - 1 : range )];
+}
+
+static void CL_AimAssistRateLoad( void ) {
+	union { char *c; void *v; }	file;
+	const char					*line;
+	aimRate_t					*r;
+	float						shots, hits, landShots, landHits;
+	int							weapon, range, samples, format = 0;
+	long						length;
+
+	aimRateLoaded = qtrue;
+
+	length = FS_ReadFile( AIM_RATE_FILE, &file.v );
+	if ( length <= 0 || !file.c ) {
+		return;
+	}
+
+	line = file.c;
+	while ( *line ) {
+		if ( sscanf( line, "format %i", &format ) == 1 && format != AIM_RATE_FORMAT ) {
+			break;			// von einem aelteren Bau, seine Faecher meinen etwas anderes
+		}
+		// Ein Zaehler hat Bedingungen, die ein Mittelwert nicht hat: mehr
+		// Treffer als Schuesse ist keine knappe Datei, sondern eine falsche.
+		if ( *line != '/' && sscanf( line, "%i %i %f %f %f %f %i",
+				&weapon, &range, &shots, &hits, &landShots, &landHits, &samples ) == 7
+			&& weapon > WP_NONE && weapon < WP_NUM_WEAPONS
+			&& range >= 0 && range < AIM_RANGES
+			&& shots >= 0.0f && hits >= 0.0f && landShots >= 0.0f && landHits >= 0.0f
+			&& hits <= shots && landShots <= shots && landHits <= landShots && samples >= 0 ) {
+			r = &aimRate[weapon][range];
+			r->shots = shots;
+			r->hits = hits;
+			r->landShots = landShots;
+			r->landHits = landHits;
+			r->samples = samples;
+		}
+
+		while ( *line && *line != '\n' ) {
+			line++;
+		}
+		while ( *line == '\n' || *line == '\r' ) {
+			line++;
+		}
+	}
+
+	FS_FreeFile( file.v );
+}
+
+static void CL_AimAssistRateSave( void ) {
+	char		text[8192];
+	aimRate_t	*r;
+	int			weapon, range;
+
+	if ( !aimRateDirty ) {
+		return;
+	}
+
+	Com_sprintf( text, sizeof( text ),
+		"format %i\n// was die Zielhilfe ueber ihre eigene Trefferquote gemessen hat.\n"
+		"// weapon range shots hits landShots landHits samples\n", AIM_RATE_FORMAT );
+
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( range = 0; range < AIM_RANGES; range++ ) {
+			r = &aimRate[weapon][range];
+			if ( !r->samples ) {
+				continue;
+			}
+			Q_strcat( text, sizeof( text ), va( "%i %i %.4f %.4f %.4f %.4f %i\t// %s ab %.0fu\n",
+				weapon, range, r->shots, r->hits, r->landShots, r->landHits, r->samples,
+				CL_AimAssistWeaponName( weapon ), CL_AimAssistRangeStart( range ) ) );
+		}
+	}
+
+	FS_WriteFile( AIM_RATE_FILE, text, strlen( text ) );
+	aimRateDirty = qfalse;
+}
+
+/*
+=================
+CL_AimAssistRateBook
+
+Ein abgeschlossener Schuss. Ein Fehlschuss ist genauso eine Messung wie ein
+Treffer und muss mitgebucht werden, sonst steht ueberall hundert Prozent.
+=================
+*/
+static void CL_AimAssistRateBook( int weapon, int range, qboolean hit, qboolean landing ) {
+	aimRate_t	*r;
+
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || range < 0 || range >= AIM_RANGES ) {
+		return;
+	}
+	if ( !aimRateLoaded ) {
+		CL_AimAssistRateLoad();
+	}
+
+	r = &aimRate[weapon][range];
+	r->shots = r->shots * AIM_RATE_DECAY + 1.0f;
+	r->hits = r->hits * AIM_RATE_DECAY + ( hit ? 1.0f : 0.0f );
+	if ( landing ) {
+		r->landShots = r->landShots * AIM_RATE_DECAY + 1.0f;
+		r->landHits = r->landHits * AIM_RATE_DECAY + ( hit ? 1.0f : 0.0f );
+	} else {
+		r->landShots *= AIM_RATE_DECAY;
+		r->landHits *= AIM_RATE_DECAY;
+	}
+	r->samples++;
+	aimRateDirty = qtrue;
+}
+
+/*
+=================
+Die offenen Schuesse
+
+Ein zweiter Ring neben dem des Lerners, und mit Absicht ein eigener: der dort
+weist Hitscan ab, weist ein springendes Ziel ab, weist ein kaum bewegtes ab
+und laesst nur einen offenen Schuss je Ziel zu. Alle vier Regeln sind fuer den
+Vorhalt richtig und fuer die Trefferquote falsch - drei der vier Waffen in der
+Aufzeichnung sind Hitscan, und der Fall "Ziel setzt auf" ist hier gerade die
+interessanteste Zeile.
+
+Was sich ehrlich nicht zuordnen laesst, wird auch nicht zugeordnet:
+
+Zwei Raketen auf dasselbe Ziel. Ein Viertel aller Raketen geht raus, waehrend
+eine fruehere auf denselben Bot noch fliegt; bei neun Prozent liegen die
+Ankunftsfenster so dicht, dass kein Merkmal beim Klienten sagt, welchem der
+beiden der Schaden gehoert. Dann werden beide als Zwilling markiert und
+KEINER gebucht. Die aeltere zu nehmen waere kein Ausweg, sondern eine
+Schlagseite: Paare fliegen auf die schwereren Ziele.
+
+Splash auf einen Umstehenden. PERS_ATTACKEE_REMAINING nennt nur den zuletzt
+Verletzten. Eine Rakete, die neben dem gemeinten Ziel noch jemanden erwischt,
+ist von einer, die nur den Umstehenden erwischt, beim Klienten nicht zu
+unterscheiden. Etwa fuenf Prozent der Raketentreffer sind darum zu viel
+gezaehlt; das steht hier, weil es sich nicht beheben laesst.
+
+Das Maschinengewehr. Es schiesst alle 100 ms, das Trefferfenster ist 50 ms
+breit, und waehrend einer Salve traegt fast jedes Bild ein Schadensereignis:
+die einzelne Kugel ist nicht zuzuordnen, bei keinem Versatz. Was stimmt, ist
+die Zahl - jede Kugel macht hoechstens ein Ereignis - und das Fach, denn zwei
+aufeinanderfolgende Kugeln liegen bei 320 u/s Annaeherung 32 Einheiten
+auseinander, tief in einem 450 Einheiten breiten Fach. Die Quote je Fach
+stimmt also, die Zuordnung der einzelnen Kugel nicht.
+=================
+*/
+#define AIM_RATE_PENDING	32
+
+typedef struct {
+	int			target;			// auf wen geschossen wurde
+	int			weapon;
+	int			range;
+	int			open, shut;		// Serverzeit, in der der Schaden zaehlt
+	qboolean	landing;		// das Ziel sollte im Flug aufsetzen
+	qboolean	hit;
+	qboolean	twin;			// ein zweiter offener Schuss auf dasselbe Ziel ueberlappt
+	qboolean	live;
+} aimRatePending_t;
+
+static aimRatePending_t	aimRatePending[AIM_RATE_PENDING];
+static int				aimRatePendingNum;
+static int				aimRateBooked;		// gebuchte Schuesse in dieser Sitzung
+
+static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, float flight,
+		const vec3_t viewOrigin, qboolean landing ) {
+	aimRatePending_t	*p;
+	vec3_t				offset;
+	int					arrive, open, shut, i;
+
+	if ( !cl_aimAssistLearn->integer || !entity ) {
+		return;
+	}
+
+	// Die Entfernung zum schlichten Koerper, nicht zum vorgehaltenen Punkt.
+	// Das ist die Reichweite, die der Spieler sieht, sie ist fuer Hitscan und
+	// Geschoss dieselbe Groesse, und sie ist die, aus der der Zielpunkt
+	// abgeleitet wird statt umgekehrt: fast jede fuenfte Rakete faellt sonst
+	// in ein anderes Fach, weil ihr Vorhalt sie dorthin geschoben hat.
+	VectorSubtract( entity->pos.trBase, viewOrigin, offset );
+
+	arrive = cl.snap.serverTime + (int)( flight * 1000.0f + 0.5f );
+	if ( flight > 0.0f ) {
+		// gemessen, nicht geraten: der Versatz zwischen erwarteter Ankunft und
+		// gemeldetem Schaden lag bei 318 Raketen auf 0, bei 141 auf +50, bei
+		// 51 auf -50 und bei 27 auf +100
+		open = arrive - 100;
+		shut = arrive + 150;
+	} else {
+		open = cl.snap.serverTime;
+		shut = cl.snap.serverTime + 50;
+	}
+
+	p = &aimRatePending[aimRatePendingNum++ & ( AIM_RATE_PENDING - 1 )];
+	p->target = entity->clientNum;
+	p->weapon = weapon;
+	p->range = CL_AimAssistRange( VectorLength( offset ) );
+	p->open = open;
+	p->shut = shut;
+	p->landing = landing;
+	p->hit = qfalse;
+	p->twin = qfalse;
+	p->live = qtrue;
+
+	// Zwei offene Schuesse auf dasselbe Ziel mit sich ueberschneidenden
+	// Fenstern: beide markieren, beide spaeter verwerfen.
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		if ( &aimRatePending[i] == p || !aimRatePending[i].live
+			|| aimRatePending[i].target != p->target ) {
+			continue;
+		}
+		if ( aimRatePending[i].open <= p->shut && p->open <= aimRatePending[i].shut ) {
+			aimRatePending[i].twin = qtrue;
+			p->twin = qtrue;
+		}
+	}
+}
+
+/*
+=================
+CL_AimAssistRateCredit
+
+Der Treffer. PERS_HITS ist der einzige Zaehler, den der Server dem Klienten
+ueber eigene Treffer schickt, und er steht schon in CL_AimAssistWoundWatch.
+
+Hoechstens ein Anspruch je Schnappschuss, egal wie weit der Zaehler gesprungen
+ist: eine Rakete, die direkt trifft, steppt ihn zweimal im selben Bild - einmal
+direkt, einmal Splash - und eine Schrotladung bis zu elfmal. Die Zahl der
+Schadensereignisse ist nicht die Zahl der Treffer.
+
+Wer getroffen wurde, sagt der Server nicht. PERS_ATTACKEE_REMAINING traegt die
+Gesundheit des zuletzt Verletzten und keinen Namen dazu; aimShotTarget kennt
+nur den letzten Schuss, und eine Rakete ist eine Sekunde unterwegs. Also wird
+ueber die Zeit zugeordnet und nicht ueber den Namen: passt genau ein offener
+Schuss in dieses Bild, gehoert ihm der Schaden. Passen zwei, sagt nichts beim
+Klienten, welcher es war - dann werden beide zu Zwillingen und keiner gebucht.
+Dass das fast immer eindeutig ist, liegt an den Waffen selbst: das
+Maschinengewehr schiesst alle 100 ms auf ein 50 ms breites Fenster, die
+Schrotflinte alle 1000, und nur Raketen ueberholen einander.
+=================
+*/
+static void CL_AimAssistRateCredit( void ) {
+	aimRatePending_t	*p, *best = NULL;
+	int					i, open = 0;
+
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		p = &aimRatePending[i];
+		if ( !p->live || p->twin
+			|| cl.snap.serverTime < p->open || cl.snap.serverTime > p->shut ) {
+			continue;
+		}
+		open++;
+		if ( !best || p->open < best->open ) {
+			best = p;
+		}
+	}
+
+	if ( open > 1 ) {
+		// zwei Kandidaten, kein Merkmal: keiner von beiden wird gebucht
+		for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+			p = &aimRatePending[i];
+			if ( p->live && !p->twin
+				&& cl.snap.serverTime >= p->open && cl.snap.serverTime <= p->shut ) {
+				p->twin = qtrue;
+			}
+		}
+		return;
+	}
+	if ( best ) {
+		best->hit = qtrue;
+	}
+}
+
+/*
+=================
+CL_AimAssistRateClose
+
+Alles, dessen Fenster vorbei ist, wird gebucht. Einmal je Schnappschuss.
+=================
+*/
+static void CL_AimAssistRateClose( void ) {
+	aimRatePending_t	*p;
+	int					i;
+
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		p = &aimRatePending[i];
+		if ( !p->live ) {
+			continue;
+		}
+		// ein neues Spiel stellt die Uhr zurueck; was offen war, ist verloren
+		if ( cl.snap.serverTime < p->open - 5000 ) {
+			p->live = qfalse;
+			continue;
+		}
+		if ( cl.snap.serverTime <= p->shut ) {
+			continue;
+		}
+		p->live = qfalse;
+		if ( p->twin ) {
+			continue;		// nicht zuzuordnen, also nicht gezaehlt
+		}
+		CL_AimAssistRateBook( p->weapon, p->range, p->hit, p->landing );
+		aimRateBooked++;
+		if ( cl_aimAssistDebug->integer ) {
+			Com_Printf( "aim rated: %s ab %.0fu %s%s n %i frame %i\n",
+				CL_AimAssistWeaponName( p->weapon ), CL_AimAssistRangeStart( p->range ),
+				p->hit ? "getroffen" : "daneben", p->landing ? " aufsetzend" : "",
+				aimRateBooked, cl.snap.serverTime );
+		}
+	}
+
+	// Dieselbe Sicherung, die die Vorhalte-Tabelle bekommen hat: was gemessen
+	// ist, liegt auch dann auf der Platte, wenn das Spiel nicht sauber endet.
+	if ( aimRateDirty && ( cl.serverTime - aimRateWritten > 15000
+			|| aimRateWritten > cl.serverTime ) ) {
+		aimRateWritten = cl.serverTime;
+		CL_AimAssistRateSave();
+	}
+}
+
+/*
+=================
+CL_AimAssistRateDump
+
+Die ganze Tabelle auf einmal, an das Kommando aimrate gebunden, damit die
+Bank sie jederzeit lesen kann und nicht nur waehrend Schuesse eintreffen.
+=================
+*/
+void CL_AimAssistRateDump( void ) {
+	const aimRate_t	*r;
+	int				weapon, range, boxes = 0;
+
+	if ( !aimRateLoaded ) {
+		CL_AimAssistRateLoad();
+	}
+
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( range = 0; range < AIM_RANGES; range++ ) {
+			r = &aimRate[weapon][range];
+			if ( !r->samples ) {
+				continue;
+			}
+			boxes++;
+			// "says" ist die Schranke, nicht die Zahl: 0 misst noch, 1 nennt
+			// eine Quote ohne Anspruch auf einen Rang, 2 darf verglichen
+			// werden. Die Grenzen kommen aus dem Wilson-Intervall bei p = 0,5
+			// - bei acht Proben faellt die halbe Breite zum ersten Mal unter
+			// 30 Punkte, bei fuenfundzwanzig unter 18, und 18 Punkte ist der
+			// Abstand, ab dem sich zwei Nachbarfaecher unterscheiden lassen.
+			// Sie stehen hier auf der Zeile, damit die Bank sie nicht ein
+			// zweites Mal fuehren muss.
+			Com_Printf( "aim rate: %s range %i from %.0f shots %.1f hits %.1f rate %.3f"
+				" land %.1f landhits %.1f n %i says %i frame %i\n",
+				CL_AimAssistWeaponName( weapon ), range, CL_AimAssistRangeStart( range ),
+				r->shots, r->hits, r->shots > 0.0f ? r->hits / r->shots : 0.0f,
+				r->landShots, r->landHits, r->samples,
+				r->samples < AIM_RATE_SPEAK ? 0 : ( r->samples < AIM_RATE_FIRM ? 1 : 2 ),
+				cl.snap.serverTime );
+		}
+	}
+
+	if ( !boxes ) {
+		Com_Printf( "aim rate: nothing measured yet\n" );
+	}
 }
 
 
@@ -1586,6 +2052,32 @@ static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t moti
 		*floorOut = best;
 	}
 	return answer;
+}
+
+/*
+=================
+CL_AimAssistDueDown
+
+Whether the target's feet are expected back on the floor before a shot fired
+now would arrive. One place, because three of them ask: the record writes it
+down, the shot grade steps on it, and the hit-rate table keeps a second pair
+of counters for it. A target already standing is not "coming down"; neither is
+one in water or on a ladder, which never lands at all.
+=================
+*/
+static float CL_AimAssistDueDown( const entityState_t *entity, float flight ) {
+	vec3_t	motion, mins, maxs;
+
+	if ( flight <= 0.0f || entity->groundEntityNum != ENTITYNUM_NONE
+		|| CL_AimAssistFloats( entity ) ) {
+		return -1.0f;
+	}
+
+	CL_AimAssistVelocity( entity, motion );
+	CL_AimAssistHull( entity, mins, maxs );
+	return CL_AimAssistLanding( entity, motion,
+		cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY,
+		flight, mins, maxs, NULL );
 }
 
 
@@ -2716,6 +3208,13 @@ static void CL_AimAssistWoundWatch( void ) {
 	// have gone at somebody else.
 	aimWoundHits = hits;
 
+	// The hit-rate table wants this before anything below can refuse it: what
+	// follows is about a bot's health and needs a shot from the last four
+	// hundred milliseconds, while a rocket is in the air for twice that. The
+	// counter moving is the hit; who it landed on, the table works out from
+	// which shot is still open.
+	CL_AimAssistRateCredit();
+
 	// Whoever the shot was fired at - not whoever the aim happens to be on now.
 	// The report arrives with the snapshot, a good fifty milliseconds after the
 	// command that fired, and the pick is remade every frame in between: a
@@ -3401,7 +3900,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		const vec3_t targetOrigin, float lead, float error, float swing, qboolean assisted,
 		qboolean exact, qboolean fallback ) {
 	const char	*info;
-	vec3_t		direction, motion, mins, maxs;
+	vec3_t		direction, motion;
 	float		pace, touchdown;
 
 	info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
@@ -3412,12 +3911,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	// shot's flight. It is the axis the record split hardest on - a rocket
 	// whose target changed its footing on the way landed less than half as
 	// often - so the guess has to be readable next to the outcome.
-	CL_AimAssistHull( entity, mins, maxs );
-	touchdown = ( entity->groundEntityNum == ENTITYNUM_NONE && !CL_AimAssistFloats( entity ) )
-		? CL_AimAssistLanding( entity, motion,
-			cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY,
-			lead, mins, maxs, NULL )
-		: -1.0f;
+	touchdown = CL_AimAssistDueDown( entity, lead );
 
 	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
 
@@ -3596,7 +4090,7 @@ static void CL_AimAssistLearn( void ) {
 	const entityState_t	*entity, *found;
 	const char			*info;
 	vec3_t				moved;
-	float				actual, lateral, expected, error, weight, hold;
+	float				actual, lateral, expected, error, weight, hold, before;
 	int					i, j, band, pace;
 
 	for ( i = 0; i < AIM_PENDING; i++ ) {
@@ -3660,6 +4154,16 @@ static void CL_AimAssistLearn( void ) {
 		// was wrong: a run of long rockets pulled it down and shortened the
 		// lead for close plasma with it, where nothing had been measured at
 		// all. What is learned at one range belongs to that range.
+		// Welches Fach getroffen wird und was darin stand, bevor der Schuss es
+		// bewegt hat. Das ist die eine Zahl, die sich aus dem Protokoll nicht
+		// zurueckrechnen laesst: "factor" weiter unten ist der ueber bis zu
+		// vier Faecher verblendete Wert an genau diesem Vorhalt, nicht der des
+		// Faches - und darum addieren sich die einzelnen Korrekturen auch
+		// nicht zur Bewegung des Faches auf.
+		band = CL_AimAssistBand( p->lead );
+		pace = CL_AimAssistSpeedBand( p->speed );
+		before = CL_AimAssistBoxFactor( p->weapon, band, pace );
+
 		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, p->base, expected, actual,
 			lateral, weight );
 
@@ -3676,7 +4180,6 @@ static void CL_AimAssistLearn( void ) {
 		}
 
 		hold = CL_AimAssistHold();
-		band = CL_AimAssistBand( p->lead );
 		aimLearned++;
 
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
@@ -3689,11 +4192,17 @@ static void CL_AimAssistLearn( void ) {
 			actual, p->straight, expected, lateral, error, weight,
 			p->speed, VectorLength( cl.snap.ps.velocity ), hold,
 			aimLearned, cl.snap.serverTime );
-		pace = CL_AimAssistSpeedBand( p->speed );
-		Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f factor %.2f"
-			" scatter %.0f reach %.0f n %i frame %i\n",
+		// "was" und "now" sind das Fach selbst, vorher und nachher - der
+		// Eintrag im Hauptbuch. "factor" daneben ist der verblendete Wert an
+		// diesem einen Vorhalt: was die Zielhilfe fuer diesen Schuss gegeben
+		// haette, nicht was in der Tabelle steht. Zwei verschiedene Zahlen,
+		// und ohne die ersten beiden war die Bewegung des Faches aus dem
+		// Protokoll nicht zu lesen.
+		Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f was %.2f now %.2f"
+			" factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), band, CL_AimAssistBandStart( band ),
 			pace, CL_AimAssistSpeedStart( pace ),
+			before, CL_AimAssistBoxFactor( p->weapon, band, pace ),
 			CL_AimAssistTune( p->weapon, p->lead, p->speed ),
 			CL_AimAssistScatter( p->weapon, p->lead, p->speed ),
 			CL_AimAssistHitRadius( p->weapon ), aimTune[p->weapon][band][pace].samples,
@@ -3732,6 +4241,9 @@ static void CL_AimAssistWatch( void ) {
 	aimWatchedTime = cl.snap.serverTime;
 
 	CL_AimAssistWoundWatch();
+	// after the credit, never before it: a window that closes on the same
+	// frame its damage arrives must still be able to take it
+	CL_AimAssistRateClose();
 
 	// Whoever hurt us last. The player state names the attacker, but it names
 	// client zero before anyone has, and it carries the last life's killer
@@ -4196,6 +4708,13 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		// A shot at the plain body has no led point to learn from, but it
 		// flies the same time, which the record needs to match its impact.
 		CL_AimAssistRemember( entity, weapon, plain ? 0.0f : lead, targetOrigin );
+
+		// And every shot, whatever it is, goes on the hit-rate table's own
+		// list. That one has none of the learner's four refusals: it wants
+		// the hitscan weapons, which are three of the four in the record, and
+		// it wants the jumping target most of all.
+		CL_AimAssistRateWatch( entity, weapon, flight, viewOrigin,
+			CL_AimAssistDueDown( entity, flight ) >= 0.0f );
 		if ( cl_aimAssistDebug->integer ) {
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, flight,
 				sqrt( ( pitchDelta - pitchStep ) * ( pitchDelta - pitchStep )
