@@ -433,6 +433,15 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
+	// Eingestelltes bleibt eingestellt, ohne dass man daran denken muss. Der
+	// Knopf bleibt, weil er zwischendurch sichert, aber er ist nicht mehr die
+	// einzige Gelegenheit: eine Abendarbeit an den Vorranglisten war schon
+	// verloren, weil das Fenster ohne Klick geschlossen wurde.
+	protected override void OnFormClosing( FormClosingEventArgs e ) {
+		SaveSettings();
+		base.OnFormClosing( e );
+	}
+
 	protected override void OnFormClosed( FormClosedEventArgs e ) {
 		Application.RemoveMessageFilter( this );
 		base.OnFormClosed( e );
@@ -1127,6 +1136,10 @@ public class MainForm : Form, IMessageFilter {
 				UseShellExecute = true,
 			} );
 
+			// Ein Start ist der Moment, in dem die Einstellung gemeint war:
+			// sie ging gerade als Config an das Spiel, also gehoert sie auch
+			// in die eigene Datei, und nicht nur dorthin.
+			SaveSettings();
 			status.Text = "gestartet, Mitschrift läuft";
 			status.ForeColor = Color.ForestGreen;
 		} catch ( Exception ex ) {
