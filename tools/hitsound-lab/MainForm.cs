@@ -223,8 +223,22 @@ public class MainForm : Form, IMessageFilter {
 	string tuneStamp = "";
 	Process? game;					// das von hier gestartete Spiel, solange es laeuft
 
+	// Wann dieses Programm gebaut wurde, im Titel. Das Erstelldatum einer Datei
+	// bleibt beim Ueberschreiben stehen, und wer an zwei Rechnern arbeitet,
+	// sieht dem Ordner nicht an, welcher Stand darin liegt - der Titel schon.
+	static string BuiltWhen() {
+		try {
+			var path = System.Reflection.Assembly.GetExecutingAssembly().Location;
+			if ( path.Length > 0 && File.Exists( path ) ) {
+				return File.GetLastWriteTime( path ).ToString( "dd.MM.yyyy HH:mm" );
+			}
+		} catch ( Exception ) {
+		}
+		return "unbekannt";
+	}
+
 	public MainForm() {
-		Text = "Trefferton-Labor";
+		Text = "Trefferton-Labor – Bau vom " + BuiltWhen();
 		ClientSize = new Size( 1260, 820 );
 		MinimumSize = new Size( 820, 560 );
 		Font = new Font( "Segoe UI", 9 );
