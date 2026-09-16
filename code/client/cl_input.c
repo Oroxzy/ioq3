@@ -1643,6 +1643,21 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 		return;
 	}
 
+	// Eine Waffe feuert hoechstens einmal je Server-Bild - der schnellste
+	// Zyklus im Spiel ist der des Blitzwerfers mit genau einem. Der Klient
+	// baut aber mehrere Befehle je Bild, und die Vorhersage des Waffentimers
+	// kann auf jedem davon "jetzt" sagen: ein Abzug erzeugte so drei
+	// Schusszeilen auf den Befehlen 236798, 236799 und 236802, eine einzige
+	// Rakete - und drei Buchungen, eine getroffen und zwei daneben. Der Lerner
+	// wehrt das mit "already watching this target" ab, diese Tabelle hatte
+	// nichts dergleichen.
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		if ( aimRatePending[i].live && aimRatePending[i].weapon == weapon
+			&& aimRatePending[i].fired == cl.snap.serverTime ) {
+			return;
+		}
+	}
+
 	// Die Entfernung zum schlichten Koerper, nicht zum vorgehaltenen Punkt.
 	// Das ist die Reichweite, die der Spieler sieht, sie ist fuer Hitscan und
 	// Geschoss dieselbe Groesse, und sie ist die, aus der der Zielpunkt
@@ -1659,8 +1674,20 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 		open = arrive - 50;
 		shut = arrive + 100;
 	} else {
-		// Hitscan trifft im selben Bild: 173 von 188 allein stehenden
-		// Railgun-Schuessen auf Versatz null, der Rest auf +50.
+		// Hitscan trifft im selben Bild, und das Fenster ist in Wahrheit null
+		// Millisekunden breit, nicht fuenfzig: der Schaden eines Bildes T
+		// erreicht den Klienten mit dem Schnappschuss danach, und der ist
+		// zugleich die einzige Gelegenheit, an der dieser Schuss ihn noch
+		// beanspruchen kann. Schaden, der auf T+50 gestempelt ist, wird erst
+		// bei T+100 gesehen und ist dann vorbei.
+		//
+		// Gemessen ueber drei Sitzungen: 582 von 631 Schuessen mit Schaden auf
+		// Versatz null wurden gutgeschrieben, aber null von neun, deren
+		// Schaden allein auf +50 lag. Das ist etwa ein Prozent, systematisch
+		// nach unten, und es bleibt so. Das Fenster zu verbreitern hiesse beim
+		// Maschinengewehr mit seinen hundert Millisekunden Takt, dass eine
+		// Kugel nach dem Schaden der naechsten greift - ein gemessener Verlust
+		// von einem Prozent gegen einen ungemessenen Diebstahl.
 		open = cl.snap.serverTime;
 		shut = cl.snap.serverTime + 50;
 	}
@@ -4497,7 +4524,8 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, touchdown, k;
+	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, touchdown;
+	float			frameTime, k;
 	float			holdRange = 0.0f;
 	int				i, key, localTeam, weapon, hold;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
@@ -4688,6 +4716,19 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			if ( flight < 0.0f ) {
 				flight = 0.0f;		// point blank: it is there the moment it leaves
 			}
+
+			// On the frame grid, like every other lead in the system. The led
+			// point is searched frame by frame, so its flight is a whole
+			// number of frames by construction; this one is a plain distance
+			// over a speed and is not. Six shots in a session went out with
+			// leads of 718 and 1121 milliseconds, and they were exactly the
+			// six that fell back - the only leads off the grid in the whole
+			// record. That costs twice: the arrival window covers three
+			// snapshot boundaries instead of four, and every reading of the
+			// log that matches damage frames against world+lead can never
+			// land on one, so those shots read as misses by construction.
+			frameTime = CL_AimAssistFrameTime();
+			flight = (int)( flight / frameTime + 0.5f ) * frameTime;
 		}
 	}
 
