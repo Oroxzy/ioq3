@@ -610,7 +610,7 @@ public class MainForm : Form, IMessageFilter {
 			// Der zweite, duenne Balken am unteren Rand: dieselbe Quote, aber
 			// nur fuer die Schuesse, deren Ziel im Flug aufsetzen sollte. Fuer
 			// Hitscan gibt es ihn nie, weil es dort keine Flugzeit gibt.
-			if ( cell.LandSamples >= RateSpeak ) {
+			if ( cell.LandWeight >= RateSpeak ) {
 				using var fill = new SolidBrush( RateColour( cell.LandShare ) );
 				e.Graphics.FillRectangle( fill, bar.X, bar.Bottom - 4,
 					(int)( bar.Width * Math.Clamp( cell.LandShare, 0, 1 ) ), 4 );
@@ -668,7 +668,11 @@ public class MainForm : Form, IMessageFilter {
 				Math.Abs( moved ) < 0.005 ? Color.DimGray : Color.Black,
 				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter );
 		};
-		histWeapon.SelectedIndexChanged += ( _, _ ) => { histStamp = ""; RefreshStats(); };
+		histWeapon.SelectedIndexChanged += ( _, _ ) => {
+			if ( histUpdating ) return;
+			histStamp = "";
+			RefreshStats();
+		};
 
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
@@ -2105,11 +2109,6 @@ public class MainForm : Form, IMessageFilter {
 		public int Samples, Frame;
 		public double Ran, Straight, Expected, Aside, Error, Weight, Pace, MySpeed, Hold;
 
-		// Die Flugzeit steht nicht auf der Zeile, aber "of" ist Tempo mal
-		// Flugzeit, also faellt sie heraus. Genauer als das Band, das die
-		// Tune-Zeile nennt, und ohne den Schuss dazu suchen zu muessen.
-		public double Flight => Pace > 0 ? Straight / Pace : 0;
-
 		// Genau die Groesse, die die Engine quadriert in das Fach legt: wie
 		// weit der Schuss am Ende danebenlag, laengs und quer zusammen.
 		public double Missed => Math.Sqrt( ( Ran - Expected ) * ( Ran - Expected ) + Aside * Aside );
@@ -2259,6 +2258,7 @@ public class MainForm : Form, IMessageFilter {
 	const int HistBarColumn = 9;
 
 	string histStamp = "";
+	bool histUpdating;			// die Waffenliste wird gerade gefuellt, nicht gewaehlt
 
 	/*
 	Welche Nachregelung wann gemacht wurde, eine Zeile je Schuss, neueste oben.
@@ -2280,29 +2280,47 @@ public class MainForm : Form, IMessageFilter {
 	void UpdateHistory( List<Correction> corrections ) {
 		string pick = histWeapon.SelectedItem as string ?? "alle";
 
-		// Die Auswahl bietet nur an, was auch vorkommt
+		// Die Auswahl bietet nur an, was auch vorkommt. Verglichen wird der
+		// Inhalt und nicht die Anzahl: nach einem Protokollwechsel koennen
+		// genauso viele Waffen vorkommen wie vorher und trotzdem andere, und
+		// dann stuende die Liste auf einer Waffe, die es nicht mehr gibt.
 		var seen = corrections.Select( c => c.What.Weapon ).Distinct().OrderBy( w => w ).ToList();
-		if ( histWeapon.Items.Count != seen.Count + 1 ) {
-			histWeapon.Items.Clear();
-			histWeapon.Items.Add( "alle" );
-			foreach ( var w in seen ) histWeapon.Items.Add( w );
-			histWeapon.SelectedItem = histWeapon.Items.Contains( pick ) ? pick : "alle";
+		var have = histWeapon.Items.Cast<string>().Skip( 1 ).ToList();
+		if ( histWeapon.Items.Count == 0 || !have.SequenceEqual( seen ) ) {
+			// Das Fuellen loest SelectedIndexChanged aus, und dessen Behandler
+			// ruft RefreshStats - also mitten in RefreshStats hinein, mit einem
+			// zweiten vollstaendigen Durchlauf ueber ein megabytegrosses
+			// Protokoll. Solange hier gebaut wird, schweigt er.
+			histUpdating = true;
+			try {
+				histWeapon.Items.Clear();
+				histWeapon.Items.Add( "alle" );
+				foreach ( var w in seen ) histWeapon.Items.Add( w );
+				histWeapon.SelectedItem = histWeapon.Items.Contains( pick ) ? pick : "alle";
+			} finally {
+				histUpdating = false;
+			}
 			pick = histWeapon.SelectedItem as string ?? "alle";
 		}
 
 		var shown = pick == "alle" ? corrections
 			: corrections.Where( c => c.What.Weapon == pick ).ToList();
 
+		// Die Zaehler zaehlen alles, gezeichnet werden die letzten fuenfhundert.
+		// Vorher liefen beide ueber dieselbe gekuerzte Schleife, und dann stand
+		// oben "Korrekturen: 800" ueber drei Zahlen, die sich zu 500 addierten.
 		int up = 0, down = 0, flat = 0;
+		foreach ( var c in shown ) {
+			if ( !c.Known ) continue;
+			if ( c.Moved >= 0.005 ) up++;
+			else if ( c.Moved <= -0.005 ) down++;
+			else flat++;
+		}
+
 		int rounds = shown.Count == 0 ? 0 : shown.Max( c => c.Segment ) + 1;
 		var rows = new List<ListViewItem>();
 		foreach ( var c in Enumerable.Reverse( shown ).Take( 500 ) ) {
 			double moved = c.Moved;
-			if ( !c.Known ) { }
-			else if ( moved >= 0.005 ) up++;
-			else if ( moved <= -0.005 ) down++;
-			else flat++;
-
 			var row = new ListViewItem( c.What.Samples.ToString() ) { Tag = moved };
 			// Die Uhr laeuft je Runde; die Nummer steht nur davor, wenn es
 			// mehr als eine gab. Ohne sie folgt in der Liste auf 0:32 ploetzlich
@@ -2367,9 +2385,16 @@ public class MainForm : Form, IMessageFilter {
 		histView.EndUpdate();
 	}
 
+	// Die Flugzeitbaender der Vorhalte-Tabelle. Muss zu CL_AimAssistBandStart
+	// in code/client/cl_input.c passen, so wie RateWeapons zu
+	// CL_AimAssistWeaponName - die untere Kante kommt zwar als "from" auf der
+	// Zeile mit, die obere aber nicht, und die stand hier vorher als nackte
+	// Zahl mitten im Ausdruck.
+	static readonly double[] BandStart = { 0.0, 0.4, 0.8, 1.3 };
+
 	static string BoxName( Tune t ) {
-		string when = t.Band >= 3 ? $"ab {t.From:0.0} s"
-			: $"{t.From:0.0}–{( t.Band == 0 ? 0.4 : t.Band == 1 ? 0.8 : 1.3 ):0.0} s";
+		string when = t.Band >= BandStart.Length - 1 ? $"ab {t.From:0.0} s"
+			: $"{t.From:0.0}–{BandStart[t.Band + 1]:0.0} s";
 		return when + ( t.Pace == 0 ? " · langsam" : " · schnell" );
 	}
 
@@ -2395,10 +2420,12 @@ public class MainForm : Form, IMessageFilter {
 	Tabelle darunter - sie muss zu CL_AimAssistWeaponName in
 	code/client/cl_input.c passen, so wie WeaponDefault zu aimWeaponDefault.
 
-	Die Grenzen 500/1000/1450/2000 stehen in CL_AimAssistRange und stecken in
-	dem, was ein Fach bedeutet. Verschieben sie sich dort, steigt die
-	Formatnummer der Datei und die Faecher werden verworfen - hier reicht es
-	darum, die Beschriftung nachzuziehen.
+	Die Grenzen 500/1000/1500/2000 stehen in CL_AimAssistRange und stecken in
+	dem, was ein Fach bedeutet. Verschieben sie sich dort, gehoert die
+	Formatnummer der Datei hochgezaehlt und die Beschriftung hier nachgezogen -
+	beides, und im selben Commit. Einmal ist die Nummer bewusst stehen
+	geblieben, naemlich fuer die fuenfzig Einheiten von 1450 auf 1500; warum,
+	steht bei AIM_RATE_FORMAT in cl_input.c und nicht hier.
 	*/
 	static readonly string[] RateWeapons = {
 		"none", "gauntlet", "machinegun", "shotgun", "grenade", "rocket",
@@ -2446,7 +2473,14 @@ public class MainForm : Form, IMessageFilter {
 		public int Samples;
 		public double Share => Shots > 0 ? Hits / Shots : 0;
 		public double LandShare => LandShots > 0 ? LandHits / LandShots : 0;
-		public int LandSamples => (int)Math.Round( LandShots );
+
+		// Kein Probenzaehler, sondern ein gealtertes Gewicht - die Datei fuehrt
+		// fuer die aufsetzenden Schuesse keine ungealterte Zahl. Bis etwa
+		// hundert Proben laeuft es fast mit: bei acht echten steht hier 7,7,
+		// bei fuenfzig 39. Darueber laeuft es auseinander, aber die Schranke
+		// darunter liegt bei acht, und da stimmt es noch. Der Name sagt das,
+		// damit niemand es mit Samples verwechselt.
+		public double LandWeight => LandShots;
 	}
 
 	// Die halbe Breite des Wilson-Intervalls in Punkten, damit neben einer
@@ -2461,17 +2495,30 @@ public class MainForm : Form, IMessageFilter {
 		return half * 100;
 	}
 
+	Dictionary<string, Cell[]> rateCache = new();
+	DateTime rateRead = DateTime.MinValue;
+
 	Dictionary<string, Cell[]> ReadRates() {
 		var table = new Dictionary<string, Cell[]>();
 		string path = Path.Combine( HomePath, "aimrate.cfg" );
 		string[] lines;
 		try {
 			if ( !File.Exists( path ) ) return table;
+
+			// Das Spiel schreibt die Datei alle fuenfzehn Sekunden, gelesen
+			// wird zweimal pro Sekunde: neunundzwanzig von dreissig Durchgaengen
+			// wuerden dieselben Bytes noch einmal zerlegen - und dabei jedes Mal
+			// mit dem Schreiber des Spiels um die Datei streiten, weswegen
+			// ueberhaupt FileShare und der Fang darunter dastehen.
+			var written = File.GetLastWriteTimeUtc( path );
+			if ( written == rateRead ) return rateCache;
+
 			using var stream = new FileStream( path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite );
 			using var reader = new StreamReader( stream );
 			lines = reader.ReadToEnd().Split( '\n' );
+			rateRead = written;
 		} catch ( IOException ) {
-			return table;			// das Spiel schreibt gerade
+			return rateCache;		// das Spiel schreibt gerade
 		}
 
 		foreach ( var raw in lines ) {
@@ -2483,7 +2530,7 @@ public class MainForm : Form, IMessageFilter {
 			if ( remark >= 0 ) line = line[..remark].Trim();
 			if ( line.Length == 0 ) continue;
 			if ( line.StartsWith( "format", StringComparison.Ordinal ) ) {
-				if ( line != "format 1" ) return new Dictionary<string, Cell[]>();
+				if ( line != "format 1" ) return rateCache = new Dictionary<string, Cell[]>();
 				continue;
 			}
 
@@ -2506,7 +2553,7 @@ public class MainForm : Form, IMessageFilter {
 			int.TryParse( f[6], out cell.Samples );
 		}
 
-		return table;
+		return rateCache = table;
 	}
 
 	static double Num( string s ) =>
@@ -2620,7 +2667,7 @@ public class MainForm : Form, IMessageFilter {
 				+ $"{cell.Share * 100:0} % von {cell.Shots:0} gewerteten Schüssen"
 				+ $" (±{WilsonHalf( cell.Share, cell.Samples ):0} Punkte)\n"
 				+ $"{cell.Samples} Proben insgesamt, ältere zählen weniger";
-			if ( cell.LandSamples >= RateSpeak ) {
+			if ( cell.LandWeight >= RateSpeak ) {
 				text += $"\nund {cell.LandShare * 100:0} %, wenn das Ziel im Flug aufsetzt"
 					+ $" ({cell.LandShots:0} Schüsse)";
 			} else if ( cell.LandShots >= 1 ) {
