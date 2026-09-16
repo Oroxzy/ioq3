@@ -905,6 +905,7 @@ next session stamps the log afresh.
 static void CL_AimAssistTuneSave( void );
 void CL_AimAssistTuneDump( void );
 static void CL_AimAssistRateSave( void );
+static void CL_AimAssistRateForget( void );
 void CL_AimAssistRateDump( void );
 static void CL_AimAssistPriorityDump( void );
 void CL_AimAssistPriorityReload( void );
@@ -914,6 +915,9 @@ void CL_AimAssistFlush( void ) {
 	// the bench writes the per-weapon lists just before it starts the game, so
 	// a disconnect is the right moment to look at that file again
 	CL_AimAssistPriorityReload();
+	// whatever was still in the air when the connection went was never seen
+	// land, so it is dropped rather than counted as a miss
+	CL_AimAssistRateForget();
 	CL_AimAssistTuneSave();
 	CL_AimAssistRateSave();
 	CL_AimAssistTuneDump();
@@ -1601,6 +1605,7 @@ typedef struct {
 	int			weapon;
 	int			range;
 	int			open, shut;		// Serverzeit, in der der Schaden zaehlt
+	int			arrive;			// wann er ankommen sollte, die Mitte des Fensters
 	int			fired;			// wann er losging, fuer die Reihenfolge der Anspruecke
 	qboolean	landing;		// das Ziel sollte im Flug aufsetzen
 	qboolean	hit;
@@ -1608,16 +1613,33 @@ typedef struct {
 } aimRatePending_t;
 
 static aimRatePending_t	aimRatePending[AIM_RATE_PENDING];
-static int				aimRatePendingNum;
 static int				aimRateBooked;		// gebuchte Schuesse in dieser Sitzung
+static int				aimRateLost;		// und was der Ring nicht fassen konnte
+
+/*
+=================
+CL_AimAssistRateForget
+
+Alles offene vergessen, ohne es zu buchen. Bei einem Kartenwechsel und beim
+Verbindungsende: was da noch flog, ist nie beobachtet worden, und ein nicht
+beobachteter Schuss ist kein Fehlschuss.
+=================
+*/
+static void CL_AimAssistRateForget( void ) {
+	int	i;
+
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		aimRatePending[i].live = qfalse;
+	}
+}
 
 static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, float flight,
 		const vec3_t viewOrigin, qboolean landing ) {
-	aimRatePending_t	*p;
+	aimRatePending_t	*p = NULL;
 	vec3_t				offset;
-	int					arrive, open, shut;
+	int					arrive, open, shut, i;
 
-	if ( !cl_aimAssistLearn->integer || !entity ) {
+	if ( !cl_aimAssistLearn->integer ) {
 		return;
 	}
 
@@ -1643,12 +1665,36 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 		shut = cl.snap.serverTime + 50;
 	}
 
-	p = &aimRatePending[aimRatePendingNum++ & ( AIM_RATE_PENDING - 1 )];
+	// Einen freien Platz, und nur wenn keiner frei ist den aeltesten. Ein
+	// laufender Zaehler haette hier blind ueberschrieben: die Fenster gehen
+	// erst mit dem naechsten Schnappschuss zu, waehrend geschossen wird,
+	// sobald der Waffentimer es zulaesst - beim Blitzwerfer zwanzigmal die
+	// Sekunde. Ein ueberschriebener Eintrag wird nie gebucht, und das faellt
+	// nirgends auf; darum wird das wenigstens gezaehlt.
+	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
+		if ( !aimRatePending[i].live ) {
+			p = &aimRatePending[i];
+			break;
+		}
+		if ( !p || aimRatePending[i].fired < p->fired ) {
+			p = &aimRatePending[i];
+		}
+	}
+	if ( p->live ) {
+		aimRateLost++;
+		if ( cl_aimAssistDebug->integer ) {
+			Com_Printf( "aim rate: ring full, dropped %s ab %.0fu n %i frame %i\n",
+				CL_AimAssistWeaponName( p->weapon ), CL_AimAssistRangeStart( p->range ),
+				aimRateLost, cl.snap.serverTime );
+		}
+	}
+
 	p->target = entity->clientNum;
 	p->weapon = weapon;
 	p->range = CL_AimAssistRange( VectorLength( offset ) );
 	p->open = open;
 	p->shut = shut;
+	p->arrive = arrive;
 	p->fired = cl.snap.serverTime;
 	p->landing = landing;
 	p->hit = qfalse;
@@ -1673,16 +1719,25 @@ nur den letzten Schuss, und eine Rakete ist eine Sekunde unterwegs. Also wird
 ueber die Zeit zugeordnet und nicht ueber den Namen: wessen Fenster dieses Bild
 enthaelt, dem gehoert der Schaden, und bei mehreren der aelteste Schuss zuerst.
 
-Der aelteste und nicht keiner. Wo zwei Fenster einander ueberschneiden, ist die
-Reihenfolge geraten - aber zu 93 Prozent liegen solche Paare ohnehin im selben
+Einer bekommt ihn, und zwar der, dessen erwartete Ankunft diesem Bild am
+naechsten liegt. Wo zwei Fenster einander ueberschneiden, ist die Zuordnung
+geraten - aber zu 93 Prozent liegen solche Paare ohnehin im selben
 Entfernungsfach, also kostet das Raten etwa ein Prozent falsch einsortierte
 Schuesse, waehrend beide zu verwerfen fuenfzehn Prozent der Proben kosten
 wuerde. Genauigkeit, die mehr Messung kostet als sie Fehler spart, ist keine.
+
+Nach der Ankunft und nicht nach dem Alter, und das ist der Unterschied
+zwischen zwei Waffen: eine Rakete auf tausendzweihundert Einheiten ist eine
+Sekunde unterwegs, und wer waehrenddessen zum Maschinengewehr wechselt und
+trifft, hat einen Schaden erzeugt, der genau jetzt ankommt - die Rakete
+dagegen erst mit bis zu hundert Millisekunden Abstand. Der aeltere Schuss
+waere die Rakete gewesen, der richtige ist die Kugel. Die Reihenfolge des
+Abschusses entscheidet nur noch bei gleichem Abstand.
 =================
 */
 static void CL_AimAssistRateCredit( void ) {
 	aimRatePending_t	*p, *best = NULL;
-	int					i;
+	int					i, gap, least = 0;
 
 	for ( i = 0; i < AIM_RATE_PENDING; i++ ) {
 		p = &aimRatePending[i];
@@ -1690,8 +1745,10 @@ static void CL_AimAssistRateCredit( void ) {
 			|| cl.snap.serverTime < p->open || cl.snap.serverTime > p->shut ) {
 			continue;
 		}
-		if ( !best || p->fired < best->fired ) {
+		gap = abs( cl.snap.serverTime - p->arrive );
+		if ( !best || gap < least || ( gap == least && p->fired < best->fired ) ) {
 			best = p;
+			least = gap;
 		}
 	}
 	if ( best ) {
@@ -1715,8 +1772,13 @@ static void CL_AimAssistRateClose( void ) {
 		if ( !p->live ) {
 			continue;
 		}
-		// ein neues Spiel stellt die Uhr zurueck; was offen war, ist verloren
-		if ( cl.snap.serverTime < p->open - 5000 ) {
+		// Eine Uhr, die springt - ein neues Spiel, ein langer Hänger - hat die
+		// Bilder dazwischen nie gezeigt. Was dort offen war, wurde nicht
+		// beobachtet, und ein nicht beobachteter Schuss ist kein Fehlschuss:
+		// er wird vergessen statt gebucht. Fuenf Sekunden sind dafuer weit
+		// jenseits jedes echten Fensters, das laengste misst hundertfuenfzig
+		// Millisekunden.
+		if ( cl.snap.serverTime < p->open - 5000 || cl.snap.serverTime > p->shut + 5000 ) {
 			p->live = qfalse;
 			continue;
 		}
@@ -3312,33 +3374,6 @@ static float CL_AimAssistWoundScore( int clientNum, int weapon ) {
 
 /*
 =================
-CL_AimAssistAirborne
-
-Whether a target is really in the air rather than in the middle of an ordinary
-jump. A plain jump rises about forty-five units and is over in half a second;
-anything much higher off the ground fell from somewhere or was thrown, and
-holds its path all the way down - which is what makes it easy to hit.
-=================
-*/
-static qboolean CL_AimAssistAirborne( const entityState_t *entity ) {
-	vec3_t	mins, maxs, below;
-	trace_t	trace;
-
-	if ( entity->groundEntityNum != ENTITYNUM_NONE || CL_AimAssistFloats( entity ) ) {
-		return qfalse;
-	}
-
-	CL_AimAssistHull( entity, mins, maxs );
-	VectorCopy( entity->pos.trBase, below );
-	below[2] -= 60.0f;
-	CM_BoxTrace( &trace, entity->pos.trBase, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
-
-	return trace.fraction >= 1.0f;
-}
-
-
-/*
-=================
 CL_AimAssistPickTarget
 
 The bot to steer at: the one the priorities above like best. Only bots are
@@ -3899,24 +3934,23 @@ prediction got right. What is left of the two deltas after the blend is how
 far the view still misses the predicted point. Unassisted shots are written
 too, against the bot nearest the crosshair, which gives the bench a rate to
 hold the assisted one against.
+
+"touchdown" comes in rather than being worked out here: the landing search
+costs a box trace per step, and the caller already has to ask it for the
+hit-rate table. Negative means the target is not expected back on its feet
+before the shot lands - the axis the record splits hardest on.
 =================
 */
 static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
 		const vec3_t targetOrigin, float lead, float error, float swing, qboolean assisted,
-		qboolean exact, qboolean fallback ) {
+		qboolean exact, qboolean fallback, float touchdown ) {
 	const char	*info;
 	vec3_t		direction, motion;
-	float		pace, touchdown;
+	float		pace;
 
 	info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
 	VectorSubtract( targetOrigin, viewOrigin, direction );
 	CL_AimAssistVelocity( entity, motion );
-
-	// When the target's feet are expected back on the floor, within this
-	// shot's flight. It is the axis the record split hardest on - a rocket
-	// whose target changed its footing on the way landed less than half as
-	// often - so the guess has to be readable next to the outcome.
-	touchdown = CL_AimAssistDueDown( entity, lead );
 
 	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
 
@@ -4242,6 +4276,7 @@ static void CL_AimAssistWatch( void ) {
 		for ( i = 0; i < AIM_PENDING; i++ ) {
 			aimPending[i].arrival = 0;
 		}
+		CL_AimAssistRateForget();
 	}
 	aimWatchedTime = cl.snap.serverTime;
 
@@ -4462,7 +4497,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
 	vec3_t			viewOrigin, targetOrigin, direction, desired;
-	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, k;
+	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, touchdown, k;
 	float			holdRange = 0.0f;
 	int				i, key, localTeam, weapon, hold;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
@@ -4532,7 +4567,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
-				qfalse, exact, qfalse );
+				qfalse, exact, qfalse, CL_AimAssistDueDown( entity, lead ) );
 		}
 		// The trigger is nobody's business while the key is up, so a hold left
 		// standing from the last press is closed here rather than reported as
@@ -4639,6 +4674,21 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			aimSmoothTarget = -1;
 			return;
 		}
+
+		// The shot goes at the body now, not at the led point, so it does not
+		// fly as far. Everything downstream measures against this number: the
+		// countdown drawn over the bot, the grade the hold-fire offer reads,
+		// the "lead" field of the record - and the arrival window the hit-rate
+		// table waits in, which is only a hundred and fifty milliseconds wide
+		// against a lead that averages a third of a second. Without this a
+		// fallback shot's damage lands outside its own window and books as a
+		// miss, which made the worst-hitting group of shots look worse still.
+		if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f ) {
+			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
+			if ( flight < 0.0f ) {
+				flight = 0.0f;		// point blank: it is there the moment it leaves
+			}
+		}
 	}
 
 	// Inside our own splash the player aims this one alone. How close that is
@@ -4714,18 +4764,22 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		// flies the same time, which the record needs to match its impact.
 		CL_AimAssistRemember( entity, weapon, plain ? 0.0f : lead, targetOrigin );
 
+		// Once, not twice: the landing search walks outward from under the
+		// target with a box trace per step, and both the table and the record
+		// want the same answer for the same flight.
+		touchdown = CL_AimAssistDueDown( entity, flight );
+
 		// And every shot, whatever it is, goes on the hit-rate table's own
 		// list. That one has none of the learner's four refusals: it wants
 		// the hitscan weapons, which are three of the four in the record, and
 		// it wants the jumping target most of all.
-		CL_AimAssistRateWatch( entity, weapon, flight, viewOrigin,
-			CL_AimAssistDueDown( entity, flight ) >= 0.0f );
+		CL_AimAssistRateWatch( entity, weapon, flight, viewOrigin, touchdown >= 0.0f );
 		if ( cl_aimAssistDebug->integer ) {
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, flight,
 				sqrt( ( pitchDelta - pitchStep ) * ( pitchDelta - pitchStep )
 					+ yawDelta * yawDelta * ( 1.0f - blend ) * ( 1.0f - blend ) ),
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
-				qtrue, exact && !plain, plain );
+				qtrue, exact && !plain, plain, touchdown );
 		}
 	}
 }
