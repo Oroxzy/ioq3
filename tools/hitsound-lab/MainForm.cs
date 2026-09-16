@@ -305,6 +305,16 @@ public class MainForm : Form, IMessageFilter {
 		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
 	};
 
+	// Zurücksetzen ist selten und verwirft Gemessenes: darum klein und neben
+	// den Zahlen, die es betrifft, nicht als Hauptknopf der Karteikarte.
+	static Button ResetButton() => new() {
+		Text = "zurücksetzen", Width = 110, Height = 26,
+		Margin = new Padding( 18, 9, 0, 0 ), FlatStyle = FlatStyle.System,
+	};
+	readonly Button tuneReset = ResetButton();
+	readonly Button rateReset = ResetButton();
+	readonly ToolTip resetTip = new();
+
 	readonly Label statBestRange = Number();
 	readonly ListView rateView = new() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
@@ -673,6 +683,24 @@ public class MainForm : Form, IMessageFilter {
 			histStamp = "";
 			RefreshStats();
 		};
+
+		// Die beiden gemessenen Tabellen von vorn anfangen lassen. Getrennt,
+		// weil sie verschieden teuer sind: die Trefferquote ist reine Messung
+		// und kostet beim Zurücksetzen nur Wartezeit, der Vorhalt steuert
+		// dagegen mit - ohne ihn hält die Zielhilfe eine Weile schlechter vor.
+		tuneReset.Click += ( _, _ ) => ResetTable( "aimtune.cfg", "Die Vorhalt-Messung",
+			"Der Vorhalt fängt damit wieder beim Faktor 1,00 an – die Zielhilfe hält "
+			+ "die ersten Runden also schlechter vor, bis wieder etwas gemessen ist. "
+			+ "Diese Karte zeigt außerdem, was im Protokoll steht, und bleibt deshalb "
+			+ "bis zum nächsten Spiel auf den alten Zahlen stehen." );
+		resetTip.SetToolTip( tuneReset,
+			"aimtune.cfg nach baseq3\\logs\\ legen und von vorn messen" );
+
+		rateReset.Click += ( _, _ ) => ResetTable( "aimrate.cfg", "Die Trefferquoten-Messung",
+			"Die Tabelle ist danach leer und füllt sich wieder ab dem nächsten Spiel. "
+			+ "Am Zielen ändert das nichts – diese Tabelle misst nur, sie steuert nicht." );
+		resetTip.SetToolTip( rateReset,
+			"aimrate.cfg nach baseq3\\logs\\ legen und von vorn messen" );
 
 		// auch mitlesen, wenn das Spiel von Hand gestartet wurde
 		logPath = Path.Combine( HomePath, "qconsole.log" );
@@ -1054,13 +1082,14 @@ public class MainForm : Form, IMessageFilter {
 				Counter( "Feuer gehalten:", statHold ) ),
 			shotView ) );
 		tabs.TabPages.Add( Page( "pro Waffe",
-			Row( Counter( "Töpfe:", statTuneBoxes ), Counter( "Proben:", statTuneSamples ) ),
+			Row( Counter( "Töpfe:", statTuneBoxes ), Counter( "Proben:", statTuneSamples ),
+				tuneReset ),
 			tuneView ) );
 		tabs.TabPages.Add( Page( "Rangliste",
 			Row( Counter( "beste Waffe:", statBestWeapon ) ),
 			rankView ) );
 		tabs.TabPages.Add( Page( "Trefferquote",
-			Row( Counter( "am besten:", statBestRange ) ),
+			Row( Counter( "am besten:", statBestRange ), rateReset ),
 			rateView ) );
 
 		// Zwei Zeilen Kopf: oben die Zaehler und die Waffenauswahl, darunter
@@ -1565,6 +1594,105 @@ public class MainForm : Form, IMessageFilter {
 	// jetzt mit ihrem Datum in einen Unterordner, und nur die juengsten
 	// zwanzig bleiben liegen, damit der Ordner nicht ins Kraut schiesst.
 	const int KeepLogs = 20;
+
+	/*
+	Eine gemessene Tabelle beiseitelegen, damit sauber von vorn gemessen werden
+	kann - nach einem Umbau an der Zielhilfe zum Beispiel, wo die alten Proben
+	etwas anderes gemessen haben als die neuen.
+
+	Beiseite und nicht weg: die Datei wandert mit ihrem Datum nach baseq3\logs\,
+	genau wie ein abgelaufenes Protokoll. Ein Abend Messung ist zu teuer, um ihn
+	an einen Fehlklick zu verlieren, und zurueckholen ist dann ein Kopiervorgang.
+
+	Waehrend das Spiel laeuft geht es nicht, und das ist kein Vorsichtsakt
+	sondern Arithmetik: die Tabelle steht im Speicher des Spiels und wird von
+	dort alle fuenfzehn Sekunden herausgeschrieben. Die Datei zu entfernen
+	brachte also gar nichts - fuenfzehn Sekunden spaeter stuende sie wieder da,
+	mit allen alten Proben.
+	*/
+	static bool GameRunning() {
+		foreach ( var name in new[] { "ioquake3", "ioquake3.x86_64", "ioq3ded" } ) {
+			try {
+				if ( Process.GetProcessesByName( name ).Length > 0 ) return true;
+			} catch ( InvalidOperationException ) {
+			}
+		}
+		return false;
+	}
+
+	// Die Probenzahl steht in beiden gemessenen Dateien als letztes von sieben
+	// Feldern - in aimtune.cfg hinter sum/weight/square, in aimrate.cfg hinter
+	// shots/hits/landShots/landHits. Alles nach // ist Beiwerk.
+	static int CountSamples( string path ) {
+		int total = 0;
+		try {
+			foreach ( var raw in File.ReadAllLines( path ) ) {
+				var line = raw;
+				int remark = line.IndexOf( "//", StringComparison.Ordinal );
+				if ( remark >= 0 ) line = line[..remark];
+				var f = line.Split( new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries );
+				if ( f.Length == 7 && int.TryParse( f[6], out int n ) ) total += n;
+			}
+		} catch ( IOException ) {
+		} catch ( UnauthorizedAccessException ) {
+		}
+		return total;
+	}
+
+	void ResetTable( string file, string what, string afterwards ) {
+		string path = Path.Combine( HomePath, file );
+		if ( !File.Exists( path ) ) {
+			MessageBox.Show( this, $"{what} gibt es noch nicht – es wurde noch nichts gemessen.",
+				"Nichts zurückzusetzen", MessageBoxButtons.OK, MessageBoxIcon.Information );
+			return;
+		}
+
+		if ( GameRunning() ) {
+			MessageBox.Show( this,
+				"Das Spiel läuft gerade.\n\n"
+				+ "Die Tabelle steht in seinem Speicher und wird von dort alle fünfzehn "
+				+ "Sekunden herausgeschrieben – Zurücksetzen brächte also nichts, sie stünde "
+				+ "gleich wieder da. Bitte das Spiel beenden und es dann noch einmal versuchen.",
+				"Spiel läuft", MessageBoxButtons.OK, MessageBoxIcon.Warning );
+			return;
+		}
+
+		int samples = CountSamples( path );
+		var answer = MessageBox.Show( this,
+			$"{what} zurücksetzen?\n\n"
+			+ $"{samples} gemessene Proben gehen damit aus der laufenden Messung heraus. "
+			+ "Gelöscht wird nichts: die Datei wandert mit ihrem Datum nach baseq3\\logs\\ "
+			+ "und lässt sich von dort zurückkopieren.\n\n"
+			+ afterwards,
+			"Messung zurücksetzen", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+			MessageBoxDefaultButton.Button2 );		// Enter verwirft nichts
+		if ( answer != DialogResult.Yes ) return;
+
+		try {
+			var attic = Path.Combine( HomePath, "logs" );
+			Directory.CreateDirectory( attic );
+			var stamp = File.GetLastWriteTime( path ).ToString( "yyyyMMdd-HHmmss" );
+			var target = Path.Combine( attic,
+				Path.GetFileNameWithoutExtension( file ) + "-" + stamp + ".cfg" );
+			if ( File.Exists( target ) ) File.Delete( target );
+			File.Move( path, target );
+
+			// der Zwischenspeicher der Trefferquote haengt am Datum der Datei,
+			// und die gibt es gerade nicht mehr
+			rateRead = DateTime.MinValue;
+			rateCache = new Dictionary<string, Cell[]>();
+			rateStamp = null;
+			RefreshStats();
+
+			status.Text = $"{what} zurückgesetzt – liegt als {Path.GetFileName( target )} in logs\\";
+		} catch ( IOException e ) {
+			MessageBox.Show( this, $"Ging nicht: {e.Message}", "Zurücksetzen fehlgeschlagen",
+				MessageBoxButtons.OK, MessageBoxIcon.Error );
+		} catch ( UnauthorizedAccessException e ) {
+			MessageBox.Show( this, $"Ging nicht: {e.Message}", "Zurücksetzen fehlgeschlagen",
+				MessageBoxButtons.OK, MessageBoxIcon.Error );
+		}
+	}
 
 	void ArchiveLog() {
 		try {
@@ -2560,7 +2688,12 @@ public class MainForm : Form, IMessageFilter {
 		double.TryParse( s, System.Globalization.NumberStyles.Any,
 			System.Globalization.CultureInfo.InvariantCulture, out double v ) ? v : 0;
 
-	string rateStamp = "";
+	// Null heisst "noch nie gezeichnet, also unbedingt neu aufbauen". Eine
+	// leere Zeichenkette taugt dafuer nicht: die leere Tabelle hat selbst den
+	// leeren Stempel, und dann sah das Zuruecksetzen wie "nichts geaendert"
+	// aus - der Zaehler oben sprang auf "–", die Liste blieb auf den alten
+	// Zahlen stehen.
+	string? rateStamp;
 
 	void UpdateRates() {
 		FitBands();
@@ -2627,7 +2760,7 @@ public class MainForm : Form, IMessageFilter {
 
 		var stamp = string.Join( ";", rows.Select( r => r.Text + ":"
 			+ string.Join( ",", r.SubItems.Cast<ListViewItem.ListViewSubItem>().Select( s => s.Text ) ) ) );
-		if ( stamp == rateStamp ) return;
+		if ( rateStamp is not null && stamp == rateStamp ) return;
 		rateStamp = stamp;
 
 		var keep = SelectedKey( rateView );
