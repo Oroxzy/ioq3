@@ -402,11 +402,30 @@ Arbeit das war.
 Die letzten beiden machen den Löwenanteil des Volumens aus — und genau aus
 ihnen kommt die Fehlweiten-Messung.
 
-**Ein Fallstrick beim Auswerten:** die Bot-Stellungen einer `aim impact:`-Zeile
-sind einen Server-Frame **zu spät**, weil das Ereignis erst mit dem nächsten
-Snapshot ankommt. Für Hitscan steht die richtige Stellung in der Schusszeile
-selbst (`plain` — das Ziel in dem Frame, gegen den der Befehl lief). Wer gegen
-die Einschlagliste misst, bläht jede Fehlweite um eine Frame-Bewegung auf.
+**Hier stand ein Fallstrick, den es nicht gibt.** Bis hierher behauptete diese
+Datei, die Bot-Stellungen einer `aim impact:`-Zeile seien einen Server-Frame zu
+spät, weil das Ereignis erst mit dem nächsten Snapshot ankomme — wer dagegen
+messe, blähe jede Fehlweite um eine Frame-Bewegung auf. Nachgemessen stimmt das
+nicht.
+
+Der Test: 529 Raketen aus einer Sitzung, `aim missile:` über die Geschossnummer
+mit `aim impact:` verbunden, und die Flugzeit gegen die einkompilierten
+900 u/s gehalten. Läge die Einschlagzeile einen Frame zu spät, stünde dort ein
+Gipfel bei +50 ms. Es steht keiner da:
+
+| Versatz | Raketen |
+| --- | --- |
+| **0 ms** | 391 |
+| −50 ms | 132 |
+| +50 ms | **0** |
+
+Die sechs Ausreißer darüber sind wiederverwendete Geschossnummern. Nebenbei
+bestätigt dasselbe Bild die 900 u/s: der Gipfel sitzt genau auf null.
+
+Wer der alten Warnung folgte und um einen Frame verschob, hat sich damit
+15–19 Einheiten Fehler pro Schuss eingehandelt — in genau der Auswertung, für
+die diese Datei da ist. Für Hitscan bleibt `plain` auf der Schusszeile
+trotzdem die bequemere Quelle, weil dort keine Verknüpfung nötig ist.
 
 ## Bauen und starten
 
