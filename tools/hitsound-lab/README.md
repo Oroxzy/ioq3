@@ -12,8 +12,8 @@ Tonhöhe kann der Rest-HP des Getroffenen folgen (hoch bei voller Gesundheit,
 tief kurz vor dem Kill). Der Tab „Trefferton" zählt mit, ob jeder Treffer
 auch einen Ton bekommen hat.
 
-**Zielhilfe auf Bots** — die Hauptfunktion. Eine Taste wird gehalten, und die
-Sicht wird auf den Bot geführt, den die Prioritätenliste als besten ausweist;
+**Zielhilfe** — die Hauptfunktion. Eine Taste wird gehalten, und die Sicht wird
+auf das Ziel geführt, das die Prioritätenliste als bestes ausweist;
 geschossen wird weiter von Hand mit der Feuertaste. Die Hilfe sagt den
 Waffentimer voraus und setzt auf genau dem Befehl, auf dem der Server feuert,
 den Zielpunkt auf die Stelle, gegen die der Server den Schuss wirklich prüft.
@@ -30,10 +30,9 @@ waffen. Und der Abstand, ab dem der eigene Splash die Hilfe aussetzen lässt,
 richtet sich nach der Waffe: die früheren pauschalen 160 Einheiten passen zur
 Rakete und sind für Plasma, dessen Splash zwanzig weit reicht, achtmal zu viel.
 
-Sie ist **auf die lokale Verbindung und auf Bots begrenzt** und lässt sich
-nicht gegen Menschen einsetzen: sie läuft nur über `NA_LOOPBACK`, und ein Ziel
-kommt nur infrage, wenn der Server es in seinem Spieler-Configstring als Bot
-ausweist. Das ist keine Einstellung, sondern steht so im Code.
+Sie ist **auf localhost und private LAN-Verbindungen begrenzt**. Bots sind der
+sichere Standard. Für kontrollierte Tests kann der Haken „Menschen als
+Testziele“ zusätzlich menschliche Gegner zulassen.
 
 **Sicht durch Wände.** Bots bekommen einen Drahtrahmen, Waffen und Powerups
 einen Kasten mit Respawn-Zähler, dessen Farbe von Rot über Orange nach Grün

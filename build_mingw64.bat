@@ -28,13 +28,17 @@ set "CMAKE_EXE="
 for %%I in (cmake.exe) do set "CMAKE_EXE=%%~$PATH:I"
 if not defined CMAKE_EXE if exist "%ProgramFiles%\CMake\bin\cmake.exe" set "CMAKE_EXE=%ProgramFiles%\CMake\bin\cmake.exe"
 if not defined CMAKE_EXE (echo CMake nicht gefunden & goto :error)
+set "DOTNET_EXE="
+for %%I in (dotnet.exe) do set "DOTNET_EXE=%%~$PATH:I"
+if not defined DOTNET_EXE if exist "%ProgramFiles%\dotnet\dotnet.exe" set "DOTNET_EXE=%ProgramFiles%\dotnet\dotnet.exe"
+if not defined DOTNET_EXE (echo .NET SDK nicht gefunden & goto :error)
 set "GIT_BIN="
 for %%I in (git.exe) do set "GIT_BIN=%%~dp$PATH:I"
 set "PATH=%MSYS2_ROOT%\mingw64\bin;%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%GIT_BIN%"
 
 echo === Building in "%BUILD_DIR%" ===
 "%CMAKE_EXE%" -S "%PROJECT_DIR%." -B "%BUILD_DIR%" -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="%EXTRA_CFLAGS%" || goto :error
-"%CMAKE_EXE%" --build "%BUILD_DIR%" -j %NUMBER_OF_PROCESSORS% || goto :error
+"%CMAKE_EXE%" --build "%BUILD_DIR%" --clean-first -j %NUMBER_OF_PROCESSORS% || goto :error
 "%CMAKE_EXE%" --install "%BUILD_DIR%" --prefix "%GAME_DIR%" || goto :error
 
 REM qagame und ui zusaetzlich als pk3: Bei sv_pure 1 laedt der lokale Server nach einem Mapwechsel
@@ -58,14 +62,21 @@ set "PK3_ERROR=%ERRORLEVEL%"
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
+REM Die WinForms-App gehoert zum gleichen Pruefstand und wird ebenfalls frisch gebaut.
+echo === Building Trefferton-Labor ===
+"%DOTNET_EXE%" build "%PROJECT_DIR%tools\hitsound-lab\HitsoundLab.csproj" --configuration Release --no-incremental || goto :error
+
 echo.
 echo *** Build fertig. Starten mit: "%GAME_DIR%\ioquake3.exe" ***
+echo *** Trefferton-Labor: "%PROJECT_DIR%tools\hitsound-lab\bin\Release\net10.0-windows\HitsoundLab.exe" ***
+if /I "%~1"=="--no-pause" exit /b 0
 echo *** ENTER zum Schliessen... ***
 pause >nul
 exit /b 0
 
 :error
 echo.
+if /I "%~1"=="--no-pause" exit /b 1
 echo *** Build fehlgeschlagen. ENTER zum Schliessen... ***
 pause >nul
 exit /b 1

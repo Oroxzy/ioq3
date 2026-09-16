@@ -76,6 +76,7 @@ cvar_t	*cl_timedemo;
 cvar_t	*cl_timedemoLog;
 cvar_t	*cl_autoRecordDemo;
 cvar_t	*cl_aimAssist;
+cvar_t	*cl_aimAssistHumanTargets;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_aimAssistPriority;
@@ -3606,9 +3607,12 @@ void CL_Init( void ) {
 
 	cl_aimAssist = Cvar_Get( "cl_aimAssist", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssist, 0, 10, qtrue );
-	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible enemy bots on a local server (0 disables it)" );
+	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible eligible enemies on a localhost or private LAN test server (0 disables it)" );
+	cl_aimAssistHumanTargets = Cvar_Get( "cl_aimAssistHumanTargets", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_aimAssistHumanTargets, 0, 1, qtrue );
+	Cvar_SetDescription( cl_aimAssistHumanTargets, "Permit human test targets on a localhost or private LAN test server; 0 keeps the bot-only safety default" );
 	cl_aimAssistKey = Cvar_Get( "cl_aimAssistKey", "MOUSE4", CVAR_ARCHIVE );
-	Cvar_SetDescription( cl_aimAssistKey, "Key that must be held to activate local bot aim assistance" );
+	Cvar_SetDescription( cl_aimAssistKey, "Key that must be held to activate local aim assistance" );
 	cl_itemOutline = Cvar_Get( "cl_itemOutline", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_itemOutline, 0, 2, qtrue );
 	Cvar_SetDescription( cl_itemOutline, "Outline weapons and powerups through walls on a local server and count them back in: 2 adds armor and mega health" );
@@ -3627,7 +3631,7 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_aimAssistAttacker, "Aim assistance snaps to whichever bot is dealing damage, instead of the one nearest the crosshair" );
 	cl_aimAssistPriority = Cvar_Get( "cl_aimAssistPriority",
 		"sight:100 cursor:80 attacker:100:6 sure:60 near:40 wounded:40:12 keep:30:4 powerup:20 air:0", CVAR_ARCHIVE );
-	Cvar_SetDescription( cl_aimAssistPriority, "What makes one bot the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );
+	Cvar_SetDescription( cl_aimAssistPriority, "What makes one eligible enemy the better target, as name:weight pairs from 0 to 100 - sight, cursor, attacker, sure, near, wounded, keep, powerup, air" );
 	// Empty on purpose, and deliberately not archived. What each weapon wants
 	// is a table in cl_input.c now, and this is read after baseq3/aimprio.cfg
 	// - so a default here would silently overrule the file, and an archived
