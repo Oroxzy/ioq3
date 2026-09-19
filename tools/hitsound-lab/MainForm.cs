@@ -42,6 +42,12 @@ public class MainForm : Form, IMessageFilter {
 	readonly NumericUpDown netDelay = new() { Minimum = 0, Maximum = 500, Increment = 10, Width = 70 };
 	readonly NumericUpDown netLoss = new() { Minimum = 0, Maximum = 50, DecimalPlaces = 1, Increment = 0.5M, Width = 70 };
 	readonly Label netValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	// Die Bildrate gehoert hierher, weil sie mit der Verzoegerung zusammenhaengt:
+	// das Spiel puffert CMD_BACKUP = 64 Eingabebefehle und erzeugt einen pro
+	// Bild, der Puffer reicht also 64/fps Sekunden. Ist die Bestaetigung laenger
+	// unterwegs als das, zeigt das Spiel "Connection Interrupted".
+	readonly ComboBox maxFps = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
+	static readonly int[] MaxFpsChoices = { 0, 333, 250, 125, 60 };
 
 	readonly ComboBox screenMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
 	readonly ComboBox screenSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
@@ -416,6 +422,10 @@ public class MainForm : Form, IMessageFilter {
 		hitSound.Items.AddRange( HitSounds );
 		hitSound.SelectedIndex = 1;
 
+		maxFps.Items.AddRange( new object[] { "unverändert", "333", "250", "125 (für Lag-Messungen)", "60" } );
+		maxFps.SelectedIndex = 0;
+		maxFps.SelectedIndexChanged += ( _, _ ) => ShowNet();
+		hintTip.SetToolTip( maxFps, "Das Spiel puffert 64 Eingabebefehle und erzeugt einen pro Bild. Bei 333 fps reicht der Puffer nur 192 ms – zu wenig, sobald künstliche Verzögerung dazukommt." );
 		screenMode.Items.AddRange( new object[] { "unverändert", "Fenster", "Vollbild" } );
 		screenMode.SelectedIndex = 0;
 		foreach ( var r in Resolutions ) screenSize.Items.Add( r.Name );
@@ -1070,19 +1080,62 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Bildschirm:", screenMode ) ),
 			Row( Labelled( "Auflösung:", screenSize ) ),
 			Row( Labelled( "Netz-Verzögerung:", netDelay ), Labelled( "Verlust %:", netLoss ) ),
+			Row( Labelled( "Bildrate:", maxFps ) ),
 			Row( Pad( netValue ) ) );
 	}
 
+	// Die gewaehlte Bildrate, oder die aus der q3config des Spielers, wenn hier
+	// nichts vorgegeben ist. 0 heisst: unbekannt.
+	int EffectiveFps() {
+		int i = maxFps.SelectedIndex;
+		if ( i > 0 && i < MaxFpsChoices.Length ) return MaxFpsChoices[i];
+
+		try {
+			var cfg = Path.Combine( HomePath, "q3config.cfg" );
+			foreach ( var line in File.ReadLines( cfg ) ) {
+				if ( line.IndexOf( "com_maxfps", StringComparison.OrdinalIgnoreCase ) < 0 ) continue;
+				var digits = new string( line.Where( char.IsDigit ).ToArray() );
+				if ( int.TryParse( digits, out int f ) && f > 0 ) return f;
+			}
+		} catch { }
+		return 0;
+	}
+
 	// Die Verzoegerung wirkt je Richtung, die Laufzeit hin und zurueck ist also
-	// das Doppelte - das ist die Zahl, die man aus dem Spiel kennt.
+	// das Doppelte - das ist die Zahl, die man aus dem Spiel kennt. Dazu kommt
+	// ein Server-Frame, weil der Server nur mit sv_fps 20 antwortet.
 	void ShowNet() {
+		int fps = EffectiveFps();
+		int buffer = fps > 0 ? 64 * 1000 / fps : 0;			// CMD_BACKUP = 64
+		int needed = (int)netDelay.Value * 2 + 50;
+
 		if ( netDelay.Value == 0 && netLoss.Value == 0 ) {
-			netValue.Text = "aus – das Spiel läuft ohne künstliche Störung";
+			netValue.Text = fps > 0
+				? $"aus – ohne künstliche Störung (Eingabepuffer {buffer} ms bei {fps} fps)"
+				: "aus – das Spiel läuft ohne künstliche Störung";
+			netValue.ForeColor = Color.DimGray;
 			return;
 		}
-		netValue.Text = $"≈{netDelay.Value * 2} ms Laufzeit hin und zurück"
+
+		var text = $"≈{netDelay.Value * 2} ms Laufzeit hin und zurück"
 			+ ( netLoss.Value > 0 ? $", {netLoss.Value:0.#} % der Pakete verworfen" : "" )
 			+ " – steht im Protokoll";
+
+		// Der Puffer muss die Bestaetigung ueberdauern, sonst laeuft er darueber
+		// hinaus und das Spiel meldet "Connection Interrupted". Drei Fuenftel und
+		// nicht mehr, weil die Rechnung nur den Mittelwert trifft: der Server
+		// antwortet irgendwo in seinem 50-ms-Takt, und jeder Hänger frisst den
+		// Rest. Gemessen: 333 fps mit 50 ms stockte, mit 25 ms nicht - und
+		// genau dazwischen liegt diese Schwelle.
+		if ( fps > 0 && needed > buffer * 3 / 5 ) {
+			text += $"\n⚠ Bei {fps} fps reicht der Eingabepuffer nur {buffer} ms,"
+				+ $" die Bestätigung braucht aber ≈{needed} ms."
+				+ " Bildrate niedriger wählen, sonst stockt das Spiel.";
+			netValue.ForeColor = Color.Firebrick;
+		} else {
+			netValue.ForeColor = Color.DimGray;
+		}
+		netValue.Text = text;
 	}
 
 	GroupBox BuildSoundBox() {
@@ -1620,6 +1673,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botBars=" + botBars.SelectedIndex );
 		s.AppendLine( "botColor=" + botColor.Text );
 		s.AppendLine( "botName=" + botName.Checked );
+		s.AppendLine( "maxFps=" + maxFps.SelectedIndex );
 		s.AppendLine( "netDelay=" + netDelay.Value );
 		s.AppendLine( "netLoss=" + netLoss.Value );
 		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
@@ -1696,6 +1750,7 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( botBars, v, "botBars" );
 		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
 		SetBool( botName, v, "botName" );
+		SetIndex( maxFps, v, "maxFps" );
 		SetNum( netDelay, v, "netDelay" );
 		SetNum( netLoss, v, "netLoss" );
 		SetIndex( screenMode, v, "screenMode" );
@@ -1784,6 +1839,11 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_botOutlineName {( botName.Checked ? 1 : 0 )}" );
 		// Kein seta: kuenstliche Stoerung soll nicht in der q3config des Spielers
 		// landen und beim naechsten Start still weiterwirken
+		// com_maxfps ist archiviert, das Spiel merkt es sich also - deshalb nur
+		// schreiben, wenn wirklich eine Bildrate gewaehlt wurde
+		if ( maxFps.SelectedIndex > 0 && maxFps.SelectedIndex < MaxFpsChoices.Length ) {
+			cfg.AppendLine( $"set com_maxfps {MaxFpsChoices[maxFps.SelectedIndex]}" );
+		}
 		cfg.AppendLine( $"set net_loopDelay {(int)netDelay.Value}" );
 		cfg.AppendLine( $"set net_loopLoss {netLoss.Value.ToString( System.Globalization.CultureInfo.InvariantCulture )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
