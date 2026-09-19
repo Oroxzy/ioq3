@@ -34,6 +34,24 @@ public class MainForm : Form, IMessageFilter {
 	};
 
 	readonly TextBox gameDir = new() { Width = 258 };
+	// Bildschirm und Aufloesung. "unveraendert" schreibt nichts - diese Werte
+	// sind archiviert, das Spiel merkt sie sich also dauerhaft, und ein Testlauf
+	// hat hier schon einmal die Einstellung des Benutzers ueberschrieben.
+	readonly ComboBox screenMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	readonly ComboBox screenSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+
+	// Ueber r_mode -1 mit eigener Breite/Hoehe, das deckt jede Aufloesung ab -
+	// die eingebaute Modus-Tabelle kennt kein 16:9.
+	static readonly (string Name, int W, int H)[] Resolutions = {
+		( "unverändert", 0, 0 ),
+		( "2560 × 1440", 2560, 1440 ),
+		( "1920 × 1080", 1920, 1080 ),
+		( "1600 × 900", 1600, 900 ),
+		( "1280 × 720", 1280, 720 ),
+		( "1024 × 768", 1024, 768 ),
+		( "800 × 600", 800, 600 ),
+		( "640 × 480", 640, 480 ),
+	};
 	readonly ComboBox map = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
 	readonly NumericUpDown bots = new() { Minimum = 0, Maximum = 10, Value = 3, Width = 60 };
 	readonly NumericUpDown skill = new() { Minimum = 1, Maximum = 5, Value = 3, Width = 60 };
@@ -49,8 +67,15 @@ public class MainForm : Form, IMessageFilter {
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe", Checked = true, AutoSize = true };
 	readonly CheckBox aimHumanTargets = new() { Text = "Menschen als Testziele", Checked = false, AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
-	readonly CheckBox botOutline = new() { Text = "Bots durch Wände umranden", Checked = true, AutoSize = true };
-	readonly CheckBox botDamage = new() { Text = "mit Rest-HP (Farbe und Zahl)", Checked = true, AutoSize = true };
+	readonly CheckBox botOutline = new() { Text = "Bot-Markierung anzeigen (durch Wände)", Checked = true, AutoSize = true };
+	readonly CheckBox botDamage = new() { Text = "mit Rest-HP (Balken oder Zahl)", Checked = true, AutoSize = true };
+	// Wie ein Bot markiert wird und in welcher Farbe. Kontur ist der echte Umriss
+	// am Modell, Silhouette die gefüllte Form durch Wände.
+	readonly ComboBox botStyle = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+	readonly ComboBox botBars = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+	readonly TextBox botColor = new() { Width = 90, Text = "255 0 220" };
+	readonly Button botColorPick = new() { Text = "wählen…", AutoSize = true };
+	readonly CheckBox botName = new() { Text = "Name über dem Kopf", Checked = true, AutoSize = true };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -87,7 +112,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly Label statShotRateOff = Number();
 	readonly Label statHold = Number();
 	readonly ToolTip holdTip = new();
-	readonly ListView shotView = new() {
+	readonly ListView shotView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
@@ -247,7 +272,7 @@ public class MainForm : Form, IMessageFilter {
 		if ( !weaponTime.TryGetValue( w, out var over ) ) weaponTime[w] = over = new();
 		over[key] = value;
 	}
-	readonly ListView prioView = new() {
+	readonly ListView prioView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, CheckBoxes = true,
 		GridLines = true, HideSelection = false, Font = new Font( "Segoe UI", 9 ),
 	};
@@ -271,16 +296,33 @@ public class MainForm : Form, IMessageFilter {
 	};
 	bool prioUpdating;
 	bool prioClicked;			// ob der letzte Hakenwechsel von einem Klick kam
+	// Beim Ziehen am Fenster feuert Resize hunderte Male. Jede Anpassung mass
+	// bisher jede Ueberschrift neu und setzte jede Spaltenbreite einzeln, und
+	// jede gesetzte Breite zeichnet die ganze Liste neu - mal sechs Listen, auch
+	// die auf geschlossenen Karten. Also wird gesammelt und erst gerechnet, wenn
+	// das Ziehen steht.
+	readonly HashSet<ListView> fitPending = new();
+	readonly System.Windows.Forms.Timer fitTimer = new() { Interval = 80 };
+	bool fitBandsPending;
+	// Die schmalste sinnvolle Breite je Spalte. Ueberschrift und Schrift aendern
+	// sich nie, also wird einmal gemessen statt bei jedem Resize.
+	readonly Dictionary<ColumnHeader, int> columnLeast = new();
+
 	SplitContainer? splitMain;
+	TabControl? settingsTabs;	// die Karten links; welche offen war, wird gemerkt
+	int settingsTabSaved;		// zuletzt offene Karte, wird nach dem Aufbau gesetzt
+	// Die Saetze, die frueher als graue Zeilen unter den Schaltern standen. Sie
+	// werden einmal gelesen und nahmen dann dauerhaft ein Fuenftel der Hoehe weg.
+	readonly ToolTip hintTip = new() { AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100 };
 	Size windowSize;			// was zuletzt gespeichert wurde, leer beim ersten Start
 	int splitterSaved;			// wo der Teiler stand, 0 wenn nie gespeichert
 
 	readonly Label statBestWeapon = Number();
-	readonly ListView rankView = new() {
+	readonly ListView rankView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
 	};
-	readonly ListView tuneView = new() {
+	readonly ListView tuneView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ),
 	};
@@ -301,7 +343,7 @@ public class MainForm : Form, IMessageFilter {
 		Dock = DockStyle.Fill, ForeColor = Color.DimGray, TextAlign = ContentAlignment.MiddleCenter,
 		Visible = false,
 	};
-	readonly ListView histView = new() {
+	readonly ListView histView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
 	};
@@ -317,7 +359,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly ToolTip resetTip = new();
 
 	readonly Label statBestRange = Number();
-	readonly ListView rateView = new() {
+	readonly ListView rateView = new SmoothListView() {
 		Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
 		GridLines = true, Font = new Font( "Consolas", 9 ), OwnerDraw = true,
 	};
@@ -326,7 +368,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 7;
+	const int LogVersion = 8;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -367,6 +409,22 @@ public class MainForm : Form, IMessageFilter {
 		map.SelectedIndex = 0;
 		hitSound.Items.AddRange( HitSounds );
 		hitSound.SelectedIndex = 1;
+
+		screenMode.Items.AddRange( new object[] { "unverändert", "Fenster", "Vollbild" } );
+		screenMode.SelectedIndex = 0;
+		foreach ( var r in Resolutions ) screenSize.Items.Add( r.Name );
+		screenSize.SelectedIndex = 0;
+		hintTip.SetToolTip( screenMode, "Wird beim Start als +set an das Spiel übergeben, nicht über die"
+			+ " Config – sonst greift es erst nach einem vid_restart. „unverändert“ fasst"
+			+ " die Einstellung des Spiels nicht an." );
+		hintTip.SetToolTip( screenSize, "Setzt r_mode -1 mit eigener Breite und Höhe, damit auch 16:9"
+			+ " möglich ist. „unverändert“ lässt alles, wie es im Spiel steht." );
+
+		botStyle.Items.AddRange( new object[] { "Drahtbox", "Silhouette (gefüllt)", "Kontur (Umriss)", "Kontur + Silhouette" } );
+		botStyle.SelectedIndex = 2;
+		botBars.Items.AddRange( new object[] { "Zahl", "HP-Balken", "HP + Rüstung" } );
+		botBars.SelectedIndex = 2;
+		botColorPick.Click += ( _, _ ) => PickBotColor();
 
 		hitSound.SelectedIndexChanged += ( _, _ ) => hitSoundFile.Enabled = hitSound.SelectedIndex == 2;
 		hitSoundFile.Enabled = false;
@@ -443,7 +501,8 @@ public class MainForm : Form, IMessageFilter {
 		// Faecher gleich breit sein, sonst liest sich ein breiteres Fach wie
 		// ein wichtigeres. Die beiden vorderen Spalten behalten ihr Mass, der
 		// Rest wird zu gleichen Teilen auf die fuenf Entfernungen verteilt.
-		rateView.Resize += ( _, _ ) => FitBands();
+		rateView.Resize += ( _, _ ) => QueueBands();
+		rateView.VisibleChanged += ( _, _ ) => { if ( rateView.Visible ) QueueBands(); };
 
 		rankView.Columns.Add( "Waffe", 120 );
 		rankView.Columns.Add( "Schüsse", 70, HorizontalAlignment.Right );
@@ -460,9 +519,7 @@ public class MainForm : Form, IMessageFilter {
 		prioView.Columns.Add( "", 96 );
 		prioView.Columns.Add( "gilt", 60, HorizontalAlignment.Right );
 		prioView.Columns.Add( "was es bewirkt", 380 );
-		// Zeilen etwas hoeher: eine unsichtbare Bildliste ist der einzige Weg,
-		// die Zeilenhoehe einer ListView zu setzen
-		prioView.SmallImageList = new ImageList { ImageSize = new Size( 1, 22 ) };
+		// Die Zeilenhoehe setzt jetzt SmoothListView fuer alle Listen gleich
 		for ( int i = 0; i < Priorities.Length; i++ ) {
 			prioWeight[Priorities[i].Key] = PriorityDefault[i];
 			prioTime[Priorities[i].Key] = Priorities[i].Life;
@@ -708,6 +765,10 @@ public class MainForm : Form, IMessageFilter {
 		start.Click += ( _, _ ) => StartGame();
 		save.Click += ( _, _ ) => SaveSettings();
 		poll.Tick += ( _, _ ) => RefreshStats();
+		fitTimer.Tick += ( _, _ ) => {
+			fitTimer.Stop();
+			FlushFits();
+		};
 
 		Controls.Add( BuildLayout() );
 		Application.AddMessageFilter( this );
@@ -745,11 +806,19 @@ public class MainForm : Form, IMessageFilter {
 			WindowState = FormWindowState.Maximized;
 		}
 
-		if ( splitMain is not null && splitMain.Width > 760 ) {
-			splitMain.Panel1MinSize = 430;
+		// 470 statt 430: die breiteste Zeile (Spielordner mit Knopf) braucht so
+		// viel, sonst steht rechts etwas ueber den Rand hinaus
+		if ( splitMain is not null && splitMain.Width > 800 ) {
+			splitMain.Panel1MinSize = 470;
 			splitMain.Panel2MinSize = 320;
-			int want = splitterSaved > 0 ? splitterSaved : 500;
-			splitMain.SplitterDistance = Math.Clamp( want, 430, splitMain.Width - 320 );
+			int want = splitterSaved > 0 ? splitterSaved : 540;
+			splitMain.SplitterDistance = Math.Clamp( want, 470, splitMain.Width - 320 );
+		}
+
+		// Falls die Einstellungen vor dem Aufbau der Karten gelesen wurden
+		if ( settingsTabs is not null && settingsTabSaved > 0
+			&& settingsTabSaved < settingsTabs.TabPages.Count ) {
+			settingsTabs.SelectedIndex = settingsTabSaved;
 		}
 	}
 
@@ -903,24 +972,78 @@ public class MainForm : Form, IMessageFilter {
 			FixedPanel = FixedPanel.Panel1, SplitterWidth = 8,
 		};
 		splitMain = split;
+		// Der Teiler laesst sich schon immer ziehen, sah aber aus wie eine Luecke.
+		// Drei Punkte in der Mitte sagen, dass man ihn anfassen darf.
+		split.Paint += ( _, e ) => {
+			var bar = split.SplitterRectangle;
+			int x = bar.X + bar.Width / 2 - 1;
+			int y = bar.Y + bar.Height / 2;
+			using var dot = new SolidBrush( Color.FromArgb( 150, 150, 150 ) );
+			for ( int i = -2; i <= 2; i++ ) e.Graphics.FillRectangle( dot, x, y + i * 9, 2, 5 );
+		};
 		split.Panel1.Padding = new Padding( 12, 12, 6, 12 );
-		split.Panel1.AutoScroll = true;
+		// Die Karten scrollen selbst, das Panel darf es nicht auch noch tun
+		split.Panel1.AutoScroll = false;
 		split.Panel2.Padding = new Padding( 6, 12, 12, 12 );
 
-		var boxes = new[] { BuildMatchBox(), BuildSoundBox(), BuildAimBox(), BuildLeadBox(), BuildViewBox() };
-		var column = new TableLayoutPanel {
-			Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-			ColumnCount = 1, RowCount = boxes.Length,
+		// Links oben bleibt, was man jederzeit braucht - starten, sichern, und
+		// welcher Bau gerade laeuft. Darunter die Karten, damit nicht mehr alle
+		// Gruppen gleichzeitig um Aufmerksamkeit bitten.
+		var left = new TableLayoutPanel {
+			Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
 		};
-		column.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
-		for ( int i = 0; i < boxes.Length; i++ ) {
-			column.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
-			column.Controls.Add( boxes[i], 0, i );
-		}
+		left.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		left.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
+		left.RowStyles.Add( new RowStyle( SizeType.Percent, 100 ) );
+		left.Controls.Add( BuildHeader(), 0, 0 );
+		left.Controls.Add( BuildSettingsTabs(), 0, 1 );
 
-		split.Panel1.Controls.Add( column );
+		split.Panel1.Controls.Add( left );
 		split.Panel2.Controls.Add( BuildStatsBox() );
 		return split;
+	}
+
+	// Der Hauptknopf gehoert nicht in eine Karte: sonst waere er weg, sobald man
+	// woanders nachsieht.
+	Control BuildHeader() {
+		var head = new TableLayoutPanel {
+			Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+			ColumnCount = 1, RowCount = 2, Margin = new Padding( 0, 0, 0, 8 ),
+		};
+		head.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		head.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
+		head.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
+		head.Controls.Add( Row( Pad( start ), Pad( save ), Pad( status ) ), 0, 0 );
+		head.Controls.Add( Row( logVersion ), 0, 1 );
+		return head;
+	}
+
+	TabControl BuildSettingsTabs() {
+		var tabs = new TabControl { Dock = DockStyle.Fill };
+		settingsTabs = tabs;
+		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox() ) );
+		tabs.TabPages.Add( SettingsPage( "Trefferton", BuildSoundBox() ) );
+		tabs.TabPages.Add( SettingsPage( "Zielen", BuildAimBox(), BuildLeadBox(), BuildSwitchBox() ) );
+		tabs.TabPages.Add( SettingsPage( "Anzeige", BuildBotBox(), BuildItemBox() ) );
+		return tabs;
+	}
+
+	// Eine Karte voller Gruppen, gestapelt wie die linke Spalte vorher.
+	static TabPage SettingsPage( string title, params Control[] groups ) {
+		var page = new TabPage( title ) {
+			Padding = new Padding( 10 ), BackColor = SystemColors.Control, AutoScroll = true,
+		};
+		var column = new TableLayoutPanel {
+			Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+			ColumnCount = 1, RowCount = groups.Length,
+		};
+		column.ColumnStyles.Add( new ColumnStyle( SizeType.Percent, 100 ) );
+		for ( int i = 0; i < groups.Length; i++ ) {
+			column.RowStyles.Add( new RowStyle( SizeType.AutoSize ) );
+			column.Controls.Add( groups[i], 0, i );
+		}
+		page.Controls.Add( column );
+		return page;
 	}
 
 	GroupBox BuildMatchBox() {
@@ -930,11 +1053,13 @@ public class MainForm : Form, IMessageFilter {
 			if ( dlg.ShowDialog() == DialogResult.OK ) gameDir.Text = dlg.SelectedPath;
 		};
 
+		// Starten/Speichern/Status und der Bau-Stempel sitzen jetzt oben fest,
+		// ausserhalb der Karten - siehe BuildHeader.
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
-			Row( Pad( start ), Pad( save ), Pad( status ) ),
-			Row( logVersion ) );
+			Row( Labelled( "Bildschirm:", screenMode ) ),
+			Row( Labelled( "Auflösung:", screenSize ) ) );
 	}
 
 	GroupBox BuildSoundBox() {
@@ -948,6 +1073,10 @@ public class MainForm : Form, IMessageFilter {
 
 	// Wie gezielt wird
 	GroupBox BuildAimBox() {
+		hintTip.SetToolTip( aimAssist, "Wen die Hilfe nimmt, steht in der Karte „Vorrang“ rechts." );
+		hintTip.SetToolTip( aimKey, "Die Taste zielt nur; geschossen wird mit der Feuertaste." );
+		hintTip.SetToolTip( holdLottery, "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." );
+
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ), Pad( aimHumanTargets ) ),
 			Row( Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
@@ -955,14 +1084,20 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "auch aussichtslose:", holdLottery ) ),
-			Row( Pad( holdLotteryValue ) ),
-			Row( Hint( "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." ) ),
-			Row( Hint( "Die Taste zielt nur; geschossen wird mit der Feuertaste." ) ),
-			Row( Hint( "Wen sie nimmt, steht in der Karte „Vorrang“ rechts." ) ),
+			Row( Pad( holdLotteryValue ) ) );
+	}
+
+	// Der Waffenwechsel lag in der Zielhilfe, hat mit Zielen aber nichts zu tun.
+	GroupBox BuildSwitchBox() {
+		const string why = "Beste zuerst. Ohne dies merkt es das Spiel erst beim Klick auf die"
+			+ " leere Waffe und greift zum Enterhaken.";
+
+		hintTip.SetToolTip( autoSwitch, why );
+		hintTip.SetToolTip( autoSwitchOrder, why );
+
+		return Group( "Waffenwechsel",
 			Row( Pad( autoSwitch ) ),
-			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ),
-			Row( Hint( "Beste zuerst. Ohne dies merkt es das Spiel erst beim" ) ),
-			Row( Hint( "Klick auf die leere Waffe und greift zum Enterhaken." ) ) );
+			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ) );
 	}
 
 	// Wie weit vorgehalten wird
@@ -994,24 +1129,31 @@ public class MainForm : Form, IMessageFilter {
 			: $"voll bis {itemRange.Value / 2}, weg ab {itemRange.Value} Einheiten";
 	}
 
-	GroupBox BuildViewBox() {
-		return Group( "Anzeige",
+	// Gegner und Gegenstaende lagen zusammen in einer Gruppe "Anzeige" und haben
+	// miteinander nichts zu tun; getrennt liest sich beides schneller.
+	GroupBox BuildBotBox() {
+		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
+			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+
+		return Group( "Gegner-Markierung",
 			// eigene Zeilen: nebeneinander lief die zweite aus der Gruppe heraus
 			Row( Pad( botOutline ) ),
 			Row( Pad( botDamage ) ),
+			Row( Labelled( "Markierung:", botStyle ) ),
+			Row( Labelled( "Balken:", botBars ) ),
+			Row( Labelled( "Farbe:", botColor ), Pad( botColorPick ) ),
+			Row( Pad( botName ) ) );
+	}
+
+	GroupBox BuildItemBox() {
+		hintTip.SetToolTip( itemRange, "Ferne Gegenstände werden blasser und verschwinden ganz." );
+
+		return Group( "Gegenstände",
 			Row( Pad( itemOutline ) ),
 			Row( Pad( itemOutlineAll ) ),
 			Row( Labelled( "Sichtweite:", itemRange ) ),
-			Row( Pad( itemRangeValue ) ),
-			Row( Hint( "Ferne Gegenstände werden blasser und verschwinden ganz." ) ),
-			Row( Hint( "Über dem Gegner steht bei Geschossen die Zeit bis zum" ) ),
-			Row( Hint( "Einschlag, gefärbt danach, was der Schuss taugt." ) ) );
+			Row( Pad( itemRangeValue ) ) );
 	}
-
-	static Label Hint( string text ) => new() {
-		Text = text, AutoSize = true, ForeColor = Color.DimGray,
-		Margin = new Padding( 0, 2, 0, 0 ),
-	};
 
 	// Gruppe aus festen Zeilen: nichts bricht um, nichts ueberlappt
 	static GroupBox Group( string title, params Control[] rows ) {
@@ -1448,8 +1590,15 @@ public class MainForm : Form, IMessageFilter {
 			s.AppendLine( "windowHeight=" + ClientSize.Height );
 		}
 		if ( splitMain is not null ) s.AppendLine( "splitter=" + splitMain.SplitterDistance );
+		if ( settingsTabs is not null ) s.AppendLine( "settingsTab=" + settingsTabs.SelectedIndex );
 		s.AppendLine( "botOutline=" + botOutline.Checked );
 		s.AppendLine( "botDamage=" + botDamage.Checked );
+		s.AppendLine( "botStyle=" + botStyle.SelectedIndex );
+		s.AppendLine( "botBars=" + botBars.SelectedIndex );
+		s.AppendLine( "botColor=" + botColor.Text );
+		s.AppendLine( "botName=" + botName.Checked );
+		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
+		s.AppendLine( "screenSize=" + screenSize.SelectedIndex );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
 		s.AppendLine( "itemOutlineAll=" + itemOutlineAll.Checked );
 		s.AppendLine( "itemRange=" + itemRange.Value );
@@ -1510,8 +1659,20 @@ public class MainForm : Form, IMessageFilter {
 			windowSize = new Size( w2, h2 );
 		}
 		if ( v.TryGetValue( "splitter", out var sp ) && int.TryParse( sp, out int sd ) ) splitterSaved = sd;
+		if ( v.TryGetValue( "settingsTab", out var st ) && int.TryParse( st, out int si ) ) {
+			settingsTabSaved = si;
+			if ( settingsTabs is not null && si >= 0 && si < settingsTabs.TabPages.Count ) {
+				settingsTabs.SelectedIndex = si;
+			}
+		}
 		SetBool( botOutline, v, "botOutline" );
 		SetBool( botDamage, v, "botDamage" );
+		SetIndex( botStyle, v, "botStyle" );
+		SetIndex( botBars, v, "botBars" );
+		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
+		SetBool( botName, v, "botName" );
+		SetIndex( screenMode, v, "screenMode" );
+		SetIndex( screenSize, v, "screenSize" );
 		SetBool( itemOutline, v, "itemOutline" );
 		SetBool( itemOutlineAll, v, "itemOutlineAll" );
 		SetBar( itemRange, v, "itemRange" );
@@ -1519,6 +1680,31 @@ public class MainForm : Form, IMessageFilter {
 
 	static void SetBool( CheckBox box, Dictionary<string, string> v, string key ) {
 		if ( v.TryGetValue( key, out var s ) && bool.TryParse( s, out bool b ) ) box.Checked = b;
+	}
+
+	static void SetIndex( ComboBox box, Dictionary<string, string> v, string key ) {
+		if ( v.TryGetValue( key, out var s ) && int.TryParse( s, out int i )
+			&& i >= 0 && i < box.Items.Count ) box.SelectedIndex = i;
+	}
+
+	// The bot marker colour as the game wants it: "r g b", each 0..255. A bad
+	// or empty field falls back to the magenta default.
+	static int Clamp255( int x ) => x < 0 ? 0 : x > 255 ? 255 : x;
+
+	static Color ParseBotColor( string s ) {
+		var p = s.Split( new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries );
+		if ( p.Length == 3 && int.TryParse( p[0], out int r )
+			&& int.TryParse( p[1], out int g ) && int.TryParse( p[2], out int b ) ) {
+			return Color.FromArgb( Clamp255( r ), Clamp255( g ), Clamp255( b ) );
+		}
+		return Color.FromArgb( 255, 0, 220 );
+	}
+
+	void PickBotColor() {
+		using var dlg = new ColorDialog { FullOpen = true, Color = ParseBotColor( botColor.Text ) };
+		if ( dlg.ShowDialog( this ) == DialogResult.OK ) {
+			botColor.Text = $"{dlg.Color.R} {dlg.Color.G} {dlg.Color.B}";
+		}
 	}
 
 	// SetNum nimmt nur NumericUpDown, und dessen Wert ist decimal - ein
@@ -1559,6 +1745,16 @@ public class MainForm : Form, IMessageFilter {
 		// als das Spiel wirklich benutzt
 		cfg.AppendLine( $"seta cl_itemOutlineRange {itemRange.Value}" );
 		cfg.AppendLine( $"seta cl_botOutline {( botOutline.Checked ? ( botDamage.Checked ? 2 : 1 ) : 0 )}" );
+		cfg.AppendLine( $"seta cl_botOutlineStyle {botStyle.SelectedIndex}" );
+		cfg.AppendLine( $"seta cl_botOutlineBars {botBars.SelectedIndex}" );
+		{
+			// Write the parsed value back into the field: otherwise a typo stays
+			// on screen and gets saved, while the game quietly runs the default.
+			var c = ParseBotColor( botColor.Text );
+			botColor.Text = $"{c.R} {c.G} {c.B}";
+			cfg.AppendLine( $"seta cl_botOutlineColor \"{c.R} {c.G} {c.B}\"" );
+		}
+		cfg.AppendLine( $"seta cl_botOutlineName {( botName.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
@@ -1720,6 +1916,26 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
+	// Bildschirm und Aufloesung gehoeren auf die Kommandozeile, nicht in die
+	// Config: das Spiel liest +set noch vor dem Start des Renderers, waehrend
+	// ein exec erst laeuft, wenn das Fenster laengst steht - dort gesetzt
+	// braeuchte es ein vid_restart. Nicht Gewaehltes wird weggelassen, damit
+	// die Einstellung des Spiels unangetastet bleibt.
+	string VideoArguments() {
+		var args = new StringBuilder();
+
+		if ( screenMode.SelectedIndex == 1 ) args.Append( "+set r_fullscreen 0 " );
+		else if ( screenMode.SelectedIndex == 2 ) args.Append( "+set r_fullscreen 1 " );
+
+		int i = screenSize.SelectedIndex;
+		if ( i > 0 && i < Resolutions.Length ) {
+			var r = Resolutions[i];
+			args.Append( $"+set r_mode -1 +set r_customwidth {r.W} +set r_customheight {r.H} " );
+		}
+
+		return args.ToString();
+	}
+
 	void StartGame() {
 		var exe = Path.Combine( gameDir.Text, "ioquake3.exe" );
 		if ( !File.Exists( exe ) ) {
@@ -1740,7 +1956,7 @@ public class MainForm : Form, IMessageFilter {
 
 			game = Process.Start( new ProcessStartInfo {
 				FileName = exe,
-				Arguments = $"+exec {CfgName}",
+				Arguments = VideoArguments() + $"+exec {CfgName}",
 				WorkingDirectory = gameDir.Text,
 				UseShellExecute = true,
 			} );
@@ -1787,6 +2003,7 @@ public class MainForm : Form, IMessageFilter {
 		int hits = 0, sounds = 0, holds = 0, heldMs = 0;
 		var holdReason = new Dictionary<string, int>();
 		var frames = new HashSet<string>();
+		int frameRun = 0, lastDamageFrame = -1;		// Kartenwechsel trennen, siehe unten
 		var recent = new List<string>();
 		var damageFrames = new List<Damage>();
 		var shots = new List<Shot>();
@@ -1807,14 +2024,26 @@ public class MainForm : Form, IMessageFilter {
 				// Treffer im selben Server-Frame beantwortet das Spiel mit einem Ton,
 				// deshalb zaehlen die Frames und nicht die einzelnen Schadensereignisse
 				var mark = trimmed.LastIndexOf( " frame ", StringComparison.Ordinal );
-				frames.Add( mark >= 0 ? trimmed[( mark + 7 )..] : "#" + hits );
 				if ( mark >= 0 && int.TryParse( trimmed[( mark + 7 )..], out int damageFrame ) ) {
+					// Die Frame-Nummer faengt bei jedem Kartenwechsel wieder vorn an.
+					// Ohne eigenen Abschnitt fielen zwei Treffer aus verschiedenen
+					// Runden auf denselben Schluessel und zaehlten als einer - was
+					// die Zahl der erwarteten Toene zu klein macht, also ausgerechnet
+					// in Richtung "alles in Ordnung".
+					if ( damageFrame < lastDamageFrame ) {
+						frameRun++;
+					}
+					lastDamageFrame = damageFrame;
+					frames.Add( frameRun + ":" + damageFrame );
+
 					// wer getroffen wurde, steht zwischen "hit on " und dem Doppelpunkt
 					var colon = trimmed.IndexOf( ':', 7 );
 					damageFrames.Add( new Damage {
 						Frame = damageFrame,
 						Victim = colon > 7 ? trimmed[7..colon] : "",
 					} );
+				} else {
+					frames.Add( "#" + hits );
 				}
 				recent.Add( trimmed );
 			} else if ( trimmed.StartsWith( "hit sound: " ) ) {
@@ -1915,12 +2144,27 @@ public class MainForm : Form, IMessageFilter {
 			game = null;
 		}
 
-		int missed = Math.Max( 0, frames.Count - sounds );
+		// Positiv heisst ein Treffer ohne Ton, negativ ein Ton zu viel. Vorher
+		// war das auf null geklemmt: ein doppelter Ton war damit unsichtbar, und
+		// die gruene Null stand auch dann da, wenn ueberhaupt noch nichts
+		// gemessen war - sie las sich wie ein Beweis, dass alles stimmt.
+		int missed = frames.Count - sounds;
 		statHits.Text = hits.ToString();
 		statFrames.Text = frames.Count.ToString();
 		statSounds.Text = sounds.ToString();
-		statMissed.Text = missed.ToString();
-		statMissed.ForeColor = missed > 0 ? Color.Firebrick : Color.ForestGreen;
+		if ( frames.Count == 0 && sounds == 0 ) {
+			statMissed.Text = "–";
+			statMissed.ForeColor = Color.DimGray;
+		} else if ( missed > 0 ) {
+			statMissed.Text = missed.ToString();
+			statMissed.ForeColor = Color.Firebrick;
+		} else if ( missed < 0 ) {
+			statMissed.Text = $"{-missed}× doppelt";
+			statMissed.ForeColor = Color.Firebrick;
+		} else {
+			statMissed.Text = "0";
+			statMissed.ForeColor = Color.ForestGreen;
+		}
 
 		var tail = string.Join( Environment.NewLine, recent.TakeLast( 200 ) );
 		if ( logView.Text != tail ) {
@@ -2215,7 +2459,7 @@ public class MainForm : Form, IMessageFilter {
 				switch ( f[i] ) {
 				case "band": int.TryParse( f[i + 1], out t.Band ); break;
 				case "pace": int.TryParse( f[i + 1], out t.Pace ); break;
-				case "n": int.TryParse( f[i + 1], out t.Samples ); break;
+				case "samples": int.TryParse( f[i + 1], out t.Samples ); break;
 				case "from": t.From = Num( f[i + 1] ); break;
 				case "above": t.Above = Num( f[i + 1] ); break;
 				case "factor": t.Factor = Num( f[i + 1] ); break;
@@ -2239,7 +2483,7 @@ public class MainForm : Form, IMessageFilter {
 	// dieses Faches sich dadurch bewegt hat; die beiden gehoeren zusammen.
 	sealed class Learn {
 		public string Weapon = "", Target = "";
-		public int Samples, Frame;
+		public int Index, Frame;		// Index: laufende Nummer des Schusses, KEIN Fach-Zaehler
 		public double Ran, Straight, Expected, Aside, Error, Weight, Pace, MySpeed, Hold;
 
 		// Genau die Groesse, die die Engine quadriert in das Fach legt: wie
@@ -2263,11 +2507,11 @@ public class MainForm : Form, IMessageFilter {
 				case "pace": l.Pace = Num( f[i + 1] ); break;
 				case "myspeed": l.MySpeed = Num( f[i + 1] ); break;
 				case "hold": l.Hold = Num( f[i + 1] ); break;
-				case "n": int.TryParse( f[i + 1], out l.Samples ); break;
+				case "learned": int.TryParse( f[i + 1], out l.Index ); break;
 				case "frame": int.TryParse( f[i + 1], out l.Frame ); break;
 				}
 			}
-			return l.Samples > 0 ? l : null;
+			return l.Index > 0 ? l : null;
 		}
 
 		static double Num( string s ) =>
@@ -2297,7 +2541,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Spalten sollen die Fensterbreite mitnehmen. Was beim Anlegen als
 	// Breite dasteht, gilt dabei als Verhaeltnis: eine breite Spalte bekommt
 	// von jeder zusaetzlichen Breite entsprechend mehr ab.
-	static void FitColumns( ListView view ) {
+	void FitColumns( ListView view ) {
 		var columns = view.Columns.Cast<ColumnHeader>().ToArray();
 		var weights = columns.Select( c => c.Tag is int t ? t : c.Width ).ToArray();
 		int total = weights.Sum();
@@ -2306,20 +2550,61 @@ public class MainForm : Form, IMessageFilter {
 
 		// Enger als die eigene Ueberschrift wird keine Spalte - lieber quer
 		// scrollen als zwoelf Spalten, die alle "F..." heissen
-		var least = columns.Select( c => TextRenderer.MeasureText( c.Text, view.Font ).Width + 22 ).ToArray();
+		var least = columns.Select( ColumnLeast ).ToArray();
 
+		// Jede gesetzte Breite zeichnet die Liste neu; gebuendelt ist es eine
+		view.BeginUpdate();
 		int used = 0;
 		for ( int i = 0; i < columns.Length - 1; i++ ) {
 			int w = Math.Max( least[i], room * weights[i] / total );
-			columns[i].Width = w;
+			if ( columns[i].Width != w ) columns[i].Width = w;
 			used += w;
 		}
-		columns[^1].Width = Math.Max( least[^1], room - used );
+		int rest = Math.Max( least[^1], room - used );
+		if ( columns[^1].Width != rest ) columns[^1].Width = rest;
+		view.EndUpdate();
 	}
 
-	static void FitOnResize( ListView view ) {
+	int ColumnLeast( ColumnHeader column ) {
+		if ( !columnLeast.TryGetValue( column, out int least ) ) {
+			least = TextRenderer.MeasureText( column.Text, column.ListView?.Font ?? Font ).Width + 22;
+			columnLeast[column] = least;
+		}
+		return least;
+	}
+
+	// Sammeln statt sofort rechnen: waehrend am Fenster gezogen wird, bleibt der
+	// Wecker stehen und wird immer wieder neu gestellt.
+	void QueueFit( ListView view ) {
+		fitPending.Add( view );
+		fitTimer.Stop();
+		fitTimer.Start();
+	}
+
+	void QueueBands() {
+		fitBandsPending = true;
+		fitTimer.Stop();
+		fitTimer.Start();
+	}
+
+	void FlushFits() {
+		foreach ( var view in fitPending ) {
+			// Eine Liste auf einer geschlossenen Karte hat keine Breite, mit der
+			// sich rechnen laesst; sie wird nachgezogen, sobald ihre Karte kommt
+			if ( view.IsHandleCreated && view.Visible ) FitColumns( view );
+		}
+		fitPending.Clear();
+
+		if ( fitBandsPending ) {
+			fitBandsPending = false;
+			if ( rateView.IsHandleCreated && rateView.Visible ) FitBands();
+		}
+	}
+
+	void FitOnResize( ListView view ) {
 		foreach ( ColumnHeader column in view.Columns ) column.Tag = column.Width;
-		view.Resize += ( _, _ ) => FitColumns( view );
+		view.Resize += ( _, _ ) => QueueFit( view );
+		view.VisibleChanged += ( _, _ ) => { if ( view.Visible ) QueueFit( view ); };
 		FitColumns( view );
 	}
 
@@ -2454,7 +2739,7 @@ public class MainForm : Form, IMessageFilter {
 		var rows = new List<ListViewItem>();
 		foreach ( var c in Enumerable.Reverse( shown ).Take( 500 ) ) {
 			double moved = c.Moved;
-			var row = new ListViewItem( c.What.Samples.ToString() ) { Tag = moved };
+			var row = new ListViewItem( c.What.Index.ToString() ) { Tag = moved };
 			// Die Uhr laeuft je Runde; die Nummer steht nur davor, wenn es
 			// mehr als eine gab. Ohne sie folgt in der Liste auf 0:32 ploetzlich
 			// 14:50, und das sieht nach einem Fehler aus statt nach einem
@@ -2498,7 +2783,7 @@ public class MainForm : Form, IMessageFilter {
 			histView.Visible = false;
 		} else {
 			var top = shown[^1];
-			histLast.Text = $"zuletzt #{top.What.Samples} · {top.What.Weapon} · {BoxName( top.Box )}"
+			histLast.Text = $"zuletzt #{top.What.Index} · {top.What.Weapon} · {BoxName( top.Box )}"
 				+ $" · {top.What.Target} lief {top.What.Ran:0} statt {top.What.Expected:0} Einheiten"
 				+ $" – {WhyText( top.What )}"
 				+ ( top.Known ? $" · {top.Box.Was:0.00} → {top.Box.Now:0.00}" : "" );
@@ -2958,5 +3243,22 @@ public class MainForm : Form, IMessageFilter {
 		Reselect( shotView, keep );
 		if ( keep is null && shotView.Items.Count > 0 ) shotView.EnsureVisible( shotView.Items.Count - 1 );
 		shotView.EndUpdate();
+	}
+}
+
+// WinForms zeichnet eine ListView ungepuffert: beim Ziehen am Fenster flackert
+// sie sichtbar, und bei sechs Listen faellt das auf. Das Flag dagegen ist
+// geschuetzt, also braucht es eine Ableitung.
+//
+// Die Bildliste ist der uebliche Kniff fuer die Zeilenhoehe: eine ListView
+// richtet sich nach ihrer SmallImageList, nicht nach der Schrift. Ein Pixel
+// breit, damit sie sonst nichts tut.
+sealed class SmoothListView : ListView {
+	public const int RowHeight = 24;
+
+	public SmoothListView() {
+		DoubleBuffered = true;
+		SetStyle( ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true );
+		SmallImageList = new ImageList { ImageSize = new Size( 1, RowHeight ) };
 	}
 }

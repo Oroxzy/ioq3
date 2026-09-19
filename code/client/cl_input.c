@@ -875,7 +875,23 @@ in seconds, and the learner tunes it from what the bots really do.
 // die Korrekturzeile nennt das Fach vor und nach dem Schuss ("was", "now"),
 // und der Abzug der ganzen Tabelle heisst jetzt "aim table:" statt "aim tune:",
 // damit eine Korrektur und ein Abzug nicht mehr gleich aussehen.
-#define AIM_LOG_VERSION	7
+//
+// Acht, zweiter Teil: die Spalte "n" gab es sechsmal und sie trug zweierlei -
+// mal einen laufenden Ereigniszaehler, mal die Probenzahl eines Fachs, zweimal
+// sogar auf zwei aufeinanderfolgenden Zeilen desselben Ereignisses. Sie heisst
+// jetzt "booked" / "learned" / "lost" auf den Ereigniszeilen und "samples" auf
+// den Fachzeilen. Die gewichteten Summen heissen "wshots"/"whits" statt
+// "shots"/"hits", damit sie niemand fuer Stueckzahlen haelt, die Aufsetz-Spalten
+// erscheinen nur noch dort, wo es eine Flugzeit gibt, und die Zeile mit dem
+// vollen Ring heisst "aim ratelost:" statt "aim rate:".
+//
+// Acht: es gibt "aim silhouette:", und die Zeile hat mehr Felder als beim
+// ersten Wurf - sie zaehlt jetzt ueber ihr ganzes Fenster statt ueber ein Bild,
+// nennt die Zahl der Bots und den weitesten Fehlschlag, und traegt wie alle
+// anderen Zeilen cl.snap.serverTime. Fassung sieben stand unveraendert, waehrend
+// sich die Zeilen darunter mehrfach geaendert haben; das soll nicht wieder
+// passieren.
+#define AIM_LOG_VERSION	8
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -1288,6 +1304,24 @@ static float CL_AimAssistHitRadius( int weapon ) {
 
 /*
 =================
+CL_AimAssistStamp
+
+Der Zeitstempel fuer die Tabellenabzuege. Sie werden meist ausserhalb eines
+gueltigen Schnappschusses geschrieben - von Hand ueber die Konsole oder beim
+Trennen der Verbindung - und schrieben dann "frame 0", als waere das eine Zeit.
+Ohne gueltigen Schnappschuss steht jetzt gar kein Feld da, statt einer Null, die
+sich wie eine Angabe liest.
+=================
+*/
+static const char *CL_AimAssistStamp( void ) {
+	if ( !cl.snap.valid || cl.snap.serverTime <= 0 ) {
+		return "";
+	}
+	return va( " frame %i", cl.snap.serverTime );
+}
+
+/*
+=================
 CL_AimAssistTuneDump
 
 The whole table in one go, so the bench can show it whenever it likes and not
@@ -1321,12 +1355,12 @@ void CL_AimAssistTuneDump( void ) {
 				}
 				boxes++;
 				Com_Printf( "aim table: %s band %i from %.1f pace %i above %.0f factor %.2f"
-					" scatter %.0f reach %.0f n %i frame %i\n",
+					" scatter %.0f reach %.0f samples %i%s\n",
 					CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
 					pace, CL_AimAssistSpeedStart( pace ),
 					CL_AimAssistTune( weapon, CL_AimAssistBandCentre( band ), CL_AimAssistSpeedCentre( pace ) ),
 					CL_AimAssistScatter( weapon, CL_AimAssistBandCentre( band ), CL_AimAssistSpeedCentre( pace ) ),
-					CL_AimAssistHitRadius( weapon ), t->samples, cl.snap.serverTime );
+					CL_AimAssistHitRadius( weapon ), t->samples, CL_AimAssistStamp() );
 			}
 		}
 	}
@@ -1710,7 +1744,10 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 	if ( p->live ) {
 		aimRateLost++;
 		if ( cl_aimAssistDebug->integer ) {
-			Com_Printf( "aim rate: ring full, dropped %s ab %.0fu n %i frame %i\n",
+			// Eigener Name: diese Zeile teilte sich "aim rate:" mit dem
+			// Tabellenabzug, obwohl ihre Zahl ein Verlustzaehler ist und keine
+			// Fachgroesse. Wer auf das Praefix filterte, mischte beides.
+			Com_Printf( "aim ratelost: ring full, dropped %s ab %.0fu lost %i frame %i\n",
 				CL_AimAssistWeaponName( p->weapon ), CL_AimAssistRangeStart( p->range ),
 				aimRateLost, cl.snap.serverTime );
 		}
@@ -1816,7 +1853,7 @@ static void CL_AimAssistRateClose( void ) {
 		CL_AimAssistRateBook( p->weapon, p->range, p->hit, p->landing );
 		aimRateBooked++;
 		if ( cl_aimAssistDebug->integer ) {
-			Com_Printf( "aim rated: %s ab %.0fu %s%s n %i frame %i\n",
+			Com_Printf( "aim rated: %s ab %.0fu %s%s booked %i frame %i\n",
 				CL_AimAssistWeaponName( p->weapon ), CL_AimAssistRangeStart( p->range ),
 				p->hit ? "getroffen" : "daneben", p->landing ? " aufsetzend" : "",
 				aimRateBooked, cl.snap.serverTime );
@@ -1863,13 +1900,26 @@ void CL_AimAssistRateDump( void ) {
 			// Abstand, ab dem sich zwei Nachbarfaecher unterscheiden lassen.
 			// Sie stehen hier auf der Zeile, damit die Bank sie nicht ein
 			// zweites Mal fuehren muss.
-			Com_Printf( "aim rate: %s range %i from %.0f shots %.1f hits %.1f rate %.3f"
-				" land %.1f landhits %.1f n %i says %i frame %i\n",
+			// wshots/whits heissen so, weil sie keine Stueckzahlen sind: es sind
+			// exponentiell gewichtete Summen, in denen ein alter Schuss weniger
+			// zaehlt. Sie hiessen "shots" und "hits" und standen neben der echten
+			// Probenzahl - wer daraus einen Fehlerbalken rechnete, bekam ihn um
+			// ein Vielfaches zu eng. Die Probenzahl dafuer ist "samples".
+			//
+			// Die Aufsetz-Spalten stehen nur da, wo sie etwas bedeuten koennen:
+			// bei Hitscan-Waffen gibt es keine Flugzeit, also ist das Paar dort
+			// strukturell null und sagte bisher in jeder Zeile dasselbe nichts.
+			Com_Printf( "aim rate: %s range %i from %.0f wshots %.1f whits %.1f rate %.3f"
+				"%s samples %i says %i%s\n",
 				CL_AimAssistWeaponName( weapon ), range, CL_AimAssistRangeStart( range ),
 				r->shots, r->hits, r->shots > 0.0f ? r->hits / r->shots : 0.0f,
-				r->landShots, r->landHits, r->samples,
+				r->landShots > 0.0f
+					? va( " wland %.1f wlandhits %.1f landrate %.3f", r->landShots, r->landHits,
+						r->landHits / r->landShots )
+					: "",
+				r->samples,
 				r->samples < AIM_RATE_SPEAK ? 0 : ( r->samples < AIM_RATE_FIRM ? 1 : 2 ),
-				cl.snap.serverTime );
+				CL_AimAssistStamp() );
 		}
 	}
 
@@ -4253,7 +4303,7 @@ static void CL_AimAssistLearn( void ) {
 		// Tabelle, die eigene ist es bewusst nicht - ob sie es sein sollte,
 		// laesst sich nur an diesen Zeilen entscheiden.
 		Com_Printf( "aim learn: %s target %s ran %.0f of %.0f expected %.0f aside %.0f"
-			" error %.2f weight %.2f pace %.0f myspeed %.0f hold %.2f n %i frame %i\n",
+			" error %.2f weight %.2f pace %.0f myspeed %.0f hold %.2f learned %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
 			actual, p->straight, expected, lateral, error, weight,
 			p->speed, VectorLength( cl.snap.ps.velocity ), hold,
@@ -4265,7 +4315,7 @@ static void CL_AimAssistLearn( void ) {
 		// und ohne die ersten beiden war die Bewegung des Faches aus dem
 		// Protokoll nicht zu lesen.
 		Com_Printf( "aim tune: %s band %i from %.1f pace %i above %.0f was %.2f now %.2f"
-			" factor %.2f scatter %.0f reach %.0f n %i frame %i\n",
+			" factor %.2f scatter %.0f reach %.0f samples %i frame %i\n",
 			CL_AimAssistWeaponName( p->weapon ), band, CL_AimAssistBandStart( band ),
 			pace, CL_AimAssistSpeedStart( pace ),
 			before, CL_AimAssistBoxFactor( p->weapon, band, pace ),

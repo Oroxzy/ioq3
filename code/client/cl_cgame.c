@@ -55,9 +55,42 @@ static int			hitsSounded = -1;	// hit counter the last played hit sound belongs 
 static refdef_t		botOutlineView;		// the view the cgame rendered last
 static qboolean		botOutlineViewValid;
 static qhandle_t	botOutlineShader;
+static qhandle_t	botSilhouetteShader;	// flat fill of the whole model
+static qhandle_t	botContourShader;		// inverted-hull contour line
+static qhandle_t	botMaskShader;			// depth-only body, so the contour is a rim
+// How far a submitted model may sit from a player's interpolated origin and
+// still be taken for that player's own body.
+#define BOT_SILHOUETTE_WINDOW	48.0f
+// Past the window but still this close, a model was probably somebody's body
+// after all and the two sides merely disagree about where it is. Further out it
+// is scenery, and counting it would drown the number that matters.
+#define BOT_SILHOUETTE_NEAR		200.0f
+
+// All of these add up across the throttle window and are cleared when the line
+// is printed - not every frame, or the line would report a single frame and
+// read like a rate.
+static int			botSilhouettes;			// model parts marked
+static int			botSilhouetteNear;		// parts that missed the window but were close
+static float		botSilhouetteWorst;		// the widest such miss, in units
+static int			botSilhouetteFrames;	// frames the counts cover
+static int			botSilhouetteBots;		// eligible bots in the last frame's snapshot
+static int			botSilhouetteLogged;	// serverTime of the last debug line
 
 static void CL_AddBotOutlines( void );
 static void CL_AddItemOutlines( void );
+static void CL_MaybeAddBotSilhouette( const refEntity_t *in );
+
+// All three model shaders have to be there for the silhouette styles to mean
+// anything; without them the marker falls back to the wire box.
+static qboolean CL_BotSilhouetteReady( void ) {
+	return botSilhouetteShader && botContourShader && botMaskShader;
+}
+
+// Which marker the styles actually resolve to: the wire box when the style asks
+// for it, and also whenever the model shaders are missing.
+static qboolean CL_BotWireBox( void ) {
+	return cl_botOutlineStyle->integer == 0 || !CL_BotSilhouetteReady();
+}
 
 // Items are made invisible when taken and come back after a fixed wait, so the
 // moment one goes away is enough to count it down.  The waits are the ones in
@@ -607,7 +640,12 @@ static qboolean CL_FindHitSnapshot( const clSnapshot_t **hitOut, const clSnapsho
 	// match restart, so take it as the new starting point
 	if ( hitsSounded < 0 || list[0]->ps.persistant[PERS_HITS] < hitsSounded ) {
 		if ( cl_hitSoundDebug->integer ) {
-			Com_Printf( "hit sound: counter resync %i -> %i\n", hitsSounded, list[0]->ps.persistant[PERS_HITS] );
+			// Spelled out, because "resync 12 -> 0" on its own told nobody what
+			// had happened or what it cost: a hit landing on this very frame is
+			// given up, since there is no telling it from the counter reset.
+			Com_Printf( "hit sound: counter resync %i -> %i (respawn, restart or new player;"
+				" a hit on this frame is given up)\n",
+				hitsSounded, list[0]->ps.persistant[PERS_HITS] );
 		}
 		hitsSounded = list[0]->ps.persistant[PERS_HITS];
 		return qfalse;
@@ -674,12 +712,18 @@ static sfxHandle_t CL_HitSoundHandle( void ) {
 
 static qboolean CL_HitSoundPitch( float *pitch, const char *source ) {
 	const clSnapshot_t	*hit, *prev;
-	int					remaining, health, armor;
+	int					remaining, health, armor, hits;
 	float				frac;
 
 	if ( !CL_FindHitSnapshot( &hit, &prev ) ) {
 		return qfalse;
 	}
+	// How many damage events this one sound stands for. The server keeps only
+	// the last victim of a frame in PERS_ATTACKEE_REMAINING, so a rocket that
+	// catches two bots describes one of them and says nothing about the other.
+	// The hit counter still moved twice, and that is worth saying out loud:
+	// without it the log shows a plain single hit and the collapse is invisible.
+	hits = hit->ps.persistant[PERS_HITS] - prev->ps.persistant[PERS_HITS];
 	hitsSounded = hit->ps.persistant[PERS_HITS];
 
 	remaining = hit->ps.persistant[PERS_ATTACKEE_REMAINING];
@@ -696,7 +740,8 @@ static qboolean CL_HitSoundPitch( float *pitch, const char *source ) {
 		|| hit->ps.persistant[PERS_SCORE] > prev->ps.persistant[PERS_SCORE] ) {
 		*pitch = cl_hitPitchKill->value;
 		if ( cl_hitSoundDebug->integer ) {
-			Com_Printf( "hit sound: kill, pitch %.2f (%s)\n", *pitch, source );
+			Com_Printf( "hit sound: kill, pitch %.3f hits %i frame %i (%s)\n",
+				*pitch, hits, hit->serverTime, source );
 		}
 		return qtrue;
 	}
@@ -709,8 +754,12 @@ static qboolean CL_HitSoundPitch( float *pitch, const char *source ) {
 
 	*pitch = cl_hitPitchEmpty->value + ( cl_hitPitchFull->value - cl_hitPitchEmpty->value ) * frac;
 	if ( cl_hitSoundDebug->integer ) {
-		Com_Printf( "hit sound: %i health %i armor left%s, pitch %.2f (%s)\n",
-			health, armor, remaining ? "" : " (estimated)", *pitch, source );
+		// Three decimals, not two: the played pitch is a full float, while
+		// %.2f folds about five points of health onto one printed value, so
+		// the log could not say what was actually heard.
+		Com_Printf( "hit sound: %i health %i armor left%s, pitch %.3f hits %i frame %i (%s)\n",
+			health, armor, remaining ? "" : " (estimated)", *pitch,
+			hits, hit->serverTime, source );
 	}
 	return qtrue;
 }
@@ -929,6 +978,10 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 	case CG_R_ADDREFENTITYTOSCENE:
 		re.AddRefEntityToScene( VMA(1) );
+		// A bot's own player model, cloned into a see-through silhouette. The
+		// original is left untouched; the clone is gated to loopback and bots
+		// exactly like the wire box.
+		CL_MaybeAddBotSilhouette( VMA(1) );
 		return 0;
 	case CG_R_ADDPOLYTOSCENE:
 		re.AddPolyToScene( args[1], args[2], VMA(3), 1 );
@@ -1126,6 +1179,20 @@ void CL_InitCGame( void ) {
 	}
 
 	botOutlineShader = re.RegisterShader( "white" );
+	// The three model shaders ship in zz-bot-silhouette.pk3. RE_RegisterShader
+	// returns 0 when the script is not found, and there is no safe stand-in:
+	// "white" is rgbGen vertex, and a model surface never fills the vertex
+	// colours, so using it on a clone would draw the bot in whatever happened
+	// to be left in the colour buffer - and without the deform or the depth
+	// write it is neither a contour nor a mask. So the handles stay at zero and
+	// the marker falls back to the wire box, which always works.
+	botSilhouetteShader = re.RegisterShader( "botSilhouette" );
+	botContourShader = re.RegisterShader( "botOutline" );
+	botMaskShader = re.RegisterShader( "botMask" );
+	if ( !botSilhouetteShader || !botContourShader || !botMaskShader ) {
+		Com_Printf( S_COLOR_YELLOW "Bot marker: baseq3/zz-bot-silhouette.pk3 not found,"
+			" falling back to the wire box.\n" );
+	}
 	Com_Memset( itemTimers, 0, sizeof( itemTimers ) );
 	hitSound = -1;
 	customHitSound = -1;
@@ -1417,6 +1484,10 @@ typedef struct {
 	char	text[12];			// what it had left, empty when nobody knows
 	byte	flightColour[3];
 	char	flight[8];			// seconds until the shot arrives, empty when not steered at
+	qboolean bar;				// draw the segmented health/armor bar instead of the number
+	int		hp, armor;			// last-known values behind the bar
+	float	barAlpha;			// how sure the reading still is, 0..1
+	char	name[40];			// the bot's name over its head, empty when not shown
 } botLabel_t;
 
 static botLabel_t	botLabel[MAX_CLIENTS];
@@ -1438,25 +1509,89 @@ static void CL_AimFlightColour( int grade, byte *out ) {
 	out[2] = shade[i][2];
 }
 
+// A StarCraft-style segmented bar in 640x480 space. The bar is split into
+// fixed cells; the lit ones fill from the left in proportion to the value, the
+// rest stay dark. Everything fades together on alpha, so an old reading dims
+// without changing colour. Drawn flat over the finished frame, so it needs no
+// depth trick to sit in front of the level.
+#define BOT_BAR_WIDTH	40.0f
+#define BOT_BAR_CELLS	10
+
+static void CL_DrawBar( float left, float top, float height, int value, int fullValue,
+		const byte *rgb, float alpha ) {
+	vec4_t		cell;
+	const float	gap = 1.0f;
+	float		cellW = ( BOT_BAR_WIDTH - ( BOT_BAR_CELLS - 1 ) * gap ) / BOT_BAR_CELLS;
+	float		frac = fullValue > 0 ? Com_Clamp( 0.0f, 1.0f, (float)value / fullValue ) : 0.0f;
+	int			lit = (int)( BOT_BAR_CELLS * frac + 0.5f );
+	int			c;
+	vec4_t		back = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	if ( lit < 1 && value > 0 ) {
+		lit = 1;
+	}
+
+	// a dark backing so the bar reads over any wall behind it
+	back[3] = alpha * 0.6f;
+	SCR_FillRect( left - 1.0f, top - 1.0f, BOT_BAR_WIDTH + 2.0f, height + 2.0f, back );
+
+	for ( c = 0; c < BOT_BAR_CELLS; c++ ) {
+		if ( c < lit ) {
+			cell[0] = rgb[0] / 255.0f;
+			cell[1] = rgb[1] / 255.0f;
+			cell[2] = rgb[2] / 255.0f;
+			cell[3] = alpha;
+		} else {
+			cell[0] = cell[1] = cell[2] = 0.18f;
+			cell[3] = alpha * 0.7f;
+		}
+		SCR_FillRect( left + c * ( cellW + gap ), top, cellW, height, cell );
+	}
+}
+
 static void CL_DrawBotLabels( void ) {
+	static const byte	armorRGB[3] = { 90, 150, 255 };
 	vec4_t	tint;
-	float	px, py;
+	float	px, py, lift;
 	int		i;
 
 	for ( i = 0; i < botLabels; i++ ) {
 		px = botLabel[i].x * 640.0f / cls.glconfig.vidWidth;
 		py = botLabel[i].y * 480.0f / cls.glconfig.vidHeight;
 		tint[3] = 1.0f;
+		lift = 0.0f;
 
-		if ( botLabel[i].text[0] ) {
+		if ( botLabel[i].bar ) {
+			// Health bar above the head, and the thinner armor bar under it.
+			// Both run to 200, which is what health and armor really reach in
+			// Quake 3 - against a ceiling of 100 a mega-health or red-armor bot
+			// read exactly like one on its last legs of the same colour.
+			CL_DrawBar( px - BOT_BAR_WIDTH * 0.5f, py - 16.0f, 5.0f,
+				botLabel[i].hp, 200, botLabel[i].colour, botLabel[i].barAlpha );
+			lift = 18.0f;
+			if ( cl_botOutlineBars->integer > 1 && botLabel[i].armor > 0 ) {
+				CL_DrawBar( px - BOT_BAR_WIDTH * 0.5f, py - 9.0f, 3.0f,
+					botLabel[i].armor, 200, armorRGB, botLabel[i].barAlpha );
+			}
+		} else if ( botLabel[i].text[0] ) {
 			tint[0] = botLabel[i].colour[0] / 255.0f;
 			tint[1] = botLabel[i].colour[1] / 255.0f;
 			tint[2] = botLabel[i].colour[2] / 255.0f;
 			SCR_DrawStringExt( (int)( px - strlen( botLabel[i].text ) * 5.0f ),
 				(int)( py - 10.0f ), 10.0f, botLabel[i].text, tint, qtrue, qfalse );
+			lift = 13.0f;
 		}
 
-		// One line higher when a health number sits under it, on the head when
+		// The name rides on top of whatever health readout there is, in the
+		// bot's own colours (forceColor off lets its ^ codes through).
+		if ( botLabel[i].name[0] ) {
+			tint[0] = tint[1] = tint[2] = 1.0f;
+			SCR_DrawStringExt( (int)( px - Q_PrintStrlen( botLabel[i].name ) * 4.0f ),
+				(int)( py - 12.0f - lift ), 8.0f, botLabel[i].name, tint, qfalse, qfalse );
+			lift += 12.0f;
+		}
+
+		// One line higher when a health readout sits under it, on the head when
 		// it does not. The gap is counted in screen pixels and not in world
 		// units: a world offset shrinks with distance, and the two lines would
 		// run into each other at exactly the range a rocket is worth leading at.
@@ -1465,11 +1600,34 @@ static void CL_DrawBotLabels( void ) {
 			tint[1] = botLabel[i].flightColour[1] / 255.0f;
 			tint[2] = botLabel[i].flightColour[2] / 255.0f;
 			SCR_DrawStringExt( (int)( px - strlen( botLabel[i].flight ) * 6.0f ),
-				(int)( py - 12.0f - ( botLabel[i].text[0] ? 13.0f : 0.0f ) ),
+				(int)( py - 12.0f - lift ),
 				12.0f, botLabel[i].flight, tint, qtrue, qfalse );
 		}
 	}
 	botLabels = 0;
+
+	// A throttled note so the play log shows whether the model match is landing
+	// - the one way this can be checked, since the window cannot be driven here.
+	// It hangs on the marker itself, not on the aim-assist debug flag: with the
+	// assist switched off there would otherwise be no evidence at all.
+	//
+	// It says how many bots were there to mark, so that marking nothing while
+	// bots are about is loud instead of looking like an empty room; and it is
+	// stamped with cl.snap.serverTime like every other line, so it can be laid
+	// next to them. An empty room stays quiet.
+	if ( cl_botOutline->integer && !CL_BotWireBox() && botSilhouetteFrames > 0
+		&& ( botSilhouetteBots > 0 || botSilhouettes > 0 || botSilhouetteNear > 0 )
+		&& ( cl.serverTime - botSilhouetteLogged > 1000 || botSilhouetteLogged > cl.serverTime ) ) {
+		Com_Printf( "aim silhouette: %i marked, %i near (worst %.0fu), %i bots, over %i frames, frame %i\n",
+			botSilhouettes, botSilhouetteNear, botSilhouetteWorst,
+			botSilhouetteBots, botSilhouetteFrames, cl.snap.serverTime );
+		botSilhouetteLogged = cl.serverTime;
+		// cleared only now: the counts are meant to cover the whole window
+		botSilhouettes = 0;
+		botSilhouetteNear = 0;
+		botSilhouetteWorst = 0.0f;
+		botSilhouetteFrames = 0;
+	}
 }
 
 static void CL_AddBotOutlines( void ) {
@@ -1483,7 +1641,7 @@ static void CL_AddBotOutlines( void ) {
 	byte				shade[4];
 	trace_t				trace;
 	vec3_t				origin, corner[8], near[8], eye, label;
-	qboolean			ahead, seen, wantHealth, wantFlight;
+	qboolean			ahead, seen, wantHealth, wantFlight, wantName;
 	float				top, fresh, x, y, flightSeconds = 0.0f;
 	int					i, j, health = -1, armor = 0, flightGrade = 0;
 
@@ -1494,6 +1652,12 @@ static void CL_AddBotOutlines( void ) {
 
 	VectorCopy( cl.snap.ps.origin, eye );
 	eye[2] += cl.snap.ps.viewheight;
+
+	// This runs once for the world scene, so it is the right place to say how
+	// many bots were there to be marked at all. Without it a silhouette that
+	// marks nothing reads exactly like an empty room.
+	botSilhouetteFrames++;
+	botSilhouetteBots = 0;
 
 	for ( i = 0; i < cl.snap.numEntities; i++ ) {
 		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
@@ -1507,6 +1671,7 @@ static void CL_AddBotOutlines( void ) {
 		if ( !*Info_ValueForKey( info, "skill" ) ) {
 			continue;	// a human player is never outlined
 		}
+		botSilhouetteBots++;
 
 		if ( !CL_BotOutlineOrigin( entity->number, origin ) ) {
 			continue;
@@ -1515,22 +1680,29 @@ static void CL_AddBotOutlines( void ) {
 		// a ducked bot is half as tall, and so is its box
 		top = CL_AimAssistCrouched( entity ) ? CROUCH_HEIGHT : DEFAULT_HEIGHT;
 
-		for ( j = 0; j < 8; j++ ) {
-			corner[j][0] = origin[0] + ( ( j & 1 ) ? maxs[0] : mins[0] );
-			corner[j][1] = origin[1] + ( ( j & 2 ) ? maxs[1] : mins[1] );
-			corner[j][2] = origin[2] + ( ( j & 4 ) ? top : mins[2] );
-		}
-
-		ahead = qtrue;
-		for ( j = 0; j < 8 && ahead; j++ ) {
-			ahead = CL_BotOutlineNearPoint( corner[j], near[j] );
-		}
-		if ( !ahead ) {
-			continue;
-		}
-
 		CM_BoxTrace( &trace, eye, origin, vec3_origin, vec3_origin, 0, MASK_SOLID, qfalse );
 		seen = trace.fraction >= 1.0f;
+
+		// The wire box lives on a near shell in front of the level. The filled
+		// silhouette and the contour line are drawn from the model itself over
+		// in CL_MaybeAddBotSilhouette, so the box is only still built when the
+		// style asks for it. Everything below (colour, labels, bars) runs in
+		// every style.
+		if ( CL_BotWireBox() ) {
+			for ( j = 0; j < 8; j++ ) {
+				corner[j][0] = origin[0] + ( ( j & 1 ) ? maxs[0] : mins[0] );
+				corner[j][1] = origin[1] + ( ( j & 2 ) ? maxs[1] : mins[1] );
+				corner[j][2] = origin[2] + ( ( j & 4 ) ? top : mins[2] );
+			}
+
+			ahead = qtrue;
+			for ( j = 0; j < 8 && ahead; j++ ) {
+				ahead = CL_BotOutlineNearPoint( corner[j], near[j] );
+			}
+			if ( !ahead ) {
+				continue;	// behind the eye: no box, and the label would miss too
+			}
+		}
 
 		// What a bot had left the last time we hit it. The game never sends
 		// another player's health, but the hit sound is told what the one we
@@ -1544,7 +1716,9 @@ static void CL_AddBotOutlines( void ) {
 			colour = seen ? visible : hidden;
 		}
 
-		CL_BotOutlineWireBox( near, colour );
+		if ( CL_BotWireBox() ) {
+			CL_BotOutlineWireBox( near, colour );
+		}
 
 		// The numbers are flat on the screen, and everything flat has to wait
 		// until the world has been painted or the world paints over it. So
@@ -1555,14 +1729,36 @@ static void CL_AddBotOutlines( void ) {
 		// to switch off.
 		wantHealth = health >= 0 && cl_botOutline->integer > 1;
 		wantFlight = CL_AimAssistShotFlight( entity->clientNum, &flightSeconds, &flightGrade );
+		wantName = cl_botOutlineName->integer != 0;
 
-		if ( ( wantHealth || wantFlight ) && botLabels < MAX_CLIENTS ) {
+		if ( ( wantHealth || wantFlight || wantName ) && botLabels < MAX_CLIENTS ) {
 			VectorCopy( origin, label );
 			label[2] += top + 14.0f;
 			if ( CL_ProjectToScreen( label, &x, &y ) ) {
 				botLabel[botLabels].text[0] = '\0';
 				botLabel[botLabels].flight[0] = '\0';
-				if ( wantHealth ) {
+				botLabel[botLabels].name[0] = '\0';
+				botLabel[botLabels].bar = qfalse;
+				if ( wantName ) {
+					Q_strncpyz( botLabel[botLabels].name, Info_ValueForKey( info, "n" ),
+						sizeof( botLabel[0].name ) );
+				}
+				if ( wantHealth && cl_botOutlineBars->integer > 0 ) {
+					// StarCraft-style segmented bar. Its lit colour is the plain
+					// health gradient; how sure the reading still is rides on
+					// barAlpha instead, so an old bar fades without changing hue.
+					byte	full[4];
+
+					CL_BotDamageColour( health, 1.0f, qtrue, full );
+					botLabel[botLabels].bar = qtrue;
+					botLabel[botLabels].hp = health;
+					botLabel[botLabels].armor = armor;
+					botLabel[botLabels].barAlpha = ( seen ? 1.0f : 0.85f )
+						* Com_Clamp( 0.0f, 1.0f, 0.6f + 0.4f * fresh );
+					botLabel[botLabels].colour[0] = full[0];
+					botLabel[botLabels].colour[1] = full[1];
+					botLabel[botLabels].colour[2] = full[2];
+				} else if ( wantHealth ) {
 					Com_sprintf( botLabel[botLabels].text, sizeof( botLabel[0].text ),
 						armor > 0 ? "%i+%i" : "%i", health, armor );
 					botLabel[botLabels].colour[0] = colour[0];
@@ -1580,6 +1776,171 @@ static void CL_AddBotOutlines( void ) {
 			}
 		}
 		health = -1;
+	}
+}
+
+
+/*
+====================
+CL_MaybeAddBotSilhouette
+
+Every player model the cgame submits comes through here.  When it belongs to an
+enemy bot, a copy of the very same refEntity - the exact animated pose the cgame
+already built - is re-submitted with a flat silhouette shader and, if asked, an
+inflated contour shell.  RF_DEPTHHACK makes both draw in front of the level, the
+same see-through the wire box has.
+
+The bot is recognised by its lighting origin: cg_players.c stamps every part
+(legs, torso, head) with lightingOrigin == the bot's lerp origin, which is the
+same value CL_BotOutlineOrigin interpolates here, so one match catches the whole
+figure.  The safety gate is identical to the wire box: a loopback connection and
+bots only.
+====================
+*/
+static void CL_MaybeAddBotSilhouette( const refEntity_t *in ) {
+	const entityState_t	*entity;
+	const char			*info;
+	byte				sig[3];
+	refEntity_t			clone;
+	vec3_t				origin, delta;
+	// Wide enough to survive one snapshot of drift: the cgame and this code both
+	// work out where the bot is, but not always from the same pair of snapshots
+	// - a teleport clears the cgame's interpolation, and cl_timeNudge or a
+	// lowered snaps rate shifts it too. A tight radius silently lost the whole
+	// figure on those frames.
+	float				best = BOT_SILHOUETTE_WINDOW;
+	float				away, nearest = 1e9f;
+	int					i, match = -1, candidates = 0;
+	qboolean			matchIsBot = qfalse;
+	int					style, r = 255, g = 0, b = 220;
+
+	if ( cl_botOutline->integer == 0 ) {
+		return;
+	}
+	style = cl_botOutlineStyle->integer;
+	if ( style == 0 || !CL_BotSilhouetteReady() ) {
+		return;		// the wire box handles these, over in CL_AddBotOutlines
+	}
+
+	// Same gate as the wire box, and the same one that must never be weakened:
+	// a loopback connection, live play, a real snapshot. And only the world
+	// scene - the little HUD player models render after the view is stamped.
+	if ( clc.state != CA_ACTIVE || clc.demoplaying
+		|| clc.netchan.remoteAddress.type != NA_LOOPBACK
+		|| !cl.snap.valid || botOutlineViewValid ) {
+		return;
+	}
+
+	if ( in->reType != RT_MODEL || !( in->renderfx & RF_LIGHTING_ORIGIN ) ) {
+		return;
+	}
+
+	// Our own body. The cgame submits it every frame and marks it RF_THIRD_PERSON
+	// so it only shows in mirrors, but the server never puts us in our own
+	// snapshot - so it could never match, and every frame it cost a full scan of
+	// the entity list and then booked itself as a miss. It was the bulk of the
+	// "unmatched" count, and none of it was a bot the overlay had lost.
+	if ( in->renderfx & RF_THIRD_PERSON ) {
+		return;
+	}
+
+	// Which player this model part belongs to. Every player is a candidate, not
+	// just the bots: the pairing is by position, so a human standing next to a
+	// bot would otherwise borrow the bot's match and get silhouetted. Letting
+	// them win their own match and then refusing a non-bot keeps the bots-only
+	// gate on the model that is actually drawn.
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( entity->eType != ET_PLAYER || entity->clientNum == cl.snap.ps.clientNum
+			|| entity->clientNum < 0 || entity->clientNum >= MAX_CLIENTS
+			|| ( entity->eFlags & EF_DEAD ) ) {
+			continue;
+		}
+		if ( !CL_BotOutlineOrigin( entity->number, origin ) ) {
+			continue;
+		}
+		VectorSubtract( in->lightingOrigin, origin, delta );
+		away = VectorLength( delta );
+		candidates++;
+		if ( away < nearest ) {
+			nearest = away;
+		}
+		if ( away < best ) {
+			info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
+			best = away;
+			match = entity->clientNum;
+			matchIsBot = *Info_ValueForKey( info, "skill" ) != '\0';
+		}
+	}
+	if ( match < 0 ) {
+		// Only a near miss is worth reporting. Plenty of map models and bits of
+		// debris carry a lighting origin and were never anyone's body; counting
+		// those would bury the case this is here to catch - a body that drifted
+		// past the window because the cgame lerped it from a different pair of
+		// snapshots. The widest miss rides along, because a number is the only
+		// way to tell "just outside" from "nowhere near".
+		if ( candidates > 0 && nearest < BOT_SILHOUETTE_NEAR ) {
+			botSilhouetteNear++;
+			if ( nearest > botSilhouetteWorst ) {
+				botSilhouetteWorst = nearest;
+			}
+		}
+		return;
+	}
+	if ( !matchIsBot ) {
+		return;		// a human player is never silhouetted
+	}
+
+	// One steady signature colour so a bot reads at a glance and never blends
+	// into the item boxes. Health is shown by the bars, not by this, so the
+	// outline keeps its colour. cl_botOutlineColor sets it live, no rebuild;
+	// anything that is not three numbers leaves the magenta default whole,
+	// rather than mixing a half-parsed colour into it.
+	if ( sscanf( cl_botOutlineColor->string, "%i %i %i", &r, &g, &b ) != 3 ) {
+		r = 255;
+		g = 0;
+		b = 220;
+	}
+	sig[0] = (byte)Com_Clamp( 0.0f, 255.0f, r );
+	sig[1] = (byte)Com_Clamp( 0.0f, 255.0f, g );
+	sig[2] = (byte)Com_Clamp( 0.0f, 255.0f, b );
+
+	// shaderRGBA carries the tint (rgbGen entity) and the opacity in [3]
+	// (alphaGen entity).
+	//
+	// The contour is the inflated back-face shell. On its own, drawn through
+	// walls, it would fill the whole figure; so a depth-only mask of the real
+	// (un-inflated) model is laid down first, both of them depth-hacked. The
+	// mask carves out the body, leaving only the rim of the hull - a true
+	// outline that shows through walls as well as in the open.
+	if ( style & 2 ) {
+		clone = *in;
+		clone.customShader = botMaskShader;
+		clone.renderfx |= RF_DEPTHHACK | RF_NOSHADOW;
+		re.AddRefEntityToScene( &clone );
+
+		clone = *in;
+		clone.customShader = botContourShader;
+		clone.renderfx |= RF_DEPTHHACK | RF_NOSHADOW;
+		clone.shaderRGBA[0] = sig[0];
+		clone.shaderRGBA[1] = sig[1];
+		clone.shaderRGBA[2] = sig[2];
+		clone.shaderRGBA[3] = 255;
+		re.AddRefEntityToScene( &clone );
+		botSilhouettes++;
+	}
+	// The fill IS depth-hacked, so it shows the whole figure through walls - the
+	// see-through blob for a hidden bot.
+	if ( style & 1 ) {
+		clone = *in;
+		clone.customShader = botSilhouetteShader;
+		clone.renderfx |= RF_DEPTHHACK | RF_NOSHADOW;
+		clone.shaderRGBA[0] = sig[0];
+		clone.shaderRGBA[1] = sig[1];
+		clone.shaderRGBA[2] = sig[2];
+		clone.shaderRGBA[3] = 110;		// see-through, so the level still reads behind it
+		re.AddRefEntityToScene( &clone );
+		botSilhouettes++;
 	}
 }
 

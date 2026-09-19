@@ -445,6 +445,10 @@ qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float 
 qboolean CL_AimAssistShotFlight( int clientNum, float *seconds, int *grade );	// cl_input.c, the flight of the shot being steered
 extern	cvar_t	*cl_aimAssistAttacker;
 extern	cvar_t	*cl_botOutline;
+extern	cvar_t	*cl_botOutlineStyle;
+extern	cvar_t	*cl_botOutlineColor;
+extern	cvar_t	*cl_botOutlineName;
+extern	cvar_t	*cl_botOutlineBars;
 extern	cvar_t	*cl_itemOutline;
 extern	cvar_t	*cl_itemOutlineRange;
 

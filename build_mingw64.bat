@@ -62,6 +62,14 @@ set "PK3_ERROR=%ERRORLEVEL%"
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
+REM Die Silhouetten-Shader fuer die Gegner-Markierung. Wie der Trefferton muessen
+REM sie in einem pk3 liegen, damit der lokale Server sie bei sv_pure findet.
+pushd "%PROJECT_DIR%assets\bot-silhouette" || goto :error
+"%CMAKE_EXE%" -E tar cf "%GAME_DIR%\baseq3\zz-bot-silhouette.pk3" --format=zip scripts
+set "PK3_ERROR=%ERRORLEVEL%"
+popd
+if not "%PK3_ERROR%"=="0" goto :error
+
 REM Die WinForms-App gehoert zum gleichen Pruefstand und wird ebenfalls frisch gebaut.
 echo === Building Trefferton-Labor ===
 "%DOTNET_EXE%" build "%PROJECT_DIR%tools\hitsound-lab\HitsoundLab.csproj" --configuration Release --no-incremental || goto :error
