@@ -1313,6 +1313,18 @@ Ohne gueltigen Schnappschuss steht jetzt gar kein Feld da, statt einer Null, die
 sich wie eine Angabe liest.
 =================
 */
+// Unter welchen kuenstlichen Netzbedingungen diese Sitzung lief. Nichts davon
+// gesetzt heisst: kein Feld, damit die uebliche Zeile unveraendert bleibt.
+static const char *CL_AimAssistNetStamp( void ) {
+	int		delay = Cvar_VariableIntegerValue( "net_loopDelay" );
+	float	loss = Cvar_VariableValue( "net_loopLoss" );
+
+	if ( delay <= 0 && loss <= 0.0f ) {
+		return "";
+	}
+	return va( " netdelay %i netloss %.1f", delay, loss );
+}
+
 static const char *CL_AimAssistStamp( void ) {
 	if ( !cl.snap.valid || cl.snap.serverTime <= 0 ) {
 		return "";
@@ -4453,8 +4465,11 @@ void CL_AimAssistSnapshot( void ) {
 	// Felder liest, die es damals noch nicht gab.
 	if ( !aimLogStamped ) {
 		aimLogStamped = qtrue;
-		Com_Printf( "aim log: version %i built %s %s frame %i\n",
-			AIM_LOG_VERSION, __DATE__, __TIME__, cl.snap.serverTime );
+		// Mit den Netzbedingungen dran: eine Sitzung unter kuenstlicher
+		// Verzoegerung sieht sonst aus wie jede andere, und was sie gelernt
+		// hat, wanderte unbemerkt in dieselbe Tabelle wie der Rest.
+		Com_Printf( "aim log: version %i built %s %s%s frame %i\n",
+			AIM_LOG_VERSION, __DATE__, __TIME__, CL_AimAssistNetStamp(), cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();

@@ -37,6 +37,12 @@ public class MainForm : Form, IMessageFilter {
 	// Bildschirm und Aufloesung. "unveraendert" schreibt nichts - diese Werte
 	// sind archiviert, das Spiel merkt sie sich also dauerhaft, und ein Testlauf
 	// hat hier schon einmal die Einstellung des Benutzers ueberschrieben.
+	// Kuenstliche Netzbedingungen, nur fuer die eigene Partie. Damit laesst sich
+	// messen, wie Trefferton und gelernte Tabellen unter Verzoegerung stehen.
+	readonly NumericUpDown netDelay = new() { Minimum = 0, Maximum = 500, Increment = 10, Width = 70 };
+	readonly NumericUpDown netLoss = new() { Minimum = 0, Maximum = 50, DecimalPlaces = 1, Increment = 0.5M, Width = 70 };
+	readonly Label netValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+
 	readonly ComboBox screenMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
 	readonly ComboBox screenSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
 
@@ -432,6 +438,9 @@ public class MainForm : Form, IMessageFilter {
 		aimAssist.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		aimLearn.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		itemOutline.CheckedChanged += ( _, _ ) => UpdateItemEnabled();
+		netDelay.ValueChanged += ( _, _ ) => ShowNet();
+		netLoss.ValueChanged += ( _, _ ) => ShowNet();
+		ShowNet();
 		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
 		holdLottery.ValueChanged += ( _, _ ) => ShowHoldLottery();
 		ShowHoldLottery();
@@ -1059,7 +1068,21 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
 			Row( Labelled( "Bildschirm:", screenMode ) ),
-			Row( Labelled( "Auflösung:", screenSize ) ) );
+			Row( Labelled( "Auflösung:", screenSize ) ),
+			Row( Labelled( "Netz-Verzögerung:", netDelay ), Labelled( "Verlust %:", netLoss ) ),
+			Row( Pad( netValue ) ) );
+	}
+
+	// Die Verzoegerung wirkt je Richtung, die Laufzeit hin und zurueck ist also
+	// das Doppelte - das ist die Zahl, die man aus dem Spiel kennt.
+	void ShowNet() {
+		if ( netDelay.Value == 0 && netLoss.Value == 0 ) {
+			netValue.Text = "aus – das Spiel läuft ohne künstliche Störung";
+			return;
+		}
+		netValue.Text = $"≈{netDelay.Value * 2} ms Laufzeit hin und zurück"
+			+ ( netLoss.Value > 0 ? $", {netLoss.Value:0.#} % der Pakete verworfen" : "" )
+			+ " – steht im Protokoll";
 	}
 
 	GroupBox BuildSoundBox() {
@@ -1597,6 +1620,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botBars=" + botBars.SelectedIndex );
 		s.AppendLine( "botColor=" + botColor.Text );
 		s.AppendLine( "botName=" + botName.Checked );
+		s.AppendLine( "netDelay=" + netDelay.Value );
+		s.AppendLine( "netLoss=" + netLoss.Value );
 		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
 		s.AppendLine( "screenSize=" + screenSize.SelectedIndex );
 		s.AppendLine( "itemOutline=" + itemOutline.Checked );
@@ -1671,6 +1696,8 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( botBars, v, "botBars" );
 		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
 		SetBool( botName, v, "botName" );
+		SetNum( netDelay, v, "netDelay" );
+		SetNum( netLoss, v, "netLoss" );
 		SetIndex( screenMode, v, "screenMode" );
 		SetIndex( screenSize, v, "screenSize" );
 		SetBool( itemOutline, v, "itemOutline" );
@@ -1755,6 +1782,10 @@ public class MainForm : Form, IMessageFilter {
 			cfg.AppendLine( $"seta cl_botOutlineColor \"{c.R} {c.G} {c.B}\"" );
 		}
 		cfg.AppendLine( $"seta cl_botOutlineName {( botName.Checked ? 1 : 0 )}" );
+		// Kein seta: kuenstliche Stoerung soll nicht in der q3config des Spielers
+		// landen und beim naechsten Start still weiterwirken
+		cfg.AppendLine( $"set net_loopDelay {(int)netDelay.Value}" );
+		cfg.AppendLine( $"set net_loopLoss {netLoss.Value.ToString( System.Globalization.CultureInfo.InvariantCulture )}" );
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
