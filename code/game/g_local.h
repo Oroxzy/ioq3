@@ -721,6 +721,7 @@ extern	vmCvar_t	g_debugAlloc;
 extern	vmCvar_t	g_debugDamage;
 extern	vmCvar_t	g_hitSoundDebug;
 extern	vmCvar_t	g_weaponSpawns;
+extern	vmCvar_t	g_selfDamage;
 extern	vmCvar_t	g_weaponRespawn;
 extern	vmCvar_t	g_weaponTeamRespawn;
 extern	vmCvar_t	g_synchronousClients;

@@ -60,6 +60,7 @@ vmCvar_t	g_debugMove;
 vmCvar_t	g_debugDamage;
 vmCvar_t	g_hitSoundDebug;
 vmCvar_t	g_weaponSpawns;
+vmCvar_t	g_selfDamage;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -156,6 +157,9 @@ static cvarTable_t		gameCvarTable[] = {
 	// Munitionskisten reihum auf diese Waffen verteilt. Muss vor "map" stehen,
 	// weil sie beim Entstehen der Gegenstaende gelesen wird.
 	{ &g_weaponSpawns, "g_weaponSpawns", "", 0, 0, qfalse },
+	// Aus: ein Raketen- oder BFG-Sprung traegt wie immer, tut aber nicht weh.
+	// Der Splash auf andere bleibt davon unberuehrt.
+	{ &g_selfDamage, "g_selfDamage", "1", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

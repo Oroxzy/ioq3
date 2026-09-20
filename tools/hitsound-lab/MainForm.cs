@@ -81,6 +81,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly Button botColorPick = new() { Text = "wählen…", AutoSize = true };
 	readonly CheckBox botName = new() { Text = "Name über dem Kopf", Checked = true, AutoSize = true };
 	readonly CheckBox damagePlums = new() { Text = "Schadenszahlen bei Treffern", Checked = true, AutoSize = true };
+	readonly CheckBox noSelfDamage = new() { Text = "kein Schaden an mir selbst", Checked = false, AutoSize = true };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -1109,6 +1110,7 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
+			Row( Pad( noSelfDamage ) ),
 			Row( Labelled( "Bildschirm:", screenMode ) ),
 			Row( Labelled( "Auflösung:", screenSize ) ),
 			Row( Labelled( "Bildrate:", maxFps ) ) );
@@ -1250,6 +1252,9 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( noSelfDamage, "Ein Raketen- oder BFG-Sprung trägt genauso weit wie sonst – der Rückstoß"
+			+ " wird im Spiel vor dem Schaden verrechnet –, kostet aber kein Leben mehr. Nur gegen dich"
+			+ " selbst: wen dein Splash sonst noch erwischt, trifft er unverändert." );
 		hintTip.SetToolTip( damagePlums, "Wieviel jeder deiner Treffer angerichtet hat, steigt als Zahl auf"
 			+ " und verblasst – blass bei einem Streifschuss, leuchtend bei einem schweren.\n\nZwei Grenzen:"
 			+ " Die Zahl steht über dem Getroffenen, solange die Zieltaste hält – nur dann weiß der Client,"
@@ -1722,6 +1727,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botColor=" + botColor.Text );
 		s.AppendLine( "botName=" + botName.Checked );
 		s.AppendLine( "damagePlums=" + damagePlums.Checked );
+		s.AppendLine( "noSelfDamage=" + noSelfDamage.Checked );
 		s.AppendLine( "maxFps=" + maxFps.SelectedIndex );
 		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
 		s.AppendLine( "screenSize=" + screenSize.SelectedIndex );
@@ -1809,6 +1815,7 @@ public class MainForm : Form, IMessageFilter {
 		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
 		SetBool( botName, v, "botName" );
 		SetBool( damagePlums, v, "damagePlums" );
+		SetBool( noSelfDamage, v, "noSelfDamage" );
 		SetIndex( maxFps, v, "maxFps" );
 		SetIndex( screenMode, v, "screenMode" );
 		SetIndex( screenSize, v, "screenSize" );
@@ -1929,6 +1936,9 @@ public class MainForm : Form, IMessageFilter {
 		// nichts verloren, wo sie beim naechsten Spiel ohne dieses Werkzeug
 		// still weiterwirken wuerde. Muss vor "map" stehen, weil das Spiel sie
 		// beim Entstehen der Gegenstaende liest.
+		// Aus: Raketen- und BFG-Spruenge tragen wie immer, tun aber nicht weh.
+		// Kein seta - eine Laboreinstellung gehoert nicht in die q3config.
+		cfg.AppendLine( $"set g_selfDamage {( noSelfDamage.Checked ? 0 : 1 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );

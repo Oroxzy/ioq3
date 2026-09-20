@@ -536,3 +536,15 @@ den Gegner geführt, während man ihn einholt, und ob der Schlag ankommt,
 entscheidet `CL_AimAssistInReach` beim Zuschlagen. Die **Granate** ebenso
 wenig: sie fällt zwar nach etwa 660 Einheiten zu Boden, aber das ist der Bogen
 und keine Wand — höher gezielt kommt sie weiter.
+
+**Kein Schaden an dir selbst.** In der Karteikarte „Spiel“ abschaltbar
+(`g_selfDamage`). Ein Raketen- oder BFG-Sprung trägt dann genauso weit wie
+sonst und kostet nichts mehr: der Rückstoß wird im Spiel **vor** dem Schaden
+verrechnet (`g_combat.c`, der Kommentar dort sagt es ausdrücklich — „calculated
+after knockback, so rocket jumping works“), und genau hinter dieser Stelle
+steigt der Schaden jetzt aus. Kein Schmerz-Ruckler, kein roter Blitz, kein
+Leben weg — der Sprung selbst bleibt unverändert.
+
+Nur gegen dich selbst: wen dein Splash sonst noch erwischt, trifft er wie immer.
+Mit den Trefferzählern hat das ohnehin nichts zu tun — die stehen hinter
+`targ != attacker` und haben Selbstschaden noch nie gezählt.

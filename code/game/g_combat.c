@@ -971,6 +971,18 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 	// always give half damage if hurting self
 	// calculated after knockback, so rocket jumping works
 	if ( targ == attacker) {
+		// Raketen- und BFG-Spruenge ohne den Preis dafuer. Der Rueckstoss ist
+		// oben schon angewandt worden - genau deshalb steht dieser Block hinter
+		// ihm -, der Sprung traegt also unveraendert weit, und nur der Schaden
+		// faellt weg. Hier auszusteigen laesst zugleich den Schmerz-Ruckler und
+		// den roten Blitz aus, was richtig ist: es tut ja nichts mehr weh.
+		//
+		// Nur gegen sich selbst. Wen der eigene Splash sonst noch erwischt,
+		// trifft er unveraendert, und die Trefferzaehler weiter oben haben mit
+		// alledem ohnehin nichts zu tun - die stehen hinter targ != attacker.
+		if ( !g_selfDamage.integer ) {
+			return;
+		}
 		damage *= 0.5;
 	}
 
