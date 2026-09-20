@@ -80,6 +80,7 @@ public class MainForm : Form, IMessageFilter {
 	readonly TextBox botColor = new() { Width = 90, Text = "255 0 220" };
 	readonly Button botColorPick = new() { Text = "wählen…", AutoSize = true };
 	readonly CheckBox botName = new() { Text = "Name über dem Kopf", Checked = true, AutoSize = true };
+	readonly CheckBox damagePlums = new() { Text = "Schadenszahlen bei Treffern", Checked = true, AutoSize = true };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -1249,6 +1250,12 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( damagePlums, "Wieviel jeder deiner Treffer angerichtet hat, steigt als Zahl auf"
+			+ " und verblasst – blass bei einem Streifschuss, leuchtend bei einem schweren.\n\nZwei Grenzen:"
+			+ " Die Zahl steht über dem Getroffenen, solange die Zieltaste hält – nur dann weiß der Client,"
+			+ " wer es war. Sonst erscheint sie neben dem Fadenkreuz. Und die Schrotflinte zählt zu wenig,"
+			+ " weil jedes Korn einzeln verrechnet wird und nur das letzte in der Meldung landet.\n\nEigener"
+			+ " Schaden zählt nie mit: ein Raketensprung löst weder Zahl noch Trefferton aus." );
 
 		return Group( "Gegner-Markierung",
 			// eigene Zeilen: nebeneinander lief die zweite aus der Gruppe heraus
@@ -1257,7 +1264,8 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Markierung:", botStyle ) ),
 			Row( Labelled( "Balken:", botBars ) ),
 			Row( Labelled( "Farbe:", botColor ), Pad( botColorPick ) ),
-			Row( Pad( botName ) ) );
+			Row( Pad( botName ) ),
+			Row( Pad( damagePlums ) ) );
 	}
 
 	GroupBox BuildItemBox() {
@@ -1713,6 +1721,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botBars=" + botBars.SelectedIndex );
 		s.AppendLine( "botColor=" + botColor.Text );
 		s.AppendLine( "botName=" + botName.Checked );
+		s.AppendLine( "damagePlums=" + damagePlums.Checked );
 		s.AppendLine( "maxFps=" + maxFps.SelectedIndex );
 		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
 		s.AppendLine( "screenSize=" + screenSize.SelectedIndex );
@@ -1799,6 +1808,7 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( botBars, v, "botBars" );
 		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
 		SetBool( botName, v, "botName" );
+		SetBool( damagePlums, v, "damagePlums" );
 		SetIndex( maxFps, v, "maxFps" );
 		SetIndex( screenMode, v, "screenMode" );
 		SetIndex( screenSize, v, "screenSize" );
@@ -1883,6 +1893,7 @@ public class MainForm : Form, IMessageFilter {
 			cfg.AppendLine( $"seta cl_botOutlineColor \"{c.R} {c.G} {c.B}\"" );
 		}
 		cfg.AppendLine( $"seta cl_botOutlineName {( botName.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_damagePlums {( damagePlums.Checked ? 1 : 0 )}" );
 		// com_maxfps ist archiviert, das Spiel merkt es sich also - deshalb nur
 		// schreiben, wenn wirklich eine Bildrate gewaehlt wurde
 		if ( maxFps.SelectedIndex > 0 && maxFps.SelectedIndex < MaxFpsChoices.Length ) {

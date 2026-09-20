@@ -94,6 +94,7 @@ cvar_t	*cl_botOutlineStyle;
 cvar_t	*cl_botOutlineColor;
 cvar_t	*cl_botOutlineName;
 cvar_t	*cl_botOutlineBars;
+cvar_t	*cl_damagePlums;
 cvar_t	*cl_itemOutline;
 cvar_t	*cl_itemOutlineRange;
 cvar_t	*cl_hitPitch;
@@ -3634,6 +3635,9 @@ void CL_Init( void ) {
 	cl_botOutlineName = Cvar_Get( "cl_botOutlineName", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_botOutlineName, 0, 1, qtrue );
 	Cvar_SetDescription( cl_botOutlineName, "Show the bot's name over its head" );
+	cl_damagePlums = Cvar_Get( "cl_damagePlums", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_damagePlums, 0, 1, qtrue );
+	Cvar_SetDescription( cl_damagePlums, "Show the damage of each of your hits as a number that rises and fades: over the target while the aim key names one, beside the crosshair otherwise" );
 	cl_botOutlineBars = Cvar_Get( "cl_botOutlineBars", "2", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_botOutlineBars, 0, 2, qtrue );
 	Cvar_SetDescription( cl_botOutlineBars, "How the last-known health reads out over a bot at cl_botOutline 2: 0 the plain number, 1 a segmented health bar, 2 health plus a thinner armor bar" );

@@ -3583,6 +3583,26 @@ is to go on - and it goes stale, because they pick health up. How old the news
 is comes back with it, so a display can fade rather than lie.
 =================
 */
+/*
+=================
+CL_AimAssistLastShotAt
+
+Auf wen zuletzt geschossen wurde, wenn es frisch genug ist, um es zu glauben.
+Dieselbe Frist und derselbe Grund wie in CL_AimAssistWoundWatch: der Bericht
+kommt mit dem Schnappschuss gut fuenfzig Millisekunden nach dem Befehl, der
+gefeuert hat, und die Zielwahl wird dazwischen jedes Bild neu getroffen - ein
+Zucken in dem Fenster schriebe den Treffer dem Falschen zu.
+=================
+*/
+qboolean CL_AimAssistLastShotAt( int *clientNum ) {
+	if ( !aimShotTime || cl.snap.serverTime - aimShotTime > 400
+		|| aimShotTarget < 0 || aimShotTarget >= MAX_CLIENTS ) {
+		return qfalse;
+	}
+	*clientNum = aimShotTarget;
+	return qtrue;
+}
+
 qboolean CL_AimAssistKnownDamage( int clientNum, int *health, int *armor, float *freshness ) {
 	float	left;
 

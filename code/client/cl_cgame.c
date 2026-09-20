@@ -1493,6 +1493,102 @@ typedef struct {
 static botLabel_t	botLabel[MAX_CLIENTS];
 static int			botLabels;
 
+/*
+====================
+Schadenszahlen, die vom Getroffenen aufsteigen
+
+Wieviel ein Treffer angerichtet hat, sagt der Server nicht - aber er sagt
+beides, was man dafuer braucht, und das schon seit jeher. PERS_ATTACKEE_ARMOR
+traegt Leben und Ruestung des Getroffenen VOR dem Abzug (g_combat.c, gesetzt
+bevor "take" ueberhaupt gerechnet wird), PERS_ATTACKEE_REMAINING dieselben zwei
+Werte DANACH. Die Differenz der Summen ist der Schaden. Es lag also die ganze
+Zeit auf der Leitung und hat es nur nie jemand ausgerechnet - ein eigenes Feld
+haette hier auch niemand mehr unterbringen koennen: persistant[] geht als
+16-Bit-Short ueber das Netz, und alle sechzehn Plaetze sind vergeben.
+
+Zwei Dinge kann das nicht, und beide sollen hier stehen statt still zu passieren:
+
+Die Schrotflinte zaehlt zu wenig. Jedes Korn ruft G_Damage einzeln auf und
+ueberschreibt dabei beide Felder, sodass die Differenz nur das letzte Korn
+erfasst und nicht die Salve. Maschinengewehr, Railgun, Rakete und Blitz stimmen.
+
+Und wer getroffen wurde, steht nirgends. Der Client erschliesst es daraus, auf
+wen zuletzt geschossen wurde - was nur gilt, solange die Zieltaste haelt. Ohne
+sie wissen wir nicht, ueber wessen Kopf die Zahl gehoert, und sie erscheint
+stattdessen neben dem Fadenkreuz. Lieber dort als gar nicht: ein Treffer, den
+man nicht beziffert sieht, sieht aus wie kein Treffer.
+====================
+*/
+#define MAX_DAMAGE_PLUMS	24
+#define DAMAGE_PLUM_LIFE	1200.0f		// Millisekunden, bis sie ganz weg ist
+#define DAMAGE_PLUM_RISE	40.0f		// Bildpunkte, die sie in der Zeit steigt
+
+typedef struct {
+	vec3_t		origin;		// wo der Getroffene stand, als es passierte
+	qboolean	world;		// falsch: neben dem Fadenkreuz statt in der Welt
+	int			amount;
+	int			born;		// cls.realtime
+} damagePlum_t;
+
+static damagePlum_t	damagePlum[MAX_DAMAGE_PLUMS];
+static int			damagePlumNum;
+
+/*
+====================
+CL_AddDamagePlum
+
+Eine Zahl aufmachen. Der Ort wird beim Treffer eingefroren und wandert nicht
+mit dem Bot mit: die Zahl gehoert zu dem Augenblick, nicht zu dem Gegner.
+====================
+*/
+static void CL_AddDamagePlum( int amount, const vec3_t origin, qboolean world ) {
+	damagePlum_t	*plum;
+
+	if ( amount <= 0 ) {
+		return;
+	}
+	plum = &damagePlum[damagePlumNum++ % MAX_DAMAGE_PLUMS];
+	plum->amount = amount;
+	plum->born = cls.realtime;
+	plum->world = world;
+	if ( world ) {
+		VectorCopy( origin, plum->origin );
+	} else {
+		VectorClear( plum->origin );
+	}
+}
+
+/*
+====================
+CL_DamageFromHit
+
+Was der Treffer gekostet hat, aus den beiden Feldern, die ihn umschliessen.
+Null, wenn einer davon fehlt - dann wird lieber nichts behauptet.
+
+Auf einem toedlichen Treffer meldet der Server null Leben und null Ruestung,
+auch wenn der Schuss weit mehr angerichtet hat, als noch da war. Die Zahl ist
+dann der Rest und nicht der volle Schaden - und das ist die ehrlichere der
+beiden Moeglichkeiten, denn was darueber hinausging, weiss niemand.
+====================
+*/
+static int CL_DamageFromHit( const clSnapshot_t *hit ) {
+	int	before, after, had, left;
+
+	before = hit->ps.persistant[PERS_ATTACKEE_ARMOR];
+	after = hit->ps.persistant[PERS_ATTACKEE_REMAINING];
+	if ( !before || !after ) {
+		return 0;
+	}
+
+	// persistant[] hat auf dem Netz nur sechzehn Bit, also die Vorzeichen weg
+	had = ( ( before >> 8 ) & 0xff ) + ( before & 0xff );
+	left = ( ( ( after >> 8 ) & 0xff ) - 1 ) + ( after & 0xff );
+	if ( left < 0 ) {
+		left = 0;
+	}
+	return had - left;
+}
+
 // The same four shades the item clocks wear, so red already means the same
 // thing on this screen: what the record thinks of this shot.
 static void CL_AimFlightColour( int grade, byte *out ) {
@@ -1546,6 +1642,112 @@ static void CL_DrawBar( float left, float top, float height, int value, int full
 			cell[3] = alpha * 0.7f;
 		}
 		SCR_FillRect( left + c * ( cellW + gap ), top, cellW, height, cell );
+	}
+}
+
+/*
+====================
+CL_WatchDamage
+
+Einmal je Bild: ist der Trefferzaehler weitergegangen, wird eine Zahl
+aufgemacht. Mit eigenem Zaehler statt am Trefferton zu haengen - der laeuft
+nur, wenn der Ton eingeschaltet ist, und eine Anzeige soll nicht davon
+abhaengen, ob es dazu piept.
+====================
+*/
+static void CL_WatchDamage( void ) {
+	static int			seenHits = -1;
+	const entityState_t	*es;
+	vec3_t				origin;
+	int					hits, damage, target, i;
+	qboolean			world = qfalse;
+
+	if ( !cl_damagePlums->integer || !cl.snap.valid || clc.demoplaying ) {
+		seenHits = -1;
+		return;
+	}
+
+	hits = cl.snap.ps.persistant[PERS_HITS];
+	if ( seenHits < 0 || hits < seenHits ) {
+		seenHits = hits;			// erster Schnappschuss, oder ein neues Leben
+		return;
+	}
+	if ( hits == seenHits ) {
+		return;
+	}
+	seenHits = hits;
+
+	damage = CL_DamageFromHit( &cl.snap );
+	if ( damage <= 0 ) {
+		return;
+	}
+
+	// Ueber dem Kopf dessen, auf den geschossen wurde - und neben dem
+	// Fadenkreuz, wenn niemand sagen kann, wer das war.
+	VectorClear( origin );
+	if ( CL_AimAssistLastShotAt( &target ) ) {
+		for ( i = 0; i < cl.snap.numEntities; i++ ) {
+			es = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+			if ( es->eType != ET_PLAYER || es->clientNum != target
+				|| es->number != es->clientNum ) {
+				continue;
+			}
+			VectorCopy( es->pos.trBase, origin );
+			origin[2] += 42.0f;		// ueber den Kopf, nicht in die Brust
+			world = qtrue;
+			break;
+		}
+	}
+	CL_AddDamagePlum( damage, origin, world );
+}
+
+/*
+====================
+CL_DrawDamagePlums
+
+Die offenen Zahlen, steigend und verblassend. Die Farbe sagt, wieviel es war:
+ein Streifschuss bleibt blass, ein Treffer, der die Haelfte wegnimmt, leuchtet.
+====================
+*/
+static void CL_DrawDamagePlums( void ) {
+	vec4_t	tint;
+	float	x, y, age, frac, hot;
+	char	text[16];
+	int		i;
+
+	for ( i = 0; i < MAX_DAMAGE_PLUMS; i++ ) {
+		if ( !damagePlum[i].born ) {
+			continue;
+		}
+		age = (float)( cls.realtime - damagePlum[i].born );
+		if ( age < 0.0f || age > DAMAGE_PLUM_LIFE ) {
+			damagePlum[i].born = 0;		// abgelaufen, oder die Uhr sprang zurueck
+			continue;
+		}
+		frac = age / DAMAGE_PLUM_LIFE;
+
+		if ( damagePlum[i].world ) {
+			if ( !CL_ProjectToScreen( damagePlum[i].origin, &x, &y ) ) {
+				continue;			// hinter uns oder aus dem Bild
+			}
+			x = x * 640.0f / cls.glconfig.vidWidth;
+			y = y * 480.0f / cls.glconfig.vidHeight;
+		} else {
+			x = 320.0f;				// neben dem Fadenkreuz, etwas darueber
+			y = 200.0f;
+		}
+		y -= DAMAGE_PLUM_RISE * frac;
+
+		// bis fuenfzig weiss nach gelb, darueber nach rot
+		hot = Com_Clamp( 0.0f, 1.0f, damagePlum[i].amount / 50.0f );
+		tint[0] = 1.0f;
+		tint[1] = 1.0f - 0.45f * hot;
+		tint[2] = 1.0f - 0.95f * hot;
+		tint[3] = 1.0f - frac * frac;		// spaet erst schnell verblassen
+
+		Com_sprintf( text, sizeof( text ), "%i", damagePlum[i].amount );
+		SCR_DrawStringExt( (int)( x - strlen( text ) * 6.0f ), (int)y,
+			12.0f, text, tint, qtrue, qfalse );
 	}
 }
 
@@ -2286,6 +2488,11 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
 
 	CL_DrawItemTimers();
 	CL_DrawBotLabels();
+
+	// Erst nachsehen, ob ein Treffer dazugekommen ist, dann alle offenen
+	// Zahlen zeichnen - so erscheint eine neue noch in demselben Bild.
+	CL_WatchDamage();
+	CL_DrawDamagePlums();
 
 	CL_CheckMissedHitSound();
 }
