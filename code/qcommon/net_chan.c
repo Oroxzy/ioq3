@@ -58,18 +58,6 @@ cvar_t		*showpackets;
 cvar_t		*showdrop;
 cvar_t		*net_qport;
 
-// Messwerkzeug fuer das Labor. Eine Partie gegen Bots laeuft ueber Loopback,
-// und der kam an jeder Verzoegerung vorbei: NET_SendPacket springt fuer
-// NA_LOOPBACK heraus, bevor cl_packetdelay ueberhaupt gelesen wird, und
-// net_dropsim sitzt im Empfang echter Sockets. Auf einer Loopback-Partie taten
-// beide also nichts. Ohne diese zwei laesst sich nicht messen, wie sich der
-// Trefferton und die gelernten Tabellen unter Verzoegerung und Verlust
-// verhalten - und das ist eine Messfrage, keine Frage ans Zielen.
-//
-// Beide wirken ausschliesslich auf NA_LOOPBACK, also auf das eigene Spiel.
-cvar_t		*net_loopDelay;
-cvar_t		*net_loopLoss;
-
 static char *netsrcString[2] = {
 	"client",
 	"server"
@@ -86,13 +74,6 @@ void Netchan_Init( int port ) {
 	showpackets = Cvar_Get ("showpackets", "0", CVAR_TEMP );
 	showdrop = Cvar_Get ("showdrop", "0", CVAR_TEMP );
 	net_qport = Cvar_Get ("net_qport", va("%i", port), CVAR_INIT );
-
-	net_loopDelay = Cvar_Get ("net_loopDelay", "0", CVAR_TEMP );
-	Cvar_CheckRange( net_loopDelay, 0, 500, qtrue );
-	Cvar_SetDescription( net_loopDelay, "Lab measurement: delay loopback packets by this many milliseconds in each direction, so a round trip costs twice this. Only affects a local game" );
-	net_loopLoss = Cvar_Get ("net_loopLoss", "0", CVAR_TEMP );
-	Cvar_CheckRange( net_loopLoss, 0, 100, qfalse );
-	Cvar_SetDescription( net_loopLoss, "Lab measurement: drop this percent of loopback packets. Only affects a local game" );
 }
 
 /*
@@ -445,7 +426,6 @@ LOOPBACK BUFFERS FOR LOCAL PLAYER
 typedef struct {
 	byte	data[MAX_PACKETLEN];
 	int		datalen;
-	int		due;			// nicht vor diesem Zeitpunkt ausliefern, siehe net_loopDelay
 } loopmsg_t;
 
 typedef struct {
@@ -470,12 +450,6 @@ qboolean	NET_GetLoopPacket (netsrc_t sock, netadr_t *net_from, msg_t *net_messag
 		return qfalse;
 
 	i = loop->get & (MAX_LOOPBACK-1);
-
-	// Noch nicht faellig: der Ring ist eine Schlange, also wartet alles
-	// dahinter mit, und die Reihenfolge bleibt erhalten
-	if ( loop->msgs[i].due > Sys_Milliseconds() ) {
-		return qfalse;
-	}
 	loop->get++;
 
 	Com_Memcpy (net_message->data, loop->msgs[i].data, loop->msgs[i].datalen);
@@ -494,19 +468,11 @@ void NET_SendLoopPacket (netsrc_t sock, int length, const void *data, netadr_t t
 
 	loop = &loopbacks[sock^1];
 
-	// Verworfen, bevor es in den Ring kommt - genau das, was ein verlorenes
-	// Paket auf der Leitung waere
-	if ( net_loopLoss->value > 0.0f
-		&& (float)( rand() % 10000 ) * 0.01f < net_loopLoss->value ) {
-		return;
-	}
-
 	i = loop->send & (MAX_LOOPBACK-1);
 	loop->send++;
 
 	Com_Memcpy (loop->msgs[i].data, data, length);
 	loop->msgs[i].datalen = length;
-	loop->msgs[i].due = Sys_Milliseconds() + net_loopDelay->integer;
 }
 
 //=============================================================================
