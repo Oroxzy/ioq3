@@ -907,7 +907,16 @@ in seconds, and the learner tunes it from what the bots really do.
 // wurde, in Millisekunden. Auf einem gekuerzten Schuss ist er kleiner als
 // "lead", das die echte Flugzeit zum naeheren Punkt traegt - ohne ihn waere
 // nicht zu sehen, wieviel Vorhalt die Geometrie gekostet hat.
-#define AIM_LOG_VERSION	10
+// Elf: "pad" auf der Schusszeile - eins, wenn der Zielpunkt von einem
+// Sprungfeld kommt. Der Bodenpfad sah die Felder vorher nicht und lief unter
+// dem geworfenen Ziel hindurch; ohne diese Spalte waere nicht nachzusehen, ob
+// der neue Weg ueberhaupt je greift.
+#define AIM_LOG_VERSION	11
+
+// Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
+// waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
+// Aenderung, die sich nicht nachmessen laesst, ist eine Behauptung.
+static qboolean	aimPadLaunch;
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -2080,6 +2089,67 @@ picture between snapshots: nothing to clip and nothing to drop there.
 static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t motion,
 		float gravity, float limit, vec3_t mins, vec3_t maxs, float *floorOut );
 
+/*
+=================
+CL_AimAssistJumpPad
+
+Ob der Lauf ein Sprungfeld kreuzt - und wenn ja, wo und womit es fortschleudert.
+
+Der Bodenpfad spurt sonst nur gegen feste Geometrie (MASK_PLAYERSOLID), und ein
+Sprungfeld ist keine: es ist ein Ausloeser, durch den die Spur hindurchgeht, als
+waere dort nichts. Also lief die Vorhersage unbeirrt am Boden weiter, waehrend
+das Ziel hundert Einheiten hoch und fort war. Im Protokoll waren das 8,6 Prozent
+der verknuepfbaren Boden-Raketen, mit einem mittleren Fehler von rund 390
+Einheiten - und die trafen 6 von 63 gegen 44 von 184 bei den uebrigen.
+
+Der Server schickt die Felder ausdruecklich an die Klienten (SP_trigger_push
+raeumt SVF_NOCLIENT weg), ihr Volumen ist das Inline-Modell und origin2 die
+Geschwindigkeit, die BG_TouchJumpPad dem Getroffenen gibt. Das cgame prueft fuer
+den eigenen Spieler genau so; hier geschieht dasselbe fuer das Ziel.
+
+Gesucht wird entlang der vollen Laufstrecke, nicht der gedaempften: die
+Daempfung sagt, dass ein Bot die Richtung wechseln koennte, nicht dass er
+langsamer liefe. Wer geradeaus laeuft, ist zu der Zeit dort.
+=================
+*/
+static qboolean CL_AimAssistJumpPad( const vec3_t start, const vec3_t end,
+		vec3_t mins, vec3_t maxs, float *fraction, vec3_t launch ) {
+	const entityState_t	*entity;
+	trace_t				trace;
+	clipHandle_t		model;
+	float				best = 1.0f;
+	qboolean			found = qfalse;
+	int					i;
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		entity = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		// Die Schranke ist keine Vorsicht um ihrer selbst willen: CM_InlineModel
+		// beendet das Spiel bei einer Nummer, die es nicht kennt, und diese
+		// kommt geradewegs aus einem Schnappschuss.
+		if ( entity->eType != ET_PUSH_TRIGGER || entity->modelindex <= 0
+			|| entity->modelindex >= CM_NumInlineModels() ) {
+			continue;
+		}
+
+		model = CM_InlineModel( entity->modelindex );
+		// Maske -1, weil ein Ausloeser CONTENTS_TRIGGER traegt und keine der
+		// festen Inhaltsarten - dasselbe tut das cgame fuer den Spieler selbst.
+		CM_TransformedBoxTrace( &trace, start, end, mins, maxs, model, -1,
+			vec3_origin, vec3_origin, qfalse );
+		if ( trace.startsolid || trace.allsolid ) {
+			continue;			// steht schon drin, wird also gerade geworfen
+		}
+		if ( trace.fraction < best ) {
+			best = trace.fraction;
+			VectorCopy( entity->origin2, launch );
+			found = qtrue;
+		}
+	}
+
+	*fraction = best;
+	return found && best < 1.0f;
+}
+
 static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
@@ -2088,6 +2158,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	qboolean	grounded, floats, stopped, snapped, walks;
 	int			i;
 
+	aimPadLaunch = qfalse;
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
 	floats = CL_AimAssistFloats( entity );
 	stopped = qfalse;
@@ -2136,6 +2207,38 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	} else if ( !grounded && !floats ) {
 		sideways = time;
 	} else {
+		// Kreuzt der Lauf ein Sprungfeld, endet der Lauf dort und der Rest ist
+		// ein Flug. Vor der Daempfung geprueft, weil das Feld an einem festen
+		// Ort liegt: wann das Ziel dort ist, entscheidet seine Geschwindigkeit
+		// und nicht, wie sehr wir seiner Richtung trauen.
+		if ( grounded && pace > 1.0f && time > 0.0f ) {
+			vec3_t	padEnd, launch;
+			float	share;
+
+			padEnd[0] = entity->pos.trBase[0] + motion[0] * time;
+			padEnd[1] = entity->pos.trBase[1] + motion[1] * time;
+			padEnd[2] = entity->pos.trBase[2];
+			if ( CL_AimAssistJumpPad( entity->pos.trBase, padEnd, mins, maxs, &share, launch ) ) {
+				float	rise = time * ( 1.0f - share );		// was nach dem Wurf bleibt
+
+				predicted[0] = entity->pos.trBase[0] + motion[0] * time * share + launch[0] * rise;
+				predicted[1] = entity->pos.trBase[1] + motion[1] * time * share + launch[1] * rise;
+				predicted[2] = entity->pos.trBase[2] + launch[2] * rise
+					- 0.5f * gravity * rise * rise;
+
+				// Es fliegt, also kein Boden darunter und nichts, was hier noch
+				// zu beschneiden waere - die Bahn geht ueber alles hinweg, was
+				// den Lauf aufgehalten haette.
+				if ( blocked ) {
+					*blocked = qfalse;
+				}
+				if ( pinned ) {
+					*pinned = qfalse;
+				}
+				aimPadLaunch = qtrue;
+				return;
+			}
+		}
 		sideways = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time )
 			* CL_AimAssistTune( weapon, time, pace );
 	}
@@ -4318,7 +4421,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f"
 		" pace %.0f myspeed %.0f me %i"
-		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i myair %i land %i"
+		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i pad %i myair %i land %i"
 		" world %i cmd %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
@@ -4339,7 +4442,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		// applied, and the value is what it would have been.
 		touchdown >= 0.0f ? CL_AimAssistLandTune( weapon, lead - touchdown ) : CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
-		fallback, (int)( applied * 1000.0f + 0.5f ),
+		fallback, (int)( applied * 1000.0f + 0.5f ), aimPadLaunch ? 1 : 0,
 		cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
 		cl.snap.serverTime, cl.serverTime );

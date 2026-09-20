@@ -548,3 +548,26 @@ Leben weg — der Sprung selbst bleibt unverändert.
 Nur gegen dich selbst: wen dein Splash sonst noch erwischt, trifft er wie immer.
 Mit den Trefferzählern hat das ohnehin nichts zu tun — die stehen hinter
 `targ != attacker` und haben Selbstschaden noch nie gezählt.
+
+**Sprungfelder in der Vorhersage.** Der Bodenpfad spurte nur gegen feste
+Geometrie, und ein Sprungfeld ist keine — es ist ein Auslöser, durch den die
+Spur hindurchgeht, als wäre dort nichts. Also lief die Vorhersage unbeirrt am
+Boden weiter, während das Ziel hundert Einheiten hoch und fort war. Im
+Protokoll waren das 8,6 % der verknüpfbaren Boden-Raketen mit einem mittleren
+Fehler von rund 390 Einheiten; sie trafen 6 von 63 gegen 44 von 184 bei den
+übrigen (Befund F01 in `docs/prediction-review.md`).
+
+Jetzt wird der Lauf zusätzlich gegen jedes `ET_PUSH_TRIGGER` geprüft. Der
+Server schickt die Felder ausdrücklich an die Clients, ihr Volumen ist das
+Inline-Modell und `origin2` die Geschwindigkeit, die `BG_TouchJumpPad` dem
+Getroffenen gibt — das cgame prüft für den eigenen Spieler genau so. Ab dem
+Kontakt rechnet die Vorhersage die Wurfparabel statt des Laufs.
+
+Gesucht wird entlang der **vollen** Laufstrecke, nicht der gedämpften: die
+Dämpfung sagt, dass ein Bot die Richtung wechseln könnte, nicht dass er
+langsamer liefe. Wer geradeaus läuft, ist zu der Zeit dort.
+
+Auf der Schusszeile steht dafür `pad` — eins, wenn der Zielpunkt von einem
+Wurf kommt. Ohne diese Spalte ließe sich nicht nachsehen, ob der Pfad
+überhaupt je greift, und eine Änderung, die sich nicht nachmessen lässt, ist
+eine Behauptung. q3dm17 hat dreizehn solcher Felder.
