@@ -590,3 +590,63 @@ Auf q3dm17 ist das kein Randfall — die Karte ist eine Ansammlung von
 Plattformen über dem Nichts. Die drei Prüfungen schätzten den Anteil
 unterschiedlich (2,2 bis 5,1 % der Boden-Raketen) bei einem mittleren
 Höhenfehler von 222 Einheiten.
+
+**Und dann die ersten Daten.** In der nächsten Sitzung feuerten fünf Schüsse
+mit `edge 1`, vier davon nachprüfbar: einer traf die Vorhersage auf zwanzig
+Einheiten, einer war ein glatter Fehlalarm (der Bot stand beim Eintreffen noch
+auf der Plattform), und zwei fielen um rund 350 Einheiten zu tief — einer
+davon, weil der Bot die Lücke gesprungen statt hineingefallen ist. Mittlerer
+Fehler 399 Einheiten gegen 127 bei den übrigen Raketen derselben Sitzung.
+
+Das ist zu wenig, um es zu entscheiden, aber genug, um es nicht anzulassen:
+bei einem langen Vorhalt reicht die Restzeit fast immer aus, um bis zum Boden
+darunter zu fallen, sodass der Zweig aus „irgendwo über eine Kante“ ein
+„steht unten“ macht. Deshalb ist `cl_aimAssistEdge` (Haken „Sturz über die
+Kante anlegen“) **aus** voreingestellt: die Kante wird erkannt und als
+`edge 2` protokolliert, der Zielpunkt bleibt aber stehen. So lässt sich an
+einer Sitzung auszählen, wie oft der Bot beim Eintreffen wirklich unten war,
+ohne dafür einen einzigen Schuss zu bezahlen. `edge 1` heißt angelegt.
+
+**Die eigene Hand.** Während die Zieltaste hält, bewegt die Maus die Sicht
+weiter — das ist kein Versehen, aber es gehört gemessen, bevor man es beurteilt.
+Der Befehl wird in dieser Reihenfolge gebaut: erst Tastatur, dann Maus, dann
+Joystick, und **danach** greift die Hilfe (`CL_CreateCmd`). Sie legt ihre
+Korrektur also auf eine Sicht, die die Hand schon verschoben hat.
+
+Auf dem **Schussbefehl** macht das nachweislich nichts. Dort setzt die Hilfe
+die Sicht ganz auf den Punkt (Mischfaktor 1), und der Anteil der Hand kürzt
+sich heraus — auch aus der Neunzig-Grad-Klammer, die den Schritt begrenzt. Im
+Bestand vom 20. September: **3295 exakte Schüsse, kein einziger mit einem Rest
+über 0,01°** — Rakete, Rail, BFG, Granate, Schrot und MG im exakten Modus.
+
+Auf allen **anderen** Befehlen bleibt sie drin, und bei `cl_aimAssistExact 1`
+sind das für MG, Plasma und Blitz auch die Schussbefehle. Gemessen an denselben
+Sitzungen verlässt ein solcher Schuss den Lauf im Mittel 4 bis 5 Einheiten
+neben dem Punkt, den die Hilfe wollte; knapp ein Drittel über 9 Einheiten, gut
+ein Achtel über 18 — eine halbe Körperbreite. Wieviel davon die Maus ist und
+wieviel der Mischfaktor, sagte das Protokoll bisher nicht.
+
+Zwei Dinge also. Die Schusszeile führt jetzt `own` — die Gradzahl, die die
+eigene Hand auf diesem Befehl beigesteuert hat, aus `oldAngles` gegen die Sicht
+nach der Eingabe. Und der Haken **„Maus sperren, solange die Hilfe führt"**
+(`cl_aimAssistFreeze`) verwirft sie: in `CL_CreateCmd` werden Nick und Gier
+nach der Eingabe auf den Stand vor ihr zurückgesetzt. Eine Stelle für Maus,
+Tastatur und Joystick zugleich; die Maus-Puffer werden normal geleert, also
+schnappt die Sicht beim Loslassen nicht nach.
+
+Gesperrt wird **nur, während die Hilfe wirklich auf ein Ziel führt** — nicht
+schon, wenn die Taste hält. Sonst stünde die Sicht auch dann fest, wenn die
+Hilfe gerade gar nichts tut (kein Ziel, tot, Zwischenstand), und dieselbe
+Prüfung wie beim Zielen selbst hängt davor, damit die Taste auf einem fremden
+Server niemals irgendetwas einfriert.
+
+Der Preis steht dazu: wer die Maus sperrt, kann während des Haltens weder
+umsehen noch ein anderes Ziel anvisieren — und weil die Laufrichtung in Quake
+an der Sicht hängt, läuft man dorthin, wohin die Hilfe blickt. Das Fadenkreuz
+ist der einzige Posten der Vorrangliste, der die Sicht überhaupt liest
+(`cursor`, beim MG 80 von 100), und die gewählte Waffe wie die eigene Position
+bleiben als Kanäle bestehen; das Anvisieren selbst fällt aber an die Liste.
+Und die Liste hat beim geführten Griff überhaupt keinen Sichtkegel — die
+dreißig Grad im Quelltext gelten nur für den Vergleichsgriff des Protokolls. Für eine saubere Messung ist das richtig, zum Spielen
+nicht — deshalb ist der Haken aus voreingestellt. Mit ihm an muss `own` auf
+jeder Zeile 0,00 stehen; das ist die Probe, dass er greift.

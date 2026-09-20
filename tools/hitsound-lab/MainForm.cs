@@ -107,6 +107,14 @@ public class MainForm : Form, IMessageFilter {
 	// sich als "exakt im Schussmoment", meinte aber: nicht fuer MG, Plasma und
 	// Blitz - die gingen mit nur 0,32 des Wegs zum Punkt raus (Befund F03).
 	readonly ComboBox aimExact = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	// Solange die Hilfe wirklich fuehrt, wird die eigene Maus verworfen. Ohne
+	// das hat die Hand auf jedem Befehl, der nicht der exakte Schussbefehl ist,
+	// noch ihren Anteil am Zielen - gemessen sind das bei MG, Plasma und Blitz
+	// im Mittel vier bis fuenf Einheiten neben dem Punkt, den die Hilfe wollte.
+	readonly CheckBox aimFreeze = new() { Text = "Maus sperren, solange die Hilfe führt", Checked = false, AutoSize = true };
+	// Ob der Sturz über eine Plattformkante auch wirklich angelegt wird. Aus
+	// heisst: nur erkennen und ins Protokoll schreiben, Zielpunkt unverändert.
+	readonly CheckBox aimEdge = new() { Text = "Sturz über die Kante anlegen (F26)", Checked = false, AutoSize = true };
 	readonly CheckBox aimLearn = new() { Text = "je Waffe und Entfernung nachmessen", Checked = true, AutoSize = true };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
@@ -413,7 +421,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 12;
+	const int LogVersion = 13;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -900,6 +908,7 @@ public class MainForm : Form, IMessageFilter {
 		aimStrength.Enabled = on;
 		aimKey.Enabled = on;
 		aimAttacker.Enabled = on;
+		aimFreeze.Enabled = on;
 		aimSmooth.Enabled = on;
 		aimExact.Enabled = on;
 		aimLearn.Enabled = on;
@@ -1216,12 +1225,17 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildAimBox() {
 		hintTip.SetToolTip( aimAssist, "Wen die Hilfe nimmt, steht in der Karte „Vorrang“ rechts." );
 		hintTip.SetToolTip( aimKey, "Die Taste zielt nur; geschossen wird mit der Feuertaste." );
+		hintTip.SetToolTip( aimFreeze, "Die eigene Maus wird verworfen, solange die Hilfe wirklich auf ein Ziel führt."
+ 			+ " Der exakte Schussbefehl war ohnehin schon frei von ihr; das hier nimmt sie von allen"
+ 			+ " anderen Befehlen weg. Preis: man kann während des Haltens weder umsehen noch ein"
+ 			+ " anderes Ziel anvisieren - das Ziel wählt dann allein die Vorrangliste." );
 		hintTip.SetToolTip( holdLottery, "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." );
 
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ) ),
 			Row( Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
 			Row( Labelled( "Schussmoment exakt:", aimExact ) ),
+			Row( Pad( aimFreeze ) ),
 			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "auch aussichtslose:", holdLottery ) ),
@@ -1243,8 +1257,13 @@ public class MainForm : Form, IMessageFilter {
 
 	// Wie weit vorgehalten wird
 	GroupBox BuildLeadBox() {
+		hintTip.SetToolTip( aimEdge, "Läuft die vorhergesagte Strecke über eine Plattformkante, fällt der Zielpunkt"
+ 			+ " von dort. Aus ist die Voreinstellung: die Kante wird erkannt und protokolliert, der"
+ 			+ " Punkt bleibt stehen. Von den ersten vier nachprüfbaren Schüssen war einer gut, einer"
+ 			+ " ein Fehlalarm und zwei fielen zu tief - erst messen, dann anlegen." );
 		return Group( "Vorhalt",
 			Row( Labelled( "Glättung (ms):", aimSmooth ), Labelled( "Richtung halten (s):", aimLead ) ),
+			Row( Pad( aimEdge ) ),
 			Row( Pad( aimLearn ) ),
 			Row( Pad( aimLearned ) ) );
 	}
@@ -1725,6 +1744,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimStrength=" + (int)aimStrength.Value );
 		s.AppendLine( "aimKey=" + aimKey.Text );
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
+		s.AppendLine( "aimFreeze=" + aimFreeze.Checked );
+		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
 		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
 		s.AppendLine( "aimExactMode=" + aimExact.SelectedIndex );
@@ -1799,6 +1820,8 @@ public class MainForm : Form, IMessageFilter {
 		SetNum( aimStrength, v, "aimStrength" );
 		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
 		SetBool( aimAttacker, v, "aimAttacker" );
+		SetBool( aimFreeze, v, "aimFreeze" );
+		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
 		SetNum( aimLead, v, "aimLead" );
 		// Der alte Haken: "aus" bleibt aus, "an" wird zum neuen Standard "alle"
@@ -1933,6 +1956,8 @@ public class MainForm : Form, IMessageFilter {
 			cfg.AppendLine( $"set com_maxfps {MaxFpsChoices[maxFps.SelectedIndex]}" );
 		}
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistFreeze {( aimAssist.Checked && aimFreeze.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistEdge {( aimEdge.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistSmooth {(int)aimSmooth.Value}" );

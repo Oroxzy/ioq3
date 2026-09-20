@@ -912,14 +912,25 @@ in seconds, and the learner tunes it from what the bots really do.
 // dem geworfenen Ziel hindurch; ohne diese Spalte waere nicht nachzusehen, ob
 // der neue Weg ueberhaupt je greift.
 // Zwoelf: "edge" auf der Schusszeile - eins, wenn das Ziel ueber eine Kante// lief und die Vorhersage es deshalb fallen laesst. Vorher blieb der Punkt auf// Plattformhoehe ueber der Leere stehen; ohne die Spalte waere nicht zu sehen,// wie oft der Fall ueberhaupt gerechnet wird.
-#define AIM_LOG_VERSION	12
+#define AIM_LOG_VERSION	13
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
 // Aenderung, die sich nicht nachmessen laesst, ist eine Behauptung.
 static qboolean	aimPadLaunch;
-// Und ob er ueber eine Kante gelaufen ist und beim Eintreffen noch faellt.
-static qboolean	aimEdgeFall;
+// Und ob er ueber eine Kante gelaufen ist und beim Eintreffen noch faellt:
+// 0 nein, 1 erkannt und angelegt, 2 nur erkannt (cl_aimAssistEdge aus).
+static int	aimEdgeFall;
+
+// Ob der letzte Befehl wirklich auf ein Ziel gefuehrt hat. Daran haengt die
+// Mausperre: eine Sperre an der Taste allein stuende auch dann, wenn die Hilfe
+// gerade gar nichts tut - kein Ziel, tot, Zwischenstand.
+static qboolean	aimSteered;
+
+// Wieviel Grad die eigene Hand auf diesem Befehl beigesteuert hat, bevor die
+// Hilfe drankam. Ohne diese Zahl ist "die Maus verfaelscht das Zielen" eine
+// Behauptung; mit ihr steht sie auf jeder Schusszeile.
+static float	aimOwnMove;
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -2202,7 +2213,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	int			i;
 
 	aimPadLaunch = qfalse;
-	aimEdgeFall = qfalse;
+	aimEdgeFall = 0;
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
 	floats = CL_AimAssistFloats( entity );
 	stopped = qfalse;
@@ -2432,12 +2443,28 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 				float	afterEdge = time - share * sideways;		// Flug nach der Kante
 
 				if ( afterEdge > 0.0f ) {
-					predicted[2] -= 0.5f * gravity * afterEdge * afterEdge;
-					if ( predicted[2] <= floor ) {
-						predicted[2] = floor;				// unten angekommen, nicht darunter
-						snapped = qtrue;
+					// Erkannt wird immer, angelegt nur auf Wunsch - und aus
+					// ist die Voreinstellung. Die ersten vier nachpruefbaren
+					// Schuesse gaben einen Treffer auf zwanzig Einheiten, einen
+					// glatten Fehlalarm (der Bot stand beim Eintreffen noch
+					// oben) und zwei um rund 350 Einheiten zu tief; im Mittel
+					// 399 Einheiten Fehler gegen 127 bei den uebrigen Raketen
+					// derselben Sitzung. Der Grund liegt auf der Hand: bei einem
+					// langen Vorhalt reicht die Restzeit fast immer bis zum
+					// Boden darunter, sodass aus "irgendwo ueber eine Kante"
+					// ein "steht unten" wird. Vier Schuesse entscheiden das
+					// nicht - aber sie reichen, um es nicht anzulassen. Als
+					// "edge 2" laesst sich an einer Sitzung auszaehlen, wie oft
+					// das Ziel beim Eintreffen wirklich unten war, ohne dafuer
+					// einen einzigen Schuss zu bezahlen.
+					aimEdgeFall = cl_aimAssistEdge->integer ? 1 : 2;
+					if ( aimEdgeFall == 1 ) {
+						predicted[2] -= 0.5f * gravity * afterEdge * afterEdge;
+						if ( predicted[2] <= floor ) {
+							predicted[2] = floor;			// unten angekommen, nicht darunter
+							snapped = qtrue;
+						}
 					}
-					aimEdgeFall = qtrue;
 				}
 			}
 		}
@@ -4507,11 +4534,17 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	// swing beside it the field would say nothing at all about the railgun,
 	// the rocket and the shotgun, which are the weapons that snap.
 	//
+	// Und "own" ist, wieviel Grad die eigene Hand auf diesem Befehl beigetragen
+	// hat, bevor die Hilfe drankam. Damit ist die Frage, ob die Maus das Zielen
+	// verfaelscht, keine Meinung mehr: auf einem geschnappten Schuss kuerzt sie
+	// sich heraus (3295 solche Schuesse, kein einziger mit einem Rest ueber 0,01
+	// Grad), auf jedem anderen steckt sie mit (1 - Mischfaktor) im Rest.
+	//
 	// There is no "phase" here any more. This line is only ever written on a
 	// firing command, and a firing command is now given the point without the
 	// smoothing correction, whatever the weapon - so the field could only
 	// print a number that was not applied to anything.
-	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f assist %i"
+	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f own %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f"
 		" pace %.0f myspeed %.0f me %i"
 		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i pad %i edge %i myair %i land %i"
@@ -4521,7 +4554,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		entity->groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		(int)( lead * 1000.0f ),
 		CL_AimAssistTrust( entity, lead ),
-		error, swing, assisted ? 1 : 0,
+		error, swing, aimOwnMove, assisted ? 1 : 0,
 		targetOrigin[0], targetOrigin[1], targetOrigin[2],
 		entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
 		motion[0], motion[1], motion[2],
@@ -4535,7 +4568,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		// applied, and the value is what it would have been.
 		touchdown >= 0.0f ? CL_AimAssistLandTune( weapon, lead - touchdown ) : CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
-		fallback, (int)( applied * 1000.0f + 0.5f ), aimPadLaunch ? 1 : 0, aimEdgeFall ? 1 : 0,
+		fallback, (int)( applied * 1000.0f + 0.5f ), aimPadLaunch ? 1 : 0, aimEdgeFall,
 		cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
 		cl.snap.serverTime, cl.serverTime );
@@ -5196,6 +5229,22 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// on top of a bot.
 	aimFlightTime = -1.0f;
 
+	// Was die eigene Hand auf diesem Befehl bewegt hat, bevor die Hilfe drankam.
+	// oldAngles ist der Stand vor Tastatur, Maus und Joystick (CL_CreateCmd), die
+	// alle drei vor der Hilfe laufen - die Differenz ist also genau der Anteil des
+	// Spielers, und sonst nichts. Steht die Mausperre, ist sie null; das ist die
+	// Probe, dass die Sperre greift.
+	aimOwnMove = sqrt(
+		AngleNormalize180( cl.viewangles[PITCH] - oldAngles[PITCH] )
+			* AngleNormalize180( cl.viewangles[PITCH] - oldAngles[PITCH] )
+		+ AngleNormalize180( cl.viewangles[YAW] - oldAngles[YAW] )
+			* AngleNormalize180( cl.viewangles[YAW] - oldAngles[YAW] ) );
+
+	// Bis bewiesen ist, dass dieser Befehl wirklich auf ein Ziel gefuehrt hat.
+	// Sechs Ausgaenge liegen dazwischen, und an dreien von ihnen tut die Hilfe
+	// gar nichts - dort darf auch nichts gesperrt sein.
+	aimSteered = qfalse;
+
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable. A LAN address is not a boundary -
 	// Sys_IsLANAddress accepts every subnet a local interface sits on, and a
@@ -5512,6 +5561,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	pitchStep = Com_Clamp( low, high, pitchDelta * blend );
 	cl.viewangles[PITCH] += pitchStep;
 	cl.viewangles[YAW] += yawDelta * blend;
+	aimSteered = qtrue;				// gefuehrt, also darf die Maus schweigen
 
 	if ( firing ) {
 		// who this shot went at, for the damage report that arrives later
@@ -5778,6 +5828,56 @@ void CL_FinishMove( usercmd_t *cmd ) {
 
 /*
 =================
+CL_AimAssistFreezeView
+
+Ob die eigene Sicht-Eingabe auf diesem Befehl verworfen wird.
+
+Die Reihenfolge in CL_CreateCmd ist Tastatur, Maus, Joystick, dann Hilfe - die
+Hilfe legt ihre Korrektur also auf eine Sicht, die die Hand schon verschoben
+hat. Auf dem Schussbefehl macht das nichts: dort ist der Mischfaktor 1, und der
+Anteil der Hand kuerzt sich heraus, auch aus der Neunzig-Grad-Klammer (steht
+oldAngles + mp in der Sicht, so ist die Schranke -89 - mp bis 89 - mp und der
+Schritt desired - oldAngles - mp; mp faellt aus beiden heraus). Gemessen:
+3295 geschnappte Schuesse, kein einziger mit einem Rest ueber 0,01 Grad.
+
+Auf allen anderen Befehlen bleibt sie drin. Gemessen an denselben Sitzungen
+verlaesst ein solcher Schuss den Lauf im Mittel vier bis fuenf Einheiten neben
+dem Punkt, den die Hilfe wollte. Wer das nicht will, setzt diesen Haken.
+
+Gesperrt wird nur, solange die Hilfe wirklich fuehrt, nicht schon, solange die
+Taste haelt: sonst stuende die Sicht auch dann fest, wenn die Hilfe gerade gar
+nichts tut. Und dieselbe Grenze wie beim Lenken haengt davor. Sie hier zu
+wiederholen ist kein Zierat - Key_IsDown weiss nichts von Verbindungen, und
+ohne die Wiederholung wuerde die Taste auf einem fremden Server die Sicht
+einfrieren. Das waere ein schlimmerer Fehler als der, den das hier behebt.
+
+Was es kostet, steht dazu: waehrend der Sperre laesst sich weder umsehen noch
+ein anderes Ziel anvisieren, und weil die Laufrichtung in Quake an der Sicht
+haengt, laeuft man dorthin, wohin die Hilfe blickt. Fuer eine saubere Messung
+ist das richtig, zum Spielen nicht.
+=================
+*/
+static qboolean CL_AimAssistFreezeView( void ) {
+	int		key;
+
+	if ( !cl_aimAssistFreeze->integer || !cl_aimAssist->integer || !aimSteered ) {
+		return qfalse;
+	}
+	if ( clc.netchan.remoteAddress.type != NA_LOOPBACK ||
+		 clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
+		 cl.snap.ps.pm_type == PM_INTERMISSION || cl.snap.ps.pm_type == PM_DEAD ||
+		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ||
+		 cl.snap.ps.persistant[PERS_TEAM] == TEAM_SPECTATOR ) {
+		return qfalse;
+	}
+
+	key = Key_StringToKeynum( cl_aimAssistKey->string );
+	return key >= 0 && Key_IsDown( key );
+}
+
+
+/*
+=================
 CL_CreateCmd
 =================
 */
@@ -5802,6 +5902,17 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+	// Die Mausperre der Werkbank. Eine Stelle fuer Maus, Tastatur und Joystick:
+	// alle drei schreiben cl.viewangles, und oldAngles haelt den Stand von vor
+	// ihnen. Zurueckgesetzt wird nur die Sicht - was die Maus zum Laufen und
+	// Seitwaertsgehen beitraegt (+strafe, ohne Freelook) bleibt, und die
+	// Maus-Puffer sind von CL_MouseMove regulaer geleert, sodass die Sicht beim
+	// Loslassen nicht nachschnappt.
+	if ( CL_AimAssistFreezeView() ) {
+		cl.viewangles[PITCH] = oldAngles[PITCH];
+		cl.viewangles[YAW] = oldAngles[YAW];
+	}
 
 	// local bot-only helper used by the hit-sound test bench
 	CL_AutoSwitchEmpty();

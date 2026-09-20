@@ -426,6 +426,8 @@ extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
 extern	cvar_t	*cl_aimAssistSmooth;
 extern	cvar_t	*cl_aimAssistExact;
+extern	cvar_t	*cl_aimAssistFreeze;
+extern	cvar_t	*cl_aimAssistEdge;
 extern	cvar_t	*cl_aimAssistLead;
 extern	cvar_t	*cl_aimAssistLearn;
 extern	cvar_t	*cl_aimAssistPriority;
