@@ -3496,8 +3496,8 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 		}
 
 		info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
-		if ( !*Info_ValueForKey( info, "skill" ) && !cl_aimAssistHumanTargets->integer ) {
-			continue;	// humans are an explicit local-lab opt-in
+		if ( !*Info_ValueForKey( info, "skill" ) ) {
+			continue;	// bots only - the server marks them with a skill, a human never carries one
 		}
 
 		targetTeam = atoi( Info_ValueForKey( info, "t" ) );
@@ -4441,9 +4441,11 @@ void CL_AimAssistSnapshot( void ) {
 	vec3_t				far;
 	int					i, j, event, kind, present;
 
-	// Localhost and private LAN test servers are allowed. Do not remove this
-	// boundary: without it the aim assist could run on public Internet servers.
-	if ( !cl.snap.valid || clc.demoplaying
+	// Only the game this process started itself: NA_LOOPBACK is the server
+	// in the same executable, nothing else counts. Learning and the log both
+	// belong to the assist, so they stop at the same line it does.
+	if ( clc.netchan.remoteAddress.type != NA_LOOPBACK
+		|| !cl.snap.valid || clc.demoplaying
 		|| cl.snap.messageNum == lastMessage ) {
 		return;
 	}
@@ -4479,7 +4481,7 @@ void CL_AimAssistSnapshot( void ) {
 		if ( entity->eType == ET_PLAYER && !( entity->eFlags & EF_DEAD )
 			&& entity->clientNum >= 0 && entity->clientNum < MAX_CLIENTS ) {
 			info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + entity->clientNum];
-			if ( *Info_ValueForKey( info, "skill" ) || cl_aimAssistHumanTargets->integer ) {
+			if ( *Info_ValueForKey( info, "skill" ) ) {
 				Q_strcat( bots, sizeof( bots ), va( " | %s %.0f %.0f %.0f air %i",
 					Info_ValueForKey( info, "n" ),
 					entity->pos.trBase[0], entity->pos.trBase[1], entity->pos.trBase[2],
@@ -4588,9 +4590,13 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// on top of a bot.
 	aimFlightTime = -1.0f;
 
-	// Localhost and private LAN test servers are allowed. Do not remove this
-	// boundary: without it the aim assist could run on public Internet servers.
-	if ( clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
+	// Only the game this process started itself: NA_LOOPBACK is the server
+	// in the same executable. A LAN address is not a boundary -
+	// Sys_IsLANAddress accepts every subnet a local interface sits on, and a
+	// VPN puts strangers on one. Without this line the assist would steer on
+	// any server the client is connected to.
+	if ( clc.netchan.remoteAddress.type != NA_LOOPBACK ||
+		 clc.state != CA_ACTIVE || clc.demoplaying || !cl.snap.valid ||
 		 cl.snap.ps.pm_type == PM_INTERMISSION || cl.snap.ps.pm_type == PM_DEAD ||
 		 ( cl.snap.ps.pm_flags & PMF_FOLLOW ) ) {
 		CL_AimAssistHoldForget();
@@ -4884,9 +4890,9 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 CL_AimAssist
 
 Helps the hit-sound lab produce repeatable hits.  This deliberately does not
-use sv_cheats: the hard safety boundary is the local network check itself.
-Bots are eligible by default; cl_aimAssistHumanTargets can add human test
-clients, but cannot make the assist run against a public Internet server.
+use sv_cheats: the hard safety boundary is the NA_LOOPBACK check at the top
+of the steering pass and of CL_AimAssistSnapshot, and only bots are ever
+eligible targets.
 
 Two points are computed for the target. The smooth one moves the way the
 picture moves and is what the view is steered towards between shots. The

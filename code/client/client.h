@@ -422,7 +422,6 @@ extern	cvar_t	*cl_lanForcePackets;
 extern	cvar_t	*cl_autoRecordDemo;
 
 extern	cvar_t	*cl_aimAssist;
-extern	cvar_t	*cl_aimAssistHumanTargets;
 extern	cvar_t	*cl_aimAssistKey;
 extern	cvar_t	*cl_aimAssistDebug;
 extern	cvar_t	*cl_aimAssistSmooth;

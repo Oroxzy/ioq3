@@ -70,7 +70,6 @@ public class MainForm : Form, IMessageFilter {
 	readonly NumericUpDown pitchStack = new() { Minimum = 1, Maximum = 999, Value = 200, Width = 70 };
 
 	readonly CheckBox aimAssist = new() { Text = "Zielhilfe", Checked = true, AutoSize = true };
-	readonly CheckBox aimHumanTargets = new() { Text = "Menschen als Testziele", Checked = false, AutoSize = true };
 	readonly NumericUpDown aimStrength = new() { Minimum = 1, Maximum = 10, Value = 8, Width = 60 };
 	readonly CheckBox botOutline = new() { Text = "Bot-Markierung anzeigen (durch Wände)", Checked = true, AutoSize = true };
 	readonly CheckBox botDamage = new() { Text = "mit Rest-HP (Balken oder Zahl)", Checked = true, AutoSize = true };
@@ -849,7 +848,6 @@ public class MainForm : Form, IMessageFilter {
 	void UpdateAimEnabled() {
 		bool on = aimAssist.Checked;
 		aimStrength.Enabled = on;
-		aimHumanTargets.Enabled = on;
 		aimKey.Enabled = on;
 		aimAttacker.Enabled = on;
 		aimSmooth.Enabled = on;
@@ -1087,7 +1085,7 @@ public class MainForm : Form, IMessageFilter {
 		hintTip.SetToolTip( holdLottery, "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." );
 
 		return Group( "Zielhilfe",
-			Row( Pad( aimAssist ), Pad( aimHumanTargets ) ),
+			Row( Pad( aimAssist ) ),
 			Row( Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
 			Row( Pad( aimExact ) ),
 			Row( Pad( aimAttacker ) ),
@@ -1579,7 +1577,6 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "pitchKill=" + Dec( pitchKill.Value ) );
 		s.AppendLine( "pitchStack=" + (int)pitchStack.Value );
 		s.AppendLine( "aimAssist=" + aimAssist.Checked );
-		s.AppendLine( "aimHumanTargets=" + aimHumanTargets.Checked );
 		s.AppendLine( "aimStrength=" + (int)aimStrength.Value );
 		s.AppendLine( "aimKey=" + aimKey.Text );
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
@@ -1650,7 +1647,6 @@ public class MainForm : Form, IMessageFilter {
 		SetNum( pitchKill, v, "pitchKill" );
 		SetNum( pitchStack, v, "pitchStack" );
 		SetBool( aimAssist, v, "aimAssist" );
-		SetBool( aimHumanTargets, v, "aimHumanTargets" );
 		SetNum( aimStrength, v, "aimStrength" );
 		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
 		SetBool( aimAttacker, v, "aimAttacker" );
@@ -1748,7 +1744,6 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( "seta cl_hitSoundDebug 1" );
 		cfg.AppendLine( "seta g_hitSoundDebug 1" );
 		cfg.AppendLine( $"seta cl_aimAssist {( aimAssist.Checked ? (int)aimStrength.Value : 0 )}" );
-		cfg.AppendLine( $"seta cl_aimAssistHumanTargets {( aimAssist.Checked && aimHumanTargets.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_itemOutline {( itemOutline.Checked ? ( itemOutlineAll.Checked ? 2 : 1 ) : 0 )}" );
 		// immer geschrieben, auch bei abgeschalteten Kaesten: die Variable wird
 		// archiviert, und ein hier ausgelassener Wert liesse einen alten aus

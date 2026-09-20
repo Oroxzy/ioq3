@@ -76,7 +76,6 @@ cvar_t	*cl_timedemo;
 cvar_t	*cl_timedemoLog;
 cvar_t	*cl_autoRecordDemo;
 cvar_t	*cl_aimAssist;
-cvar_t	*cl_aimAssistHumanTargets;
 cvar_t	*cl_aimAssistKey;
 cvar_t	*cl_aimAssistDebug;
 cvar_t	*cl_aimAssistPriority;
@@ -3611,10 +3610,7 @@ void CL_Init( void ) {
 
 	cl_aimAssist = Cvar_Get( "cl_aimAssist", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssist, 0, 10, qtrue );
-	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible eligible enemies on a localhost or private LAN test server (0 disables it)" );
-	cl_aimAssistHumanTargets = Cvar_Get( "cl_aimAssistHumanTargets", "0", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_aimAssistHumanTargets, 0, 1, qtrue );
-	Cvar_SetDescription( cl_aimAssistHumanTargets, "Permit human test targets on a localhost or private LAN test server; 0 keeps the bot-only safety default" );
+	Cvar_SetDescription( cl_aimAssist, "Aim assistance strength for visible bots in a game this client started itself - never on any other server (0 disables it)" );
 	cl_aimAssistKey = Cvar_Get( "cl_aimAssistKey", "MOUSE4", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_aimAssistKey, "Key that must be held to activate local aim assistance" );
 	cl_itemOutline = Cvar_Get( "cl_itemOutline", "0", CVAR_ARCHIVE );
