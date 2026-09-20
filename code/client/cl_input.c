@@ -901,7 +901,13 @@ in seconds, and the learner tunes it from what the bots really do.
 // "lands too late to run". Und "tune" auf der Schusszeile ist bei "land" >= 0
 // der Lande-Faktor an der Restzeit, nicht mehr der Laeufer-Faktor: der wurde
 // fuer diese Schuesse nie angewandt, und die Spalte soll sagen, was galt.
-#define AIM_LOG_VERSION	9
+// Zehn: "fall" auf der Schusszeile hat einen dritten Wert - 0 gefuehrt,
+// 1 auf den nackten Koerper zurueckgefallen, 2 Vorhalt gekuerzt, bis der Schuss
+// durchkam. Daneben steht "applied": der Vorhalt, mit dem wirklich gezielt
+// wurde, in Millisekunden. Auf einem gekuerzten Schuss ist er kleiner als
+// "lead", das die echte Flugzeit zum naeheren Punkt traegt - ohne ihn waere
+// nicht zu sehen, wieviel Vorhalt die Geometrie gekostet hat.
+#define AIM_LOG_VERSION	10
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -2727,6 +2733,51 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 
 /*
 =================
+CL_AimAssistPointAt
+
+Der Zielpunkt fuer einen vorgegebenen Vorhalt - dieselbe Kette wie am Ende von
+CL_AimAssistTargetPoint, nur ohne dessen Suche nach der Flugzeit und ohne den
+Glaettungsausgleich: gefragt wird das, wenn ein Punkt schon feststeht und nur
+noch geprueft werden soll, ob der Schuss ihn erreicht.
+=================
+*/
+static void CL_AimAssistPointAt( const entityState_t *entity, const vec3_t viewOrigin,
+		int weapon, float lead, vec3_t out, float *flightOut ) {
+	vec3_t		predicted, impact;
+	qboolean	pinned = qfalse;
+
+	CL_AimAssistPredict( entity, weapon, lead, predicted, NULL, &pinned );
+
+	// Die Flugzeit will den vorhergesagten Koerperpunkt, nicht den fertigen
+	// Zielpunkt: sie legt den Fuss-/Koerperversatz selbst an und loest fuer eine
+	// Granate selbst den Bogen. Bekaeme sie das Ergebnis von weiter unten,
+	// stuende beides zweimal darin - beim Bogen kaeme Unsinn heraus.
+	if ( flightOut ) {
+		*flightOut = CL_AimAssistFlight( entity, weapon, viewOrigin, predicted, pinned );
+	}
+
+	CL_AimAssistImpact( entity, weapon, predicted, pinned, impact );
+	if ( CL_AimAssistArcWeapon( weapon ) ) {
+		CL_AimAssistArc( viewOrigin, impact, out, NULL );
+	} else {
+		VectorCopy( impact, out );
+	}
+}
+
+// Ob der Schuss von hier bis dorthin durchkommt. Eine Granate wird an ihrem
+// Bogen gemessen, alles andere an der Geraden.
+static qboolean CL_AimAssistPathClear( const vec3_t eye, const vec3_t aim, int weapon ) {
+	trace_t	trace;
+
+	if ( CL_AimAssistArcWeapon( weapon ) ) {
+		return CL_AimAssistArcClear( eye, aim );
+	}
+	CM_BoxTrace( &trace, eye, aim, vec3_origin, vec3_origin, 0, MASK_SHOT, qfalse );
+	return trace.fraction >= 1.0f;
+}
+
+/*
+=================
 CL_AimAssistMoverAt
 
 Where a mover stands at the given moment. The client does not link the game's
@@ -3598,6 +3649,10 @@ eligible, and only living enemies. With sticky off the pick is made on the
 crosshair alone, which is what the record of unassisted shots is held against.
 =================
 */
+// Steht weiter unten bei den anderen Waffeneigenschaften, wird aber schon bei
+// der Zielauswahl gebraucht.
+static float CL_AimAssistWeaponReach( int weapon );
+
 static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int localTeam, int weapon,
 		qboolean sticky ) {
 	entityState_t	*entity, *best = NULL;
@@ -3605,7 +3660,7 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 	trace_t			trace;
 	vec3_t			targetOrigin, direction, desired, motion, hullMins, hullMaxs;
 	float			bestScore = -1.0f, score, angle, pitchDelta, yawDelta, distance;
-	float			speed, scatter, fresh, flight, weight[AIM_PRIO_COUNT];
+	float			speed, scatter, fresh, flight, reach, weight[AIM_PRIO_COUNT];
 	float			part[AIM_PRIO_COUNT], bestPart[AIM_PRIO_COUNT];
 	char			others[768];
 	int				i, k, targetTeam;
@@ -3685,6 +3740,15 @@ static entityState_t *CL_AimAssistPickTarget( const vec3_t viewOrigin, int local
 
 		VectorSubtract( targetOrigin, viewOrigin, direction );
 		distance = VectorLength( direction );
+
+		// Weiter, als die Waffe ueberhaupt kommt: das ist kein schwerer Schuss,
+		// sondern keiner. Raus aus der Auswahl, damit ein erreichbares Ziel
+		// gewinnt, statt dass die Hilfe auf einem Gegner steht, auf den nichts
+		// geht.
+		reach = CL_AimAssistWeaponReach( weapon );
+		if ( reach > 0.0f && distance > reach ) {
+			continue;
+		}
 
 		vectoangles( direction, desired );
 		desired[PITCH] -= SHORT2ANGLE( cl.snap.ps.delta_angles[PITCH] );
@@ -3973,6 +4037,43 @@ previous command was sent with. The target is its box.
 */
 static float	aimPrevAngles[2];		// the view the previous command was sent with
 
+/*
+=================
+CL_AimAssistWeaponReach
+
+Wie weit die Waffe ueberhaupt kommt, in Einheiten, oder null fuer "so weit man
+sieht". Das ist keine Vorliebe, sondern Physik: der Blitzstrahl endet nach
+LIGHTNING_RANGE und richtet dahinter gar nichts aus.
+
+Bisher stand dem nur ein hohes "Naehe"-Gewicht gegenueber, und das ist etwas
+anderes - es zieht nahe Ziele vor, schliesst ferne aber nicht aus. Steht nichts
+Naeheres zur Auswahl, wurde der Blitzwerfer weiterhin auf einen Gegner in
+anderthalbtausend Einheiten gefuehrt, wo der Strahl nie hinkommt. Der Schuss
+ist dort nicht unwahrscheinlich, sondern unmoeglich. Das kostet doppelt: die
+Hilfe steht auf einem Ziel, auf das kein Schuss geht, und der Schuss bucht in
+der Trefferquoten-Tabelle als Fehlschuss - er drueckt die gemessene Kurve der
+Waffe aus einem Grund, der mit Zielen nichts zu tun hat.
+
+Der Gauntlet steht ausdruecklich NICHT hier drin, obwohl er nur sechsundvierzig
+Einheiten weit schlaegt. Bei ihm ist das Hinterherlaufen der Sinn der Sache:
+man wird auf den Gegner gefuehrt, waehrend man ihn einholt, und ob der Schlag
+ankommt, entscheidet CL_AimAssistInReach beim Zuschlagen. Wer nur noch auf
+sechsundvierzig Einheiten gefuehrt wuerde, bekaeme genau dann keine Hilfe, wenn
+er sie braucht.
+
+Die Projektilwaffen haben keine solche Grenze: eine Rakete fliegt fuenfzehn
+Sekunden. Die Granate faellt zwar nach etwa sechshundertsechzig Einheiten zu
+Boden, aber das ist der Bogen und keine Wand - hoeher gezielt kommt sie weiter,
+und CL_AimAssistArc loest das selbst.
+=================
+*/
+static float CL_AimAssistWeaponReach( int weapon ) {
+	if ( weapon == WP_LIGHTNING ) {
+		return LIGHTNING_RANGE;
+	}
+	return 0.0f;
+}
+
 static qboolean CL_AimAssistInReach( const vec3_t eye, const entityState_t *target ) {
 	vec3_t	angles, forward, start, end, mins, maxs;
 	float	enter, leave, near, far, low, high, delta, swap;
@@ -4160,7 +4261,7 @@ before the shot lands - the axis the record splits hardest on.
 */
 static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const vec3_t viewOrigin,
 		const vec3_t targetOrigin, float lead, float error, float swing, qboolean assisted,
-		qboolean exact, qboolean fallback, float touchdown ) {
+		qboolean exact, int fallback, float applied, float touchdown ) {
 	const char	*info;
 	vec3_t		direction, motion;
 	float		pace;
@@ -4197,7 +4298,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f"
 		" pace %.0f myspeed %.0f me %i"
-		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i myair %i land %i"
+		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i myair %i land %i"
 		" world %i cmd %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
@@ -4218,7 +4319,8 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		// applied, and the value is what it would have been.
 		touchdown >= 0.0f ? CL_AimAssistLandTune( weapon, lead - touchdown ) : CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
-		fallback ? 1 : 0, cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
+		fallback, (int)( applied * 1000.0f + 0.5f ),
+		cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
 		cl.snap.serverTime, cl.serverTime );
 }
@@ -4862,9 +4964,12 @@ static int		aimSmoothTarget = -1;	// who the filter was following
 static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	entityState_t	*entity;
 	trace_t			trace;
-	vec3_t			viewOrigin, targetOrigin, direction, desired;
+	vec3_t			viewOrigin, targetOrigin, direction, desired, candidate;
 	float			pitchDelta, yawDelta, pitchStep, low, high, blend, lead, flight, touchdown;
-	float			frameTime, k;
+	float			frameTime, k, back;
+	int				step;
+	// 0 gefuehrt, 1 auf den nackten Koerper zurueckgefallen, 2 Vorhalt gekuerzt
+	int				fallKind = 0;
 	float			holdRange = 0.0f;
 	int				i, key, localTeam, weapon, hold;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
@@ -4939,7 +5044,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 			CL_AimAssistLogShot( entity, weapon, viewOrigin, targetOrigin, lead,
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
-				qfalse, exact, qfalse, CL_AimAssistDueDown( entity, lead ) );
+				qfalse, exact, 0, lead, CL_AimAssistDueDown( entity, lead ) );
 		}
 		// The trigger is nobody's business while the key is up, so a hold left
 		// standing from the last press is closed here rather than reported as
@@ -5024,21 +5129,71 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 
 	// The shot has to be able to get there. A led point can end up behind a
 	// corner or below an edge, and steering a rocket into the floor in front
-	// of you is worse than not helping at all: fall back to the plain position
-	// the target was picked by, and leave the aim alone when even that is
-	// blocked or the impact would land in your own splash. A grenade is judged
-	// by its arc, not by the line to the point the view is put on.
-	if ( CL_AimAssistArcWeapon( weapon ) ) {
-		clear = CL_AimAssistArcClear( viewOrigin, targetOrigin );
-	} else {
-		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
-			0, MASK_SHOT, qfalse );
-		clear = trace.fraction >= 1.0f;
+	// of you is worse than not helping at all. A grenade is judged by its arc,
+	// not by the line to the point the view is put on.
+	clear = CL_AimAssistPathClear( viewOrigin, targetOrigin, weapon );
+
+	// Blockiert heisst nicht, dass nur noch der nackte Koerper bleibt. Das Ziel
+	// laeuft ueblicherweise gerade um eine Ecke, und der Punkt liegt schon
+	// dahinter - ein Stueck weniger Vorhalt liegt dann noch davor. Also wird
+	// der Vorhalt Bild um Bild zurueckgenommen und der erste Punkt genommen,
+	// den der Schuss erreicht.
+	//
+	// Der Grund, das ueberhaupt zu tun: diese Schuesse sind die schlechteste
+	// Gruppe im Protokoll. Nachgezaehlt ueber siebzehn Sitzungen fallen 86 von
+	// 1128 assistierten Raketen zurueck - 7,6 Prozent -, und davon treffen 7
+	// von 77 auswertbaren: 9,1 Prozent gegen 27,7 bei den gefuehrten. (Der
+	// Bericht nannte hier einmal 3,0 Prozent; das war eine einzelne Sitzung und
+	// ist am ganzen Bestand nicht haltbar.) Sie gehen auf den Koerper, wo er
+	// JETZT steht, bei gut einer Sekunde Flugzeit; das Ziel ist beim Einschlag
+	// laengst weg. Ein gekuerzter Vorhalt ist immer noch zu kurz, aber jeder
+	// Bruchteil davon ist mehr als nichts. Zu erwarten ist wenig: die ganze
+	// Gruppe perfekt zu treffen waere gut ein Punkt auf die Raketenquote, und
+	// das hier holt nur einen Teil davon.
+	//
+	// Zwoelf Proben ueber den GANZEN Vorhalt, nicht ein festes Fenster darunter.
+	// Ein fruehe Fassung nahm acht Bilder, also 400 ms - am Bestand gemessen
+	// liegt der Vorhalt dieser Schuesse aber bei 91 Prozent von ihnen darueber
+	// (Mittelwert um eine Sekunde), sodass ein festes Fenster nur das oberste
+	// Viertel abgesucht haette. Die Ecke wird meist weiter unten gekreuzt.
+	// Anteilige Schritte kosten gleich viel und decken alles ab.
+	if ( !clear ) {
+		frameTime = CL_AimAssistFrameTime();
+		for ( step = 1; step <= 12; step++ ) {
+			// auf dem Bildraster, wie jeder andere Vorhalt im System
+			back = lead * ( 1.0f - step / 12.0f );
+			back = (int)( back / frameTime + 0.5f ) * frameTime;
+			if ( back <= 0.0f ) {
+				break;
+			}
+			CL_AimAssistPointAt( entity, viewOrigin, weapon, back, candidate, &flight );
+			if ( !CL_AimAssistPathClear( viewOrigin, candidate, weapon ) ) {
+				continue;
+			}
+			VectorCopy( candidate, targetOrigin );
+			lead = back;
+			// Die Flugzeit gehoert zum neuen, naeheren Punkt und nicht mehr zum
+			// alten Vorhalt. Alles dahinter misst daran: das Ankunftsfenster der
+			// Trefferquoten-Tabelle, der Countdown ueber dem Bot, das Feld im
+			// Protokoll.
+			if ( flight < 0.0f ) {
+				flight = 0.0f;
+			}
+			flight = (int)( flight / frameTime + 0.5f ) * frameTime;
+			fallKind = 2;
+			clear = qtrue;
+			break;
+		}
 	}
+
+	// Auch das nicht durchgekommen: auf die Stelle zurueck, an der das Ziel
+	// ausgesucht wurde, und die Hilfe ganz lassen, wenn selbst die verstellt
+	// ist oder der Einschlag im eigenen Splash laege.
 	if ( !clear ) {
 		VectorCopy( entity->pos.trBase, targetOrigin );
 		targetOrigin[2] += CL_AimAssistBodyHeight( entity );
 		plain = qtrue;
+		fallKind = 1;
 		CM_BoxTrace( &trace, viewOrigin, targetOrigin, vec3_origin, vec3_origin,
 			0, MASK_SHOT, qfalse );
 		if ( trace.fraction < 1.0f ) {
@@ -5056,7 +5211,9 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		// fallback shot's damage lands outside its own window and books as a
 		// miss, which made the worst-hitting group of shots look worse still.
 		if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f ) {
-			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin, qfalse );
+			// Der rohe Koerperpunkt, nicht der schon versetzte: die Flugzeit legt
+			// den Fuss-/Koerperversatz selbst an und rechnete ihn sonst zweimal.
+			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, entity->pos.trBase, qfalse );
 			if ( flight < 0.0f ) {
 				flight = 0.0f;		// point blank: it is there the moment it leaves
 			}
@@ -5164,7 +5321,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 				sqrt( ( pitchDelta - pitchStep ) * ( pitchDelta - pitchStep )
 					+ yawDelta * yawDelta * ( 1.0f - blend ) * ( 1.0f - blend ) ),
 				sqrt( pitchDelta * pitchDelta + yawDelta * yawDelta ),
-				qtrue, exact && !plain, plain, touchdown );
+				qtrue, exact && !plain, fallKind, plain ? 0.0f : lead, touchdown );
 		}
 	}
 }

@@ -518,3 +518,21 @@ die vorige Runde weg, sobald die nächste beginnt. Beim Start wandert sie
 deshalb mit ihrem Datum nach `baseq3\logs\`, und die jüngsten zwanzig bleiben
 liegen. Eine Sitzung ist auf diese Weise schon verlorengegangen, bevor sie
 ausgewertet war.
+
+**Reichweite der Waffe.** Der Blitzwerfer kommt 768 Einheiten weit und dahinter
+gar nicht — `LIGHTNING_RANGE` in `code/game/bg_public.h`. Bis zum 20.09.2026
+stand dem nur ein hohes `Nähe`-Gewicht gegenüber, und das ist etwas anderes: es
+zieht nahe Ziele vor, schließt ferne aber nicht aus. Stand nichts Näheres zur
+Auswahl, wurde der Blitzwerfer weiter auf anderthalbtausend Einheiten geführt,
+wo der Strahl nie ankommt. Der Schuss ist dort nicht unwahrscheinlich, sondern
+unmöglich, und er kostet doppelt: die Hilfe steht auf einem Gegner, auf den
+nichts geht, und der Schuss bucht in der Trefferquoten-Tabelle als Fehlschuss —
+er drückt die gemessene Kurve der Waffe aus einem Grund, der mit Zielen nichts
+zu tun hat. `CL_AimAssistWeaponReach` nimmt solche Ziele jetzt aus der Auswahl.
+
+Der **Gauntlet steht dort ausdrücklich nicht drin**, obwohl er nur 46 Einheiten
+weit schlägt: bei ihm ist das Hinterherlaufen der Sinn der Sache — man wird auf
+den Gegner geführt, während man ihn einholt, und ob der Schlag ankommt,
+entscheidet `CL_AimAssistInReach` beim Zuschlagen. Die **Granate** ebenso
+wenig: sie fällt zwar nach etwa 660 Einheiten zu Boden, aber das ist der Bogen
+und keine Wand — höher gezielt kommt sie weiter.
