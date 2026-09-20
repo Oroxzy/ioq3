@@ -1115,6 +1115,11 @@ void ClientEndFrame( gentity_t *ent ) {
 		return;
 	}
 
+	// Was dieser Schuetze im Bild angerichtet hat, jetzt als eine Zahl heraus -
+	// gesammelt wurde es in G_Damage, damit eine Schrotsalve nicht elf
+	// Meldungen wird.
+	G_SendDamagePlum( ent );
+
 	// turn off any expired powerups
 	for ( i = 0 ; i < MAX_POWERUPS ; i++ ) {
 		if ( ent->client->ps.powerups[ i ] < level.time ) {

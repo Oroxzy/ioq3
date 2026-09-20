@@ -777,6 +777,43 @@ int G_InvulnerabilityEffect( gentity_t *targ, vec3_t dir, vec3_t point, vec3_t i
 #endif
 /*
 ============
+G_SendDamagePlum
+
+Was dieser Schuetze in diesem Bild angerichtet hat, an ihn allein.
+SVF_SINGLECLIENT, weil es sonst jeder auf der Karte zu sehen bekaeme: die Zahl
+ist eine Auskunft an den, der den Schuss gesetzt hat, und fuer alle anderen
+waere sie ein Blick in fremde Gefechte.
+
+Die Menge steht in s.time, das Opfer in s.otherEntityNum und die Waffe in
+s.generic1; der Ort des Ereignisses ist der Getroffene selbst. Ueber ein
+Ereignis und nicht ueber persistant[], aus zwei Gruenden: dort ist kein Platz
+mehr - sechzehn Felder zu sechzehn Bit, alle vergeben -, und vor allem traegt
+ein Ereignis den Schaden JE TREFFER samt Opfer, waehrend persistant[] nur sagt,
+was der zuletzt Getroffene noch hat. Erst damit stimmt die Schrotflinte, und
+erst damit weiss der Klient ueberhaupt, wen er getroffen hat.
+============
+*/
+void G_SendDamagePlum( gentity_t *attacker ) {
+	gentity_t	*plum;
+
+	if ( !attacker->client || attacker->client->plumDamage <= 0 ) {
+		return;
+	}
+
+	// Ein Bot sieht nichts, und das Ereignis waere nur Last auf der Leitung
+	if ( !( attacker->r.svFlags & SVF_BOT ) ) {
+		plum = G_TempEntity( attacker->client->plumOrigin, EV_DAMAGEPLUM );
+		plum->s.time = attacker->client->plumDamage;
+		plum->s.otherEntityNum = attacker->client->plumVictim;
+		plum->s.generic1 = attacker->client->plumWeapon;
+		plum->r.svFlags |= SVF_SINGLECLIENT;
+		plum->r.singleClient = attacker->s.number;
+	}
+	attacker->client->plumDamage = 0;
+}
+
+/*
+============
 G_Damage
 
 targ		entity that is being damaged
@@ -1013,6 +1050,20 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		}
 		// health is stored plus one, so a reported value is never 0
 		attacker->client->ps.persistant[PERS_ATTACKEE_REMAINING] = ((healthLeft+1)<<8)|armorLeft;
+
+		// Und wieviel es war, fuer die Zahl ueber dem Getroffenen. Gesammelt
+		// statt sofort gemeldet: eine Schrotsalve ist elf Schadensaufrufe in
+		// einem Bild, und elf Zahlen uebereinander sind keine Auskunft.
+		// Wechselt das Opfer mitten im Bild - ein Splash, der zwei erwischt -,
+		// wird das Angefangene erst herausgeschickt.
+		if ( attacker->client->plumDamage > 0
+			&& attacker->client->plumVictim != targ->s.number ) {
+			G_SendDamagePlum( attacker );
+		}
+		attacker->client->plumDamage += take + asave;
+		attacker->client->plumVictim = targ->s.number;
+		attacker->client->plumWeapon = attacker->client->ps.weapon;
+		VectorCopy( targ->r.currentOrigin, attacker->client->plumOrigin );
 
 		// only the hits of a real player, bots fighting each other would drown them out.
 		// The frame time is printed as well: hits that share it reach the client in one

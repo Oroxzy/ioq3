@@ -1233,6 +1233,15 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		CG_Beam( cent );
 		break;
 
+	case EV_DAMAGEPLUM:
+		DEBUGNAME("EV_DAMAGEPLUM");
+		// Die Schadenszahl zeichnet die Engine selbst (CL_WatchDamageEvents in
+		// code/client/cl_cgame.c), damit sie auch ueber einem fremden cgame
+		// erscheint. Der Fall steht hier trotzdem, und zwar zwingend: ohne ihn
+		// liefe das Ereignis in den Fehler unten und wuerfe den Spieler beim
+		// ersten Treffer aus dem Spiel.
+		break;
+
 	default:
 		DEBUGNAME("UNKNOWN");
 		CG_Error( "Unknown event: %i", event );

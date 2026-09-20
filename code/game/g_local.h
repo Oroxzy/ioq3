@@ -316,6 +316,14 @@ struct gclient_s {
 	int			invulnerabilityTime;
 #endif
 
+	// Was dieser Schuetze in diesem Bild angerichtet hat, gesammelt, um es am
+	// Bildende als eine Zahl zu melden. Einzeln gemeldet wuerfe eine Schrotsalve
+	// elf Zahlen uebereinander - jedes Korn ist ein eigener Schadensaufruf.
+	int			plumDamage;
+	int			plumVictim;
+	int			plumWeapon;
+	vec3_t		plumOrigin;
+
 	char		*areabits;
 };
 
@@ -491,6 +499,7 @@ const char *BuildShaderStateConfig( void );
 // g_combat.c
 //
 qboolean CanDamage (gentity_t *targ, vec3_t origin);
+void G_SendDamagePlum( gentity_t *attacker );
 void G_Damage (gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_t dir, vec3_t point, int damage, int dflags, int mod);
 qboolean G_RadiusDamage (vec3_t origin, gentity_t *attacker, float damage, float radius, gentity_t *ignore, int mod);
 int G_InvulnerabilityEffect( gentity_t *targ, vec3_t dir, vec3_t point, vec3_t impactpoint, vec3_t bouncedir );
