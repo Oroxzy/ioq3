@@ -911,12 +911,15 @@ in seconds, and the learner tunes it from what the bots really do.
 // Sprungfeld kommt. Der Bodenpfad sah die Felder vorher nicht und lief unter
 // dem geworfenen Ziel hindurch; ohne diese Spalte waere nicht nachzusehen, ob
 // der neue Weg ueberhaupt je greift.
-#define AIM_LOG_VERSION	11
+// Zwoelf: "edge" auf der Schusszeile - eins, wenn das Ziel ueber eine Kante// lief und die Vorhersage es deshalb fallen laesst. Vorher blieb der Punkt auf// Plattformhoehe ueber der Leere stehen; ohne die Spalte waere nicht zu sehen,// wie oft der Fall ueberhaupt gerechnet wird.
+#define AIM_LOG_VERSION	12
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
 // Aenderung, die sich nicht nachmessen laesst, ist eine Behauptung.
 static qboolean	aimPadLaunch;
+// Und ob er ueber eine Kante gelaufen ist und beim Eintreffen noch faellt.
+static qboolean	aimEdgeFall;
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -2150,6 +2153,46 @@ static qboolean CL_AimAssistJumpPad( const vec3_t start, const vec3_t end,
 	return found && best < 1.0f;
 }
 
+/*
+=================
+CL_AimAssistEdge
+
+Wo ein Lauf die Plattform verlaesst, als Anteil der Strecke - oder -1, wenn er
+durchgehend Boden unter sich hat.
+
+Acht Sonden reichen: gesucht wird nicht die Kante auf den Zentimeter, sondern
+der Zeitpunkt, ab dem gefallen wird, und ein Achtel einer Laufstrecke ist
+gegenueber der Flugzeit einer Rakete ohnehin unter der Messbarkeit.
+=================
+*/
+static float CL_AimAssistEdge( const vec3_t start, const vec3_t end, vec3_t mins, vec3_t maxs ) {
+	vec3_t	above, below, point;
+	trace_t	trace;
+	float	share;
+	int		i;
+
+	for ( i = 1; i <= 8; i++ ) {
+		share = (float)i / 8.0f;
+		point[0] = start[0] + ( end[0] - start[0] ) * share;
+		point[1] = start[1] + ( end[1] - start[1] ) * share;
+		point[2] = start[2];
+
+		VectorCopy( point, above );
+		above[2] += STEPSIZE;
+		VectorCopy( point, below );
+		below[2] -= 8192.0f;
+		CM_BoxTrace( &trace, above, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
+
+		// Kein Boden, oder einer mehr als eine Stufe tiefer: hier hoert die
+		// Plattform auf. Die vorige Sonde stand noch darauf.
+		if ( trace.startsolid || trace.allsolid || trace.fraction >= 1.0f
+			|| trace.endpos[2] < start[2] - STEPSIZE ) {
+			return (float)( i - 1 ) / 8.0f;
+		}
+	}
+	return -1.0f;
+}
+
 static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
@@ -2159,6 +2202,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	int			i;
 
 	aimPadLaunch = qfalse;
+	aimEdgeFall = qfalse;
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
 	floats = CL_AimAssistFloats( entity );
 	stopped = qfalse;
@@ -2365,6 +2409,37 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		} else if ( walks && predicted[2] - floor <= STEPSIZE ) {
 			snapped = predicted[2] - floor > 0.5f;
 			predicted[2] = floor;					// walked down a step
+		} else if ( walks && time > 0.0f && sideways > 0.0f ) {
+			// Ueber die Kante gelaufen. Der Boden steht mehr als eine Stufe
+			// tiefer, also ist keiner mehr da, auf dem das Ziel stehen koennte -
+			// und bis hierher tat die Vorhersage gar nichts: der Punkt blieb auf
+			// Plattformhoehe ueber der Leere stehen, waehrend der Bot laengst
+			// darunter war. Schwerkraft gab es nur fuer Ziele, die SCHON flogen.
+			//
+			// Im Protokoll waren das 2,2 bis 5,1 Prozent der Boden-Raketen - die
+			// drei Pruefungen waren sich uneins, wieviele davon echt sind - mit
+			// einem mittleren Hoehenfehler von 222 Einheiten. Etwa die Haelfte
+			// stimmte waagerecht auf sechzig Einheiten genau, es fehlte allein
+			// die Hoehe.
+			//
+			// Und genau die wird hier nachgetragen, mehr nicht. Die Bots bremsen
+			// im Fall zum Landepunkt hin, sodass die gedaempfte Waagerechte in
+			// diesen Faellen schon auf 17 bis 37 Einheiten stimmte; sie noch
+			// weiterzuschieben machte es schlechter statt besser.
+			float	share = CL_AimAssistEdge( entity->pos.trBase, predicted, mins, maxs );
+
+			if ( share >= 0.0f && share < 1.0f ) {
+				float	afterEdge = time - share * sideways;		// Flug nach der Kante
+
+				if ( afterEdge > 0.0f ) {
+					predicted[2] -= 0.5f * gravity * afterEdge * afterEdge;
+					if ( predicted[2] <= floor ) {
+						predicted[2] = floor;				// unten angekommen, nicht darunter
+						snapped = qtrue;
+					}
+					aimEdgeFall = qtrue;
+				}
+			}
 		}
 	}
 
@@ -4439,7 +4514,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 	Com_Printf( "aim shot: %s target %s dist %.0f air %i lead %i trust %.2f error %.2f swing %.2f assist %i"
 		" at %.0f %.0f %.0f plain %.0f %.0f %.0f vel %.0f %.0f %.0f eye %.0f %.0f %.0f"
 		" pace %.0f myspeed %.0f me %i"
-		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i pad %i myair %i land %i"
+		" exact %i hold %.2f crouch %i tune %.2f scatter %.0f fall %i applied %i pad %i edge %i myair %i land %i"
 		" world %i cmd %i\n",
 		CL_AimAssistWeaponName( weapon ), Info_ValueForKey( info, "n" ),
 		VectorLength( direction ),
@@ -4460,7 +4535,7 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		// applied, and the value is what it would have been.
 		touchdown >= 0.0f ? CL_AimAssistLandTune( weapon, lead - touchdown ) : CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
-		fallback, (int)( applied * 1000.0f + 0.5f ), aimPadLaunch ? 1 : 0,
+		fallback, (int)( applied * 1000.0f + 0.5f ), aimPadLaunch ? 1 : 0, aimEdgeFall ? 1 : 0,
 		cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
 		cl.snap.serverTime, cl.serverTime );

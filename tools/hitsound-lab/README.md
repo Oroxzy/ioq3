@@ -571,3 +571,22 @@ Auf der Schusszeile steht dafür `pad` — eins, wenn der Zielpunkt von einem
 Wurf kommt. Ohne diese Spalte ließe sich nicht nachsehen, ob der Pfad
 überhaupt je greift, und eine Änderung, die sich nicht nachmessen lässt, ist
 eine Behauptung. q3dm17 hat dreizehn solcher Felder.
+
+**Über die Kante gelaufen.** Das Gegenstück zum Sprungfeld: dort ging es
+unerwartet nach oben, hier nach unten. Lief die vorhergesagte Strecke über eine
+Plattformkante hinaus, fand der abschließende Boden-Trace zwar Boden — nur
+hunderte Einheiten tiefer. Die Stufen-Prüfung (`STEPSIZE`, achtzehn Einheiten)
+schlug fehl, und dann geschah **gar nichts**: der Zielpunkt blieb auf
+Plattformhöhe über der Leere stehen, während der Bot längst darunter war.
+Schwerkraft gab es nur für Ziele, die schon flogen.
+
+Jetzt sucht `CL_AimAssistEdge` mit acht Sonden, wo die Plattform aufhört, und
+ab dort wird gefallen. Nachgetragen wird **nur die Höhe** — die Bots bremsen im
+Fall zum Landepunkt hin, sodass die gedämpfte Waagerechte in diesen Fällen
+schon auf 17 bis 37 Einheiten stimmte; sie weiterzuschieben machte es
+schlechter. Auf der Schusszeile steht `edge` dafür (Befund F26).
+
+Auf q3dm17 ist das kein Randfall — die Karte ist eine Ansammlung von
+Plattformen über dem Nichts. Die drei Prüfungen schätzten den Anteil
+unterschiedlich (2,2 bis 5,1 % der Boden-Raketen) bei einem mittleren
+Höhenfehler von 222 Einheiten.
