@@ -59,6 +59,7 @@ vmCvar_t	g_inactivity;
 vmCvar_t	g_debugMove;
 vmCvar_t	g_debugDamage;
 vmCvar_t	g_hitSoundDebug;
+vmCvar_t	g_weaponSpawns;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -150,6 +151,11 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_debugMove, "g_debugMove", "0", 0, 0, qfalse },
 	{ &g_debugDamage, "g_debugDamage", "0", 0, 0, qfalse },
 	{ &g_hitSoundDebug, "g_hitSoundDebug", "0", 0, 0, qfalse },
+	// Welche Waffen die Karte tragen soll, durch Leerzeichen getrennt. Leer
+	// laesst die Karte, wie sie ist; sonst werden alle Waffensockel und
+	// Munitionskisten reihum auf diese Waffen verteilt. Muss vor "map" stehen,
+	// weil sie beim Entstehen der Gegenstaende gelesen wird.
+	{ &g_weaponSpawns, "g_weaponSpawns", "", 0, 0, qfalse },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

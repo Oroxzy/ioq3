@@ -277,7 +277,11 @@ qboolean G_CallSpawn( gentity_t *ent ) {
 	// check item spawn functions
 	for ( item=bg_itemlist+1 ; item->classname ; item++ ) {
 		if ( !strcmp(item->classname, ent->classname) ) {
-			G_SpawnItem( ent, item );
+			// Die Karte kann auf wenige Waffen eingeengt sein. Dann wird der
+			// Sockel nicht geleert, sondern neu belegt - hier, weil nur dieser
+			// Weg von der Karte kommt: was ein Spieler fallen laesst und was
+			// "give" erzeugt, geht direkt an G_SpawnItem und bleibt, was es ist.
+			G_SpawnItem( ent, G_SubstituteSpawnItem( item ) );
 			return qtrue;
 		}
 	}
@@ -632,6 +636,10 @@ void G_SpawnEntitiesFromString( void ) {
 		G_Error( "SpawnEntities: no entities" );
 	}
 	SP_worldspawn();
+
+	// Welche Waffen diese Karte tragen soll, einmal gelesen, bevor der erste
+	// Sockel entsteht - die Reihum-Vergabe zaehlt von hier an.
+	G_ParseWeaponSpawns();
 
 	// parse ents
 	while( G_ParseSpawnVars() ) {

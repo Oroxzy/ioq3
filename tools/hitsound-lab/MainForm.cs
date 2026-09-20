@@ -98,7 +98,11 @@ public class MainForm : Form, IMessageFilter {
 	};
 	readonly NumericUpDown aimSmooth = new() { Minimum = 0, Maximum = 300, Increment = 10, Value = 0, Width = 60 };
 	readonly NumericUpDown aimLead = new() { DecimalPlaces = 1, Increment = 0.1m, Minimum = 0.1m, Maximum = 5.0m, Value = 1.5m, Width = 70 };
-	readonly CheckBox aimExact = new() { Text = "exakt im Schussmoment", Checked = true, AutoSize = true };
+	// Der Index ist der Wert von cl_aimAssistExact: 0 nie, 1 nur die
+	// Einzelschuss-Waffen, 2 alle. Der Haken davor konnte nur 0 und 1, und 1 las
+	// sich als "exakt im Schussmoment", meinte aber: nicht fuer MG, Plasma und
+	// Blitz - die gingen mit nur 0,32 des Wegs zum Punkt raus (Befund F03).
+	readonly ComboBox aimExact = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
 	readonly CheckBox aimLearn = new() { Text = "je Waffe und Entfernung nachmessen", Checked = true, AutoSize = true };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
@@ -171,6 +175,39 @@ public class MainForm : Form, IMessageFilter {
 	// hier, alles andere folgt der Standardliste - neun volle Listen waeren
 	// neunmal so viel zu verstellen, und gemessen werden pro Runde nur ein
 	// paar Dutzend Proben.
+	// Womit die Karte bestueckt wird. Geschrieben wird eine Liste nach
+	// g_weaponSpawns, und zwar vor den map-Befehl; das Spiel belegt daraufhin
+	// jeden Waffensockel und jede Munitionskiste reihum mit den genannten
+	// Waffen neu - siehe G_SubstituteSpawnItem in code/game/g_items.c. Die
+	// Munition muss hier nicht stehen, sie wird dort aus der Waffe abgeleitet.
+	//
+	// Der erste Versuch ging ueber disable_<classname>, was Quake 3 von Haus
+	// aus kann und keine Aenderung am Spiel gebraucht haette. Es taugt aber
+	// nicht: das entfernt die anderen Waffen, statt sie zu ersetzen, und bei
+	// "nur MG" steht die Karte leer. Wegnehmen ist nicht einengen. Deshalb
+	// braucht diese Einstellung ein passendes qagame - das Spiel laedt es als
+	// vm/qagame.qvm aus zz-hitpitch.pk3, nicht als qagame.dll.
+	//
+	// Wofuer das da ist: eine Messreihe ist nur vergleichbar, wenn in jedem Lauf
+	// dasselbe geschossen wird. Die Latenzreihe vom 19.09. ist genau daran
+	// gescheitert - 40 / 25 / 80 Prozent MG-Anteil, und die Waffenmischung hat
+	// mehr bewegt als die Latenz, die gemessen werden sollte.
+	static readonly (string Name, string Weapon)[] SpawnItems = {
+		( "Maschinengewehr",  "machinegun" ),
+		( "Schrotflinte",     "shotgun" ),
+		( "Granatwerfer",     "grenadelauncher" ),
+		( "Raketenwerfer",    "rocketlauncher" ),
+		( "Blitzwerfer",      "lightning" ),
+		( "Railgun",          "railgun" ),
+		( "Plasmagun",        "plasmagun" ),
+		( "BFG",              "bfg" ),
+		( "Gauntlet",         "gauntlet" ),
+	};
+	readonly CheckedListBox spawnWeapons = new() {
+		Width = 200, Height = 152, CheckOnClick = true, IntegralHeight = false,
+	};
+	readonly Label spawnValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+
 	static readonly (string Key, string Name)[] Weapons = {
 		( "rocket",     "Raketenwerfer" ),
 		( "grenade",    "Granatwerfer" ),
@@ -427,6 +464,13 @@ public class MainForm : Form, IMessageFilter {
 		hintTip.SetToolTip( screenSize, "Setzt r_mode -1 mit eigener Breite und Höhe, damit auch 16:9"
 			+ " möglich ist. „unverändert“ lässt alles, wie es im Spiel steht." );
 
+		foreach ( var s in SpawnItems ) spawnWeapons.Items.Add( s.Name, true );
+		aimExact.Items.AddRange( new object[] { "nie", "nur Einzelschuss-Waffen", "alle Waffen" } );
+		aimExact.SelectedIndex = 2;
+		hintTip.SetToolTip( aimExact, "Ob die Sicht auf dem Feuerbefehl genau auf den vorhergesagten Punkt gesetzt"
+			+ " wird. „nur Einzelschuss-Waffen“ = Shotgun, Granate, Rakete, Rail, BFG; MG, Plasma und Blitz"
+			+ " folgten dann nur mit 0,32 des Wegs je Befehl – gemessen kostete das 1,5–3 Punkte MG-Trefferquote"
+			+ " (72 % der MG-Schüsse). „nie“ ist für Vergleichsmessungen da." );
 		botStyle.Items.AddRange( new object[] { "Drahtbox", "Silhouette (gefüllt)", "Kontur (Umriss)", "Kontur + Silhouette" } );
 		botStyle.SelectedIndex = 2;
 		botBars.Items.AddRange( new object[] { "Zahl", "HP-Balken", "HP + Rüstung" } );
@@ -1027,7 +1071,7 @@ public class MainForm : Form, IMessageFilter {
 	TabControl BuildSettingsTabs() {
 		var tabs = new TabControl { Dock = DockStyle.Fill };
 		settingsTabs = tabs;
-		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox() ) );
+		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox(), BuildSpawnBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Trefferton", BuildSoundBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Zielen", BuildAimBox(), BuildLeadBox(), BuildSwitchBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Anzeige", BuildBotBox(), BuildItemBox() ) );
@@ -1069,6 +1113,70 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Bildrate:", maxFps ) ) );
 	}
 
+	// Womit die Karte bestückt wird. Die Sockel bleiben, wo sie sind - nur ihr
+	// Inhalt wird auf die angehakten Waffen verteilt, Munitionskisten genauso.
+	GroupBox BuildSpawnBox() {
+		var all = new Button { Text = "alle", Width = 64, Margin = new Padding( 0, 0, 6, 0 ) };
+		var mg = new Button { Text = "nur MG", Width = 74 };
+		all.Click += ( _, _ ) => {
+			for ( int i = 0; i < spawnWeapons.Items.Count; i++ ) spawnWeapons.SetItemChecked( i, true );
+		};
+		// Der haeufigste Fall: eine Messreihe, in der nur das Maschinengewehr
+		// geschossen wird. Der Gauntlet bleibt an, er nimmt keinen Sockel weg.
+		mg.Click += ( _, _ ) => {
+			for ( int i = 0; i < spawnWeapons.Items.Count; i++ ) {
+				spawnWeapons.SetItemChecked( i, SpawnItems[i].Weapon == "machinegun"
+					|| SpawnItems[i].Weapon == "gauntlet" );
+			}
+		};
+		spawnWeapons.ItemCheck += ( _, _ ) => { if ( IsHandleCreated ) BeginInvoke( ShowSpawn ); };
+		ShowSpawn();
+
+		hintTip.SetToolTip( spawnWeapons, "Alle Waffensockel und Munitionskisten der Karte werden reihum"
+			+ " auf die angehakten Waffen verteilt – die Karte behält also ihre Dichte, nur der Inhalt"
+			+ " wechselt. Gedacht für vergleichbare Messreihen: eine Waffe anhaken, dann wird in jedem"
+			+ " Lauf dasselbe geschossen.\n\nAlles oder nichts angehakt heißt: die Karte bleibt, wie sie"
+			+ " ist. Der Gauntlet bleibt liegen, wo die Karte ihn hat, rückt aber nie auf einen fremden"
+			+ " Sockel nach.\n\nDu und die Bots starten unabhängig davon immer mit Gauntlet und"
+			+ " Maschinengewehr – das ist Quake-3-Verhalten. Powerups, Rüstung und Medipacks bleiben"
+			+ " unangetastet." );
+
+		return Group( "Waffen auf der Karte",
+			Row( spawnWeapons ),
+			Row( all, mg ),
+			Row( Pad( spawnValue ) ) );
+	}
+
+	// Die Liste für g_weaponSpawns, in Klassennamen. Leer heißt "Karte
+	// unverändert" - und das gilt für drei Fälle: nichts angehakt, alles
+	// angehakt, oder nur der Gauntlet, der nie nachrückt. In allen dreien gibt
+	// es nichts umzuverteilen, und das Spiel soll das auch so sehen.
+	string SpawnList() {
+		var chosen = new List<string>();
+		bool fills = false;
+		for ( int i = 0; i < SpawnItems.Length; i++ ) {
+			if ( !spawnWeapons.GetItemChecked( i ) ) continue;
+			chosen.Add( SpawnItems[i].Weapon );
+			if ( SpawnItems[i].Weapon != "gauntlet" ) fills = true;
+		}
+		if ( !fills || chosen.Count == SpawnItems.Length ) return "";
+		return string.Join( " ", chosen );
+	}
+
+	void ShowSpawn() {
+		if ( SpawnList().Length == 0 ) {
+			spawnValue.Text = "die Karte bleibt, wie sie ist";
+			return;
+		}
+		int n = 0;
+		for ( int i = 0; i < SpawnItems.Length; i++ ) {
+			if ( spawnWeapons.GetItemChecked( i ) && SpawnItems[i].Weapon != "gauntlet" ) n++;
+		}
+		spawnValue.Text = n == 1
+			? "jeder Waffensockel und jede Munitionskiste wird zu dieser einen Waffe"
+			: $"alle Waffensockel und Munitionskisten werden auf diese {n} Waffen verteilt";
+	}
+
 	GroupBox BuildSoundBox() {
 		return Group( "Trefferton",
 			Row( Labelled( "Ton:", hitSound ) ),
@@ -1087,7 +1195,7 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ) ),
 			Row( Labelled( "Halten:", aimKey ), Labelled( "Snap-Stärke:", aimStrength ) ),
-			Row( Pad( aimExact ) ),
+			Row( Labelled( "Schussmoment exakt:", aimExact ) ),
 			Row( Pad( aimAttacker ) ),
 			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "auch aussichtslose:", holdLottery ) ),
@@ -1582,7 +1690,9 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
 		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
-		s.AppendLine( "aimExact=" + aimExact.Checked );
+		s.AppendLine( "aimExactMode=" + aimExact.SelectedIndex );
+		s.AppendLine( "spawnWeapons=" + string.Concat(
+			Enumerable.Range( 0, SpawnItems.Length ).Select( i => spawnWeapons.GetItemChecked( i ) ? "1" : "0" ) ) );
 		s.AppendLine( "aimLearn=" + aimLearn.Checked );
 		s.AppendLine( "aimHoldFire=" + aimHoldFire.Checked );
 		s.AppendLine( "holdLottery=" + holdLottery.Value );
@@ -1652,7 +1762,19 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimAttacker, v, "aimAttacker" );
 		SetNum( aimSmooth, v, "aimSmooth" );
 		SetNum( aimLead, v, "aimLead" );
-		SetBool( aimExact, v, "aimExact" );
+		// Der alte Haken: "aus" bleibt aus, "an" wird zum neuen Standard "alle"
+		if ( v.ContainsKey( "aimExactMode" ) ) SetIndex( aimExact, v, "aimExactMode" );
+		else if ( v.TryGetValue( "aimExact", out var oldExact ) && oldExact.Trim() == "False" ) aimExact.SelectedIndex = 0;
+		// Eine Ziffer je Eintrag, in der Reihenfolge von SpawnItems. Eine Datei
+		// aus einem aelteren Bau hat den Schluessel nicht: dann bleibt alles an,
+		// und die Karte ist die, die sie immer war.
+		if ( v.TryGetValue( "spawnWeapons", out var sw ) ) {
+			sw = sw.Trim();
+			for ( int i = 0; i < SpawnItems.Length && i < sw.Length; i++ ) {
+				spawnWeapons.SetItemChecked( i, sw[i] == '1' );
+			}
+			ShowSpawn();
+		}
 		SetBool( aimLearn, v, "aimLearn" );
 		SetBool( aimHoldFire, v, "aimHoldFire" );
 		SetBar( holdLottery, v, "holdLottery" );
@@ -1771,7 +1893,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistSmooth {(int)aimSmooth.Value}" );
 		cfg.AppendLine( $"seta cl_aimAssistLead {Dec( aimLead.Value )}" );
-		cfg.AppendLine( $"seta cl_aimAssistExact {( aimExact.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_aimAssistExact {aimExact.SelectedIndex}" );
 		cfg.AppendLine( $"seta cl_aimAssistLearn {( aimAssist.Checked && aimLearn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistHoldFire {( aimHoldFire.Checked ? 1 : 0 )}" );
 		// Der Punkt muss ein Punkt bleiben, die Engine liest mit atof
@@ -1789,6 +1911,14 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf localhost und privates LAN.
 		// Menschliche Testziele sind zusaetzlich ein ausdruecklicher App-Haken.
+		// Die Waffen, auf die alle Sockel und Munitionskisten verteilt werden.
+		// Leer heisst: die Karte bleibt, wie sie ist - und das ist auch der
+		// Fall, wenn alles angehakt ist, denn dann gibt es nichts zu ersetzen.
+		// Kein seta: eine Laboreinstellung hat in der q3config des Spielers
+		// nichts verloren, wo sie beim naechsten Spiel ohne dieses Werkzeug
+		// still weiterwirken wuerde. Muss vor "map" stehen, weil das Spiel sie
+		// beim Entstehen der Gegenstaende liest.
+		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
 

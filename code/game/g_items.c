@@ -877,6 +877,175 @@ int G_ItemDisabled( gitem_t *item ) {
 
 /*
 ============
+Die Karte auf wenige Waffen einengen, ohne sie leerzuraeumen
+
+Fuer eine Messreihe muss in jedem Lauf dasselbe geschossen werden - sonst misst
+man die Waffenmischung und nicht das, was gemessen werden soll. Eine Reihe ist
+genau daran schon gescheitert: drei Laeufe mit 40, 25 und 80 Prozent
+Maschinengewehr, und die Mischung bewegte die Zahlen mehr als die Groesse, um
+die es ging.
+
+Die naheliegende Loesung, die anderen Waffen ueber disable_<classname>
+wegzulassen, taugt dafuer nicht: dann stehen elf Sockel leer und auf einem
+liegt eine Waffe. Also werden die Sockel nicht geleert, sondern neu belegt -
+reihum mit den gewaehlten Waffen, und die Munitionskisten genauso mit deren
+Munition. Die Karte behaelt damit ihre Dichte und ihre Wege, nur der Inhalt
+wechselt.
+
+Der Gauntlet zaehlt als erlaubt, wo die Karte ihn hinlegt, ruecht aber nie auf
+einen fremden Sockel nach: man traegt ihn ohnehin immer bei sich, und ein
+Sockel mit einem zweiten Gauntlet waere ein verlorener Sockel. Ist er das
+Einzige, was gewaehlt wurde, bleibt die Karte unveraendert - alles in einen
+Gauntlet zu verwandeln ist keine sinnvolle Lesart dieser Einstellung.
+
+Powerups, Ruestung und Medipacks werden nicht angefasst.
+============
+*/
+#define MAX_SPAWN_WEAPONS	16
+
+static gitem_t	*spawnAllowed[MAX_SPAWN_WEAPONS];	// was stehenbleiben darf
+static gitem_t	*spawnPool[MAX_SPAWN_WEAPONS];		// was nachrueckt (ohne Gauntlet)
+static gitem_t	*spawnAmmo[MAX_SPAWN_WEAPONS];		// deren Munition
+static int		numSpawnAllowed;
+static int		numSpawnPool;
+static int		numSpawnAmmo;
+static int		nextSpawnWeapon;
+static int		nextSpawnAmmo;
+
+// Die Munitionskiste, die zu einer Waffe gehoert - der Gauntlet hat keine
+static gitem_t *G_AmmoForWeapon( int weapon ) {
+	gitem_t	*item;
+
+	for ( item = bg_itemlist + 1; item->classname; item++ ) {
+		if ( item->giType == IT_AMMO && item->giTag == weapon ) {
+			return item;
+		}
+	}
+	return NULL;
+}
+
+/*
+============
+G_ParseWeaponSpawns
+
+Einmal je Karte, bevor ihre Gegenstaende entstehen. Die Liste steht in
+g_weaponSpawns, durch Leerzeichen oder Kommas getrennt, mit oder ohne das
+"weapon_" davor: "machinegun rocketlauncher" und "weapon_machinegun,
+weapon_rocketlauncher" sind dasselbe. Leer heisst: die Karte bleibt, wie sie
+ist.
+============
+*/
+void G_ParseWeaponSpawns( void ) {
+	char	list[1024];
+	char	name[MAX_QPATH];
+	gitem_t	*item, *ammo;
+	const char	*p;
+	int		n, named = 0;
+
+	numSpawnAllowed = 0;
+	numSpawnPool = 0;
+	numSpawnAmmo = 0;
+	nextSpawnWeapon = 0;
+	nextSpawnAmmo = 0;
+
+	trap_Cvar_VariableStringBuffer( "g_weaponSpawns", list, sizeof( list ) );
+
+	p = list;
+	while ( *p ) {
+		while ( *p == ' ' || *p == '\t' || *p == ',' || *p == '"' ) {
+			p++;
+		}
+		n = 0;
+		while ( *p && *p != ' ' && *p != '\t' && *p != ',' && *p != '"'
+			&& n < (int)sizeof( name ) - 1 ) {
+			name[n++] = *p++;
+		}
+		name[n] = '\0';
+		if ( !n ) {
+			continue;
+		}
+
+		named++;
+		for ( item = bg_itemlist + 1; item->classname; item++ ) {
+			if ( item->giType != IT_WEAPON ) {
+				continue;
+			}
+			// jeder Waffen-Klassenname faengt mit "weapon_" an, also sieben Zeichen
+			if ( Q_stricmp( item->classname, name )
+				&& Q_stricmp( item->classname + 7, name ) ) {
+				continue;
+			}
+			if ( numSpawnAllowed < MAX_SPAWN_WEAPONS ) {
+				spawnAllowed[numSpawnAllowed++] = item;
+			}
+			if ( item->giTag != WP_GAUNTLET && numSpawnPool < MAX_SPAWN_WEAPONS ) {
+				spawnPool[numSpawnPool++] = item;
+				ammo = G_AmmoForWeapon( item->giTag );
+				if ( ammo && numSpawnAmmo < MAX_SPAWN_WEAPONS ) {
+					spawnAmmo[numSpawnAmmo++] = ammo;
+				}
+			}
+			break;
+		}
+		// Die Schleife bricht auf einem Treffer ab, laeuft sonst bis zum
+		// Abschluss der Liste - dort steht kein classname mehr.
+		if ( !item->classname ) {
+			G_Printf( "g_weaponSpawns: unknown weapon '%s'\n", name );
+		}
+	}
+
+	// Jeder Ausgang sagt sich selbst an. Ohne das sieht ein Vertipper, der die
+	// ganze Liste wertlos macht, im Protokoll genauso aus wie eine leere
+	// Einstellung - und eine Messreihe laeuft still auf der vollen Karte,
+	// waehrend die Konfiguration behauptet, sie sei eingeengt.
+	if ( numSpawnPool ) {
+		G_Printf( "weapon spawns narrowed to %i weapon(s), %i ammo box kind(s)\n",
+			numSpawnPool, numSpawnAmmo );
+	} else if ( numSpawnAllowed ) {
+		G_Printf( "g_weaponSpawns: only the gauntlet chosen, map left unchanged\n" );
+	} else if ( named ) {
+		G_Printf( "g_weaponSpawns: nothing matched, map left unchanged\n" );
+	}
+}
+
+/*
+============
+G_SubstituteSpawnItem
+
+Was auf diesem Sockel statt des Kartenfundes liegen soll. Nur beim Entstehen
+der Karte gefragt, nicht bei fallengelassenen Waffen und nicht bei "give".
+============
+*/
+gitem_t *G_SubstituteSpawnItem( gitem_t *item ) {
+	int		i;
+
+	if ( !item || !numSpawnPool ) {
+		return item;
+	}
+
+	if ( item->giType == IT_WEAPON ) {
+		for ( i = 0; i < numSpawnAllowed; i++ ) {
+			if ( spawnAllowed[i] == item ) {
+				return item;			// steht schon auf der Liste
+			}
+		}
+		return spawnPool[nextSpawnWeapon++ % numSpawnPool];
+	}
+
+	if ( item->giType == IT_AMMO && numSpawnAmmo ) {
+		for ( i = 0; i < numSpawnAmmo; i++ ) {
+			if ( spawnAmmo[i] == item ) {
+				return item;
+			}
+		}
+		return spawnAmmo[nextSpawnAmmo++ % numSpawnAmmo];
+	}
+
+	return item;
+}
+
+/*
+============
 G_SpawnItem
 
 Sets the clipping size and plants the object on the floor.

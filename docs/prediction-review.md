@@ -1,6 +1,6 @@
 # Trajektorienvorhersage des Aim-Assists: Was noch verbessert werden kann
 
-> Stand 20.09.2026: F02, F09 und F15 (das Nach-Landung-Paket) sind umgesetzt; siehe die Historie von `code/client/cl_input.c`.
+> Stand 20.09.2026: F02, F09 und F15 (das Nach-Landung-Paket) sind umgesetzt. Nachmessung über 111 Landeschüsse des ganzen Korpus (Ziel bei Ankunft bekannt): der Lauf nach der Landung ist bei jeder Flugzeit zweigeteilt — etwa die Hälfte läuft weiter, die Hälfte dreht um — und kein fester Faktor ändert den Splash-Anteil messbar (−0,5: 34 %, 0: 32 %, 0,4: 30 %, 1: 29 %). Die in F02 erwarteten +2 Punkte bestätigen sich nicht; die Kappung, die Fußhöhe (F09) und das Messen (F15) bleiben richtig. Die Lernfächer werden sich nahe 0 einpendeln; ein besserer Hebel für diese Gruppe ist das Abwarten bis zur Landung, nicht die Vorhersage.
 
 ## 1. Kurzfassung
 

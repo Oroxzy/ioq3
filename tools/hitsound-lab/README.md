@@ -19,6 +19,16 @@ Waffentimer voraus und setzt auf genau dem Befehl, auf dem der Server feuert,
 den Zielpunkt auf die Stelle, gegen die der Server den Schuss wirklich prüft.
 Dazwischen folgt sie weich, damit das Bild nicht ruckelt.
 
+Ob die Sicht auf dem Feuerbefehl wirklich **auf den Punkt gesetzt** wird,
+stellt „Schussmoment exakt“ ein (`cl_aimAssistExact`): „nie“, „nur
+Einzelschuss-Waffen“ (Shotgun, Granate, Rakete, Rail, BFG) oder „alle
+Waffen“. Bis zum 20.09.2026 konnte das Tool nur die mittlere Stufe setzen, und
+die las sich wie „exakt“, hieß aber: Maschinengewehr, Plasma und Blitz folgten
+auch im Schussmoment nur mit 0,32 des Wegs je Befehl. Gemessen kostete das
+1,5–3 Punkte MG-Trefferquote auf 72 % der MG-Schüsse (Befund F03 in
+`docs/prediction-review.md`); der Standard ist jetzt „alle Waffen“, und „nie“
+bleibt für Vergleichsmessungen.
+
 Die Glättung dazwischen ist ein Ausgleich mit Mittelwert null — über alle
 gezeichneten Bilder hebt sie sich auf. Über die **Schüsse** tat sie das nicht:
 ein Waffentakt von hundert Millisekunden schwebt gegen einen Snapshot-Takt von
@@ -30,9 +40,63 @@ waffen. Und der Abstand, ab dem der eigene Splash die Hilfe aussetzen lässt,
 richtet sich nach der Waffe: die früheren pauschalen 160 Einheiten passen zur
 Rakete und sind für Plasma, dessen Splash zwanzig weit reicht, achtmal zu viel.
 
-Sie ist **auf localhost und private LAN-Verbindungen begrenzt**. Bots sind der
-sichere Standard. Für kontrollierte Tests kann der Haken „Menschen als
-Testziele“ zusätzlich menschliche Gegner zulassen.
+Sie ist **auf die eigene Partie begrenzt und zielt nur auf Bots**. Die Grenze
+steht im Quelltext, nicht in dieser Datei: `CL_AimAssistSteer` und
+`CL_AimAssistSnapshot` in `code/client/cl_input.c` kehren sofort zurück, wenn
+die Verbindung nicht `NA_LOOPBACK` ist — also nicht der Server im selben
+Programm —, und als Ziel kommt nur in Frage, wessen Configstring ein `skill`
+trägt, was ein Mensch nie tut. Bis zum 20.09.2026 stimmte das nur halb: der
+Kommentar behauptete die Grenze, die Prüfung fehlte, und ein Cvar
+(`cl_aimAssistHumanTargets`) samt Haken im Werkzeug konnte Menschen als Ziele
+freischalten. Beides ist weg, und ein LAN gilt ausdrücklich nicht als „eigene
+Partie“: `Sys_IsLANAddress` nimmt jedes Subnetz einer lokalen Schnittstelle an,
+und über ein VPN sitzen dort Fremde.
+
+**Waffen auf der Karte.** In der Karteikarte „Spiel“ steht, womit die Karte
+bestückt wird. Die Sockel bleiben, wo der Kartenbauer sie hingesetzt hat — nur
+ihr Inhalt wird reihum auf die angehakten Waffen verteilt, und die
+Munitionskisten genauso auf deren Munition. Die Karte behält damit ihre Dichte
+und ihre Wege, es liegt nur überall dasselbe.
+
+Wozu: eine Messreihe ist nur vergleichbar, wenn in jedem Lauf dasselbe
+geschossen wird. Die Latenzreihe vom 19.09. ist genau daran gescheitert — 40,
+25 und 80 Prozent MG-Anteil in den drei Läufen, und die Waffenmischung bewegte
+die Zahlen mehr als die Latenz, die gemessen werden sollte.
+
+Der erste Versuch dafür war falsch gebaut und ist es eine Stunde lang auch
+geblieben: die nicht gewählten Waffen wurden über `disable_<classname>`
+weggelassen, was Quake 3 von Haus aus kann. Das räumt die Karte aber aus — bei
+„nur MG“ stehen elf Sockel leer und auf einem liegt etwas. Wegnehmen ist nicht
+dasselbe wie einengen. Seitdem wird ersetzt statt entfernt:
+`G_SubstituteSpawnItem` in `code/game/g_items.c` gibt zu jedem Fund der Karte
+zurück, was stattdessen dort liegen soll, und `G_CallSpawn` in `g_spawn.c`
+fragt es genau einmal — auf dem Weg, der von der Karte kommt. Was ein Spieler
+fallen lässt und was `give` erzeugt, geht direkt an `G_SpawnItem` und bleibt,
+was es ist.
+
+Die Liste steht in `g_weaponSpawns`, durch Leerzeichen getrennt, mit oder ohne
+`weapon_` davor. Das Werkzeug schreibt sie vor den `map`-Befehl, weil sie beim
+Entstehen der Gegenstände gelesen wird, und mit `set` statt `seta`: eine
+Laboreinstellung hat in der `q3config` nichts verloren. Leer heißt „Karte
+unverändert“, und das Werkzeug schreibt auch dann leer, wenn **alles**
+angehakt ist — dann gibt es nichts umzuverteilen.
+
+Nachgeprüft am 20.09. mit zwei Bot-Matches über je 95 Sekunden auf q3dm17,
+gleich bis auf die Haken. Unverändert: 461 Einschläge in sieben Arten, darunter
+25 Rail, 35 Schrot, 55 Geschosse. Nur Railgun angehakt: 534 Einschläge in drei
+Arten — **103 Rail statt 25**, kein Schrot, kein einziges Geschoss. Die Railgun
+ist also nicht bloß übriggeblieben, sie hat die anderen Sockel übernommen, und
+die Munitionskisten liefern die Slugs dafür.
+
+Zwei Dinge lässt das bewusst in Ruhe. **Der Gauntlet** bleibt liegen, wo die
+Karte ihn hat, rückt aber nie auf einen fremden Sockel nach — man trägt ihn
+ohnehin immer bei sich, ein zweiter wäre ein verlorener Sockel. Und
+**Powerups, Rüstung und Medipacks** werden nicht angefasst.
+
+Eines lässt sich damit nicht abstellen: **du und die Bots starten immer mit
+Gauntlet und Maschinengewehr**. Das ist Quake-3-Verhalten und hängt nicht an
+den Gegenständen auf der Karte — in einer Railgun-Runde fällt es als
+Kugel-Einschläge im Protokoll auf.
 
 **Sicht durch Wände.** Bots bekommen einen Drahtrahmen, Waffen und Powerups
 einen Kasten mit Respawn-Zähler, dessen Farbe von Rot über Orange nach Grün

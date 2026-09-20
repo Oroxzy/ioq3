@@ -1648,6 +1648,20 @@ int BotInitLibrary(void) {
 	trap_Cvar_VariableStringBuffer("fs_game", buf, sizeof(buf));
 	if (strlen(buf)) trap_BotLibVarSet("gamedir", buf);
 	//
+	// Wird die Karte auf wenige Waffen eingeengt (g_weaponSpawns, siehe
+	// G_SubstituteSpawnItem in g_items.c), liegt auf einem Sockel etwas
+	// anderes, als die AAS-Datei dort verzeichnet hat. Die Botbibliothek
+	// erkennt ihre Gegenstaende am Modelindex (BotUpdateEntityItems in
+	// be_ai_goal.c) und haelt jeden, den sie so nicht wiederfindet, fuer einen
+	// fallengelassenen - und fallengelassene sind ihr per Aufschlag von
+	// tausend Punkten besonders wertvoll (be_ai_goal.c:1362). Die Bots wuerden
+	// also auf jeden ersetzten Sockel zustuermen, und genau sie sind in diesem
+	// Labor die Kontrollgruppe: ihr Verhalten darf sich durch eine
+	// Messeinstellung nicht aendern. Der Aufschlag faellt deshalb weg, solange
+	// eingeengt wird.
+	trap_Cvar_VariableStringBuffer("g_weaponSpawns", buf, sizeof(buf));
+	if (strlen(buf)) trap_BotLibVarSet("droppedweight", "0");
+	//
 #ifdef MISSIONPACK
 	trap_BotLibDefine("MISSIONPACK");
 #endif
