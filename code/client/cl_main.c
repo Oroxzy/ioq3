@@ -3636,8 +3636,8 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_botOutlineName, 0, 1, qtrue );
 	Cvar_SetDescription( cl_botOutlineName, "Show the bot's name over its head" );
 	cl_damagePlums = Cvar_Get( "cl_damagePlums", "1", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_damagePlums, 0, 1, qtrue );
-	Cvar_SetDescription( cl_damagePlums, "Show the damage of each of your hits as a number that rises and fades: over the target while the aim key names one, beside the crosshair otherwise" );
+	Cvar_CheckRange( cl_damagePlums, 0, 2, qtrue );
+	Cvar_SetDescription( cl_damagePlums, "Show the damage of each of your hits as a number that rises and fades: 0 off, 1 over the target it can be put to and beside the crosshair when it cannot, 2 always beside the crosshair" );
 	cl_botOutlineBars = Cvar_Get( "cl_botOutlineBars", "2", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_botOutlineBars, 0, 2, qtrue );
 	Cvar_SetDescription( cl_botOutlineBars, "How the last-known health reads out over a bot at cl_botOutline 2: 0 the plain number, 1 a segmented health bar, 2 health plus a thinner armor bar" );

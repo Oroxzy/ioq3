@@ -1655,11 +1655,80 @@ nur, wenn der Ton eingeschaltet ist, und eine Anzeige soll nicht davon
 abhaengen, ob es dazu piept.
 ====================
 */
+/*
+====================
+CL_FindVictim
+
+Ueber wessen Kopf die Zahl gehoert. Der Server sagt es nicht - er nennt nur,
+wieviel der Getroffene noch hat, nie wen. Zwei Wege, in dieser Reihenfolge:
+
+Die Zielhilfe weiss es sicher, wenn sie gerade gefeuert hat: sie hat sich das
+Ziel gemerkt, auf das der Schuss ging. Das gilt aber nur, solange die Zieltaste
+haelt - wer ohne sie schiesst, bekaeme sonst nie eine Zahl ueber dem Gegner.
+
+Also sonst: der Bot, der dem Blick am naechsten steht. Im Augenblick eines
+Hitscan-Treffers ist das fast immer der Richtige, denn man hat ja eben auf ihn
+gezielt. Bei einem Geschoss, das eine Sekunde unterwegs war, kann der Blick
+inzwischen woanders sein - deshalb der enge Kegel: lieber neben dem Fadenkreuz
+als ueber dem Falschen. Eine Zahl ueber einem Unbeteiligten waere schlimmer als
+gar keine, weil sie etwas behauptet.
+====================
+*/
+static qboolean CL_FindVictim( vec3_t origin ) {
+	const entityState_t	*es, *best = NULL;
+	vec3_t				local;
+	float				forward, angle, bestAngle = 25.0f;
+	int					target, i;
+
+	if ( !botOutlineViewValid ) {
+		return qfalse;
+	}
+
+	// Was die Zielhilfe sagt, gilt - sie hat den Schuss ja gefuehrt
+	target = -1;
+	CL_AimAssistLastShotAt( &target );
+
+	for ( i = 0; i < cl.snap.numEntities; i++ ) {
+		es = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
+		if ( es->eType != ET_PLAYER || es->number != es->clientNum
+			|| es->clientNum == cl.snap.ps.clientNum ) {
+			continue;
+		}
+		if ( es->clientNum == target ) {
+			best = es;
+			break;
+		}
+		if ( target >= 0 ) {
+			continue;			// die Zielhilfe hat schon jemanden benannt
+		}
+
+		// Winkel zwischen Blickrichtung und Brusthoehe des Bots
+		VectorSubtract( es->pos.trBase, botOutlineView.vieworg, local );
+		local[2] += 24.0f;
+		forward = DotProduct( local, botOutlineView.viewaxis[0] );
+		if ( forward < 1.0f ) {
+			continue;			// hinter uns
+		}
+		angle = RAD2DEG( acos( Com_Clamp( -1.0f, 1.0f,
+			forward / ( VectorLength( local ) + 0.0001f ) ) ) );
+		if ( angle < bestAngle ) {
+			bestAngle = angle;
+			best = es;
+		}
+	}
+
+	if ( !best ) {
+		return qfalse;
+	}
+	VectorCopy( best->pos.trBase, origin );
+	origin[2] += 42.0f;			// ueber den Kopf, nicht in die Brust
+	return qtrue;
+}
+
 static void CL_WatchDamage( void ) {
 	static int			seenHits = -1;
-	const entityState_t	*es;
 	vec3_t				origin;
-	int					hits, damage, target, i;
+	int					hits, damage;
 	qboolean			world = qfalse;
 
 	if ( !cl_damagePlums->integer || !cl.snap.valid || clc.demoplaying ) {
@@ -1682,21 +1751,9 @@ static void CL_WatchDamage( void ) {
 		return;
 	}
 
-	// Ueber dem Kopf dessen, auf den geschossen wurde - und neben dem
-	// Fadenkreuz, wenn niemand sagen kann, wer das war.
 	VectorClear( origin );
-	if ( CL_AimAssistLastShotAt( &target ) ) {
-		for ( i = 0; i < cl.snap.numEntities; i++ ) {
-			es = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
-			if ( es->eType != ET_PLAYER || es->clientNum != target
-				|| es->number != es->clientNum ) {
-				continue;
-			}
-			VectorCopy( es->pos.trBase, origin );
-			origin[2] += 42.0f;		// ueber den Kopf, nicht in die Brust
-			world = qtrue;
-			break;
-		}
+	if ( cl_damagePlums->integer == 1 && CL_FindVictim( origin ) ) {
+		world = qtrue;
 	}
 	CL_AddDamagePlum( damage, origin, world );
 }

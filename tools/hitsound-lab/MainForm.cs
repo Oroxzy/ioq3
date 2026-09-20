@@ -80,7 +80,9 @@ public class MainForm : Form, IMessageFilter {
 	readonly TextBox botColor = new() { Width = 90, Text = "255 0 220" };
 	readonly Button botColorPick = new() { Text = "wählen…", AutoSize = true };
 	readonly CheckBox botName = new() { Text = "Name über dem Kopf", Checked = true, AutoSize = true };
-	readonly CheckBox damagePlums = new() { Text = "Schadenszahlen bei Treffern", Checked = true, AutoSize = true };
+	// Der Index ist der Wert von cl_damagePlums: 0 aus, 1 über dem Getroffenen,
+	// 2 immer am Fadenkreuz.
+	readonly ComboBox damagePlums = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
 	readonly CheckBox noSelfDamage = new() { Text = "kein Schaden an mir selbst", Checked = false, AutoSize = true };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
@@ -467,6 +469,8 @@ public class MainForm : Form, IMessageFilter {
 			+ " möglich ist. „unverändert“ lässt alles, wie es im Spiel steht." );
 
 		foreach ( var s in SpawnItems ) spawnWeapons.Items.Add( s.Name, true );
+		damagePlums.Items.AddRange( new object[] { "aus", "über dem Getroffenen", "immer am Fadenkreuz" } );
+		damagePlums.SelectedIndex = 1;
 		aimExact.Items.AddRange( new object[] { "nie", "nur Einzelschuss-Waffen", "alle Waffen" } );
 		aimExact.SelectedIndex = 2;
 		hintTip.SetToolTip( aimExact, "Ob die Sicht auf dem Feuerbefehl genau auf den vorhergesagten Punkt gesetzt"
@@ -1256,12 +1260,13 @@ public class MainForm : Form, IMessageFilter {
 			+ " wird im Spiel vor dem Schaden verrechnet –, kostet aber kein Leben mehr. Nur gegen dich"
 			+ " selbst: wen dein Splash sonst noch erwischt, trifft er unverändert." );
 		hintTip.SetToolTip( damagePlums, "Wieviel jeder deiner Treffer angerichtet hat, steigt als Zahl auf"
-			+ " und verblasst – blass bei einem Streifschuss, leuchtend bei einem schweren.\n\nZwei Grenzen:"
-			+ " Die Zahl steht über dem Getroffenen, solange die Zieltaste hält – nur dann weiß der Client,"
-			+ " wer es war. Sonst erscheint sie neben dem Fadenkreuz. Und die Schrotflinte zählt zu wenig,"
-			+ " weil jedes Korn einzeln verrechnet wird und nur das letzte in der Meldung landet.\n\nEigener"
-			+ " Schaden zählt nie mit: ein Raketensprung löst weder Zahl noch Trefferton aus." );
-
+			+ " und verblasst – blass bei einem Streifschuss, leuchtend bei einem schweren.\n\n„über dem"
+			+ " Getroffenen“ sucht sich den Gegner selbst: zuerst das, worauf die Zielhilfe gefeuert hat,"
+			+ " sonst der Bot, der dem Blick am nächsten steht. Findet sich keiner im engen Kegel –"
+			+ " etwa weil eine Rakete eine Sekunde unterwegs war und du längst woanders hinsiehst –,"
+			+ " erscheint die Zahl neben dem Fadenkreuz statt über dem Falschen.\n\nDie Schrotflinte"
+			+ " zählt zu wenig, weil jedes Korn einzeln verrechnet wird und nur das letzte in der"
+			+ " Meldung landet. Eigener Schaden zählt nie mit." );
 		return Group( "Gegner-Markierung",
 			// eigene Zeilen: nebeneinander lief die zweite aus der Gruppe heraus
 			Row( Pad( botOutline ) ),
@@ -1270,7 +1275,7 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Balken:", botBars ) ),
 			Row( Labelled( "Farbe:", botColor ), Pad( botColorPick ) ),
 			Row( Pad( botName ) ),
-			Row( Pad( damagePlums ) ) );
+			Row( Labelled( "Schadenszahlen:", damagePlums ) ) );
 	}
 
 	GroupBox BuildItemBox() {
@@ -1726,7 +1731,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botBars=" + botBars.SelectedIndex );
 		s.AppendLine( "botColor=" + botColor.Text );
 		s.AppendLine( "botName=" + botName.Checked );
-		s.AppendLine( "damagePlums=" + damagePlums.Checked );
+		s.AppendLine( "damagePlumsMode=" + damagePlums.SelectedIndex );
 		s.AppendLine( "noSelfDamage=" + noSelfDamage.Checked );
 		s.AppendLine( "maxFps=" + maxFps.SelectedIndex );
 		s.AppendLine( "screenMode=" + screenMode.SelectedIndex );
@@ -1814,7 +1819,9 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( botBars, v, "botBars" );
 		if ( v.TryGetValue( "botColor", out var bc ) && bc.Trim().Length > 0 ) botColor.Text = bc.Trim();
 		SetBool( botName, v, "botName" );
-		SetBool( damagePlums, v, "damagePlums" );
+		// Der alte Haken: "aus" bleibt aus, "an" wird zu "ueber dem Getroffenen"
+		if ( v.ContainsKey( "damagePlumsMode" ) ) SetIndex( damagePlums, v, "damagePlumsMode" );
+		else if ( v.TryGetValue( "damagePlums", out var oldPlums ) && oldPlums.Trim() == "False" ) damagePlums.SelectedIndex = 0;
 		SetBool( noSelfDamage, v, "noSelfDamage" );
 		SetIndex( maxFps, v, "maxFps" );
 		SetIndex( screenMode, v, "screenMode" );
@@ -1900,7 +1907,7 @@ public class MainForm : Form, IMessageFilter {
 			cfg.AppendLine( $"seta cl_botOutlineColor \"{c.R} {c.G} {c.B}\"" );
 		}
 		cfg.AppendLine( $"seta cl_botOutlineName {( botName.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"seta cl_damagePlums {( damagePlums.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cl_damagePlums {damagePlums.SelectedIndex}" );
 		// com_maxfps ist archiviert, das Spiel merkt es sich also - deshalb nur
 		// schreiben, wenn wirklich eine Bildrate gewaehlt wurde
 		if ( maxFps.SelectedIndex > 0 && maxFps.SelectedIndex < MaxFpsChoices.Length ) {
