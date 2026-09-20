@@ -1123,7 +1123,12 @@ public class MainForm : Form, IMessageFilter {
 	// Womit die Karte bestückt wird. Die Sockel bleiben, wo sie sind - nur ihr
 	// Inhalt wird auf die angehakten Waffen verteilt, Munitionskisten genauso.
 	GroupBox BuildSpawnBox() {
-		var all = new Button { Text = "alle", Width = 64, Margin = new Padding( 0, 0, 6, 0 ) };
+		// "Karten-Standard" und nicht "alle": alles angehakt HEISST, dass nichts
+		// umverteilt wird, und der Knopf soll sagen, was dabei herauskommt,
+		// statt zu beschreiben, wie er es macht. Vorher hiess er "alle", und
+		// dass das dasselbe ist wie "die Karte in Ruhe lassen", stand nur klein
+		// in der Zeile darunter.
+		var all = new Button { Text = "Karten-Standard", Width = 124, Margin = new Padding( 0, 0, 6, 0 ) };
 		var mg = new Button { Text = "nur MG", Width = 74 };
 		all.Click += ( _, _ ) => {
 			for ( int i = 0; i < spawnWeapons.Items.Count; i++ ) spawnWeapons.SetItemChecked( i, true );
@@ -1142,9 +1147,11 @@ public class MainForm : Form, IMessageFilter {
 		hintTip.SetToolTip( spawnWeapons, "Alle Waffensockel und Munitionskisten der Karte werden reihum"
 			+ " auf die angehakten Waffen verteilt – die Karte behält also ihre Dichte, nur der Inhalt"
 			+ " wechselt. Gedacht für vergleichbare Messreihen: eine Waffe anhaken, dann wird in jedem"
-			+ " Lauf dasselbe geschossen.\n\nAlles oder nichts angehakt heißt: die Karte bleibt, wie sie"
-			+ " ist. Der Gauntlet bleibt liegen, wo die Karte ihn hat, rückt aber nie auf einen fremden"
-			+ " Sockel nach.\n\nDu und die Bots starten unabhängig davon immer mit Gauntlet und"
+			+ " Lauf dasselbe geschossen.\n\n„Karten-Standard“ hakt alles an, und das heißt: nichts"
+			+ " umverteilen, die Karte bleibt, wie der Kartenbauer sie gesetzt hat. Nichts anzuhaken"
+			+ " führt zum selben Ergebnis – die Zeile darunter sagt in jedem Fall, was wirklich"
+			+ " passiert.\n\nDer Gauntlet bleibt liegen, wo die Karte ihn hat, rückt aber nie auf einen"
+			+ " fremden Sockel nach.\n\nDu und die Bots starten unabhängig davon immer mit Gauntlet und"
 			+ " Maschinengewehr – das ist Quake-3-Verhalten. Powerups, Rüstung und Medipacks bleiben"
 			+ " unangetastet." );
 
@@ -1171,14 +1178,26 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	void ShowSpawn() {
+		int ticked = 0, n = 0;
+		for ( int i = 0; i < SpawnItems.Length; i++ ) {
+			if ( !spawnWeapons.GetItemChecked( i ) ) continue;
+			ticked++;
+			if ( SpawnItems[i].Weapon != "gauntlet" ) n++;
+		}
+
+		// Drei Wege fuehren zu "unveraendert", und sie sollen sich auch
+		// unterscheiden lassen: alles angehakt ist die Absicht, nichts
+		// angehakt ein Versehen, und nur der Gauntlet waere sinnlos.
 		if ( SpawnList().Length == 0 ) {
-			spawnValue.Text = "die Karte bleibt, wie sie ist";
+			spawnValue.Text = ticked == SpawnItems.Length
+				? "Karten-Standard – die Karte bleibt, wie der Kartenbauer sie gesetzt hat"
+				: ticked == 0
+					? "nichts gewählt – die Karte bleibt beim Standard"
+					: "nur der Gauntlet – die Karte bleibt beim Standard";
+			spawnValue.ForeColor = ticked == SpawnItems.Length ? Color.DimGray : Color.Firebrick;
 			return;
 		}
-		int n = 0;
-		for ( int i = 0; i < SpawnItems.Length; i++ ) {
-			if ( spawnWeapons.GetItemChecked( i ) && SpawnItems[i].Weapon != "gauntlet" ) n++;
-		}
+		spawnValue.ForeColor = Color.DimGray;
 		spawnValue.Text = n == 1
 			? "jeder Waffensockel und jede Munitionskiste wird zu dieser einen Waffe"
 			: $"alle Waffensockel und Munitionskisten werden auf diese {n} Waffen verteilt";
