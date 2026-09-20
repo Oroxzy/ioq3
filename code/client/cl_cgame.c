@@ -1533,11 +1533,6 @@ typedef struct {
 static damagePlum_t	damagePlum[MAX_DAMAGE_PLUMS];
 static int			damagePlumNum;
 
-// Sobald der Server das Ereignis schickt, schweigt der Rueckfallweg. Beide
-// zugleich gaeben jeden Treffer zweimal aus, und das Ereignis ist in jeder
-// Hinsicht das bessere: es nennt den Schaden je Treffer und das Opfer dazu.
-static qboolean		damagePlumFromServer;
-
 /*
 ====================
 CL_AddDamagePlum
@@ -1738,10 +1733,6 @@ static void CL_WatchDamage( void ) {
 
 	if ( !cl_damagePlums->integer || !cl.snap.valid || clc.demoplaying ) {
 		seenHits = -1;
-		damagePlumFromServer = qfalse;		// eine neue Verbindung faengt von vorn an
-		return;
-	}
-	if ( damagePlumFromServer ) {
 		return;
 	}
 
@@ -1765,67 +1756,6 @@ static void CL_WatchDamage( void ) {
 		world = qtrue;
 	}
 	CL_AddDamagePlum( damage, origin, world );
-}
-
-/*
-====================
-CL_WatchDamageEvents
-
-Der bessere Weg, seit der Server es selbst sagt: EV_DAMAGEPLUM traegt die
-Menge, das Opfer und den Ort, und der Server schickt es nur dem, der den
-Schuss gesetzt hat. Damit fallen alle drei Schwaechen des Rueckrechnens weg -
-die Schrotflinte stimmt, das Opfer ist benannt statt geraten, und es braucht
-keine gehaltene Zieltaste.
-
-CL_WatchDamage weiter oben bleibt als Rueckfall fuer einen Server, der das
-Ereignis nicht kennt: dort ist der Schaden die Differenz aus den beiden
-Feldern, die den Treffer umschliessen. Meldet sich das Ereignis, uebernimmt es.
-====================
-*/
-static void CL_WatchDamageEvents( void ) {
-	static int			lastEvent[MAX_GENTITIES];
-	const entityState_t	*es;
-	vec3_t				origin;
-	int					i, event;
-	qboolean			world;
-
-	if ( !cl_damagePlums->integer || !cl.snap.valid || clc.demoplaying ) {
-		return;
-	}
-
-	for ( i = 0; i < cl.snap.numEntities; i++ ) {
-		es = &cl.parseEntities[( cl.snap.parseEntitiesNum + i ) & ( MAX_PARSE_ENTITIES - 1 )];
-		if ( es->number < 0 || es->number >= MAX_GENTITIES ) {
-			continue;
-		}
-		event = ( es->eType >= ET_EVENTS ? es->eType - ET_EVENTS : es->event ) & ~EV_EVENT_BITS;
-
-		// Dasselbe Ereignis auf derselben Entitaet wie zuletzt ist dasselbe
-		// Ereignis - sonst zaehlte ein Treffer so oft, wie er in Schnappschuessen
-		// steht.
-		if ( event != EV_DAMAGEPLUM ) {
-			lastEvent[es->number] = 0;
-			continue;
-		}
-		if ( lastEvent[es->number] == event + 1 ) {
-			continue;
-		}
-		lastEvent[es->number] = event + 1;
-
-		if ( es->time <= 0 ) {
-			continue;
-		}
-		damagePlumFromServer = qtrue;
-
-		world = qfalse;
-		VectorClear( origin );
-		if ( cl_damagePlums->integer == 1 ) {
-			VectorCopy( es->pos.trBase, origin );
-			origin[2] += 42.0f;		// ueber den Kopf, nicht in die Brust
-			world = qtrue;
-		}
-		CL_AddDamagePlum( es->time, origin, world );
-	}
 }
 
 /*
@@ -2616,10 +2546,8 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
 	CL_DrawItemTimers();
 	CL_DrawBotLabels();
 
-	// Erst das Ereignis des Servers - das ist der gute Weg und schaltet den
-	// Rueckfall ab -, dann der Rueckfall, dann zeichnen: so erscheint eine
-	// neue Zahl noch in demselben Bild.
-	CL_WatchDamageEvents();
+	// Erst nachsehen, ob ein Treffer dazugekommen ist, dann alle offenen
+	// Zahlen zeichnen - so erscheint eine neue noch in demselben Bild.
 	CL_WatchDamage();
 	CL_DrawDamagePlums();
 

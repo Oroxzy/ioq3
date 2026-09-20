@@ -454,20 +454,7 @@ typedef enum {
 	EV_TAUNT_FOLLOWME,
 	EV_TAUNT_GETFLAG,
 	EV_TAUNT_GUARDBASE,
-	EV_TAUNT_PATROL,
-
-	// Wieviel ein Treffer angerichtet hat, an den Schuetzen allein. Hinten
-	// angehaengt, damit sich keine bestehende Nummer verschiebt - die stecken
-	// in jeder Aufzeichnung und in jedem fremden Modul.
-	//
-	// Die Menge steht in s.time, das Opfer in s.otherEntityNum, die Waffe in
-	// s.generic1, und der Ort ist der des Ereignisses selbst. Der Weg ueber ein
-	// Ereignis statt ueber persistant[] hat zwei Gruende: dort ist kein Platz
-	// mehr (sechzehn Sechzehn-Bit-Felder, alle vergeben), und vor allem traegt
-	// ein Ereignis den Schaden je Treffer statt nur den Rest des zuletzt
-	// Getroffenen - erst damit stimmt die Schrotflinte, und erst damit weiss
-	// der Klient ueberhaupt, WEN er getroffen hat.
-	EV_DAMAGEPLUM
+	EV_TAUNT_PATROL
 
 } entity_event_t;
 
