@@ -2213,16 +2213,34 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		// und nicht, wie sehr wir seiner Richtung trauen.
 		if ( grounded && pace > 1.0f && time > 0.0f ) {
 			vec3_t	padEnd, launch;
-			float	share;
+			float	share, reach, contact;
 
-			padEnd[0] = entity->pos.trBase[0] + motion[0] * time;
-			padEnd[1] = entity->pos.trBase[1] + motion[1] * time;
+			// Gesucht wird entlang des GEDAEMPFTEN Laufs, also genau so weit,
+			// wie diese Vorhersage dem Ziel ohnehin zutraut.
+			//
+			// Der erste Wurf nahm die volle Strecke, mit der Begruendung, die
+			// Daempfung betreffe die Richtung und nicht das Tempo. Nachgemessen
+			// war das falsch herum gedacht: von fuenf so gefundenen Wuerfen
+			// waren vier Fehlalarme - der Bot kreuzte das Feld nie, er blieb
+			// unten -, und die Gruppe verschlechterte sich von rund 390 auf 486
+			// Einheiten mittleren Fehler. Die Daempfung sagt eben doch das
+			// Richtige: dass der Bot da vielleicht gar nicht hingeht. Der eine
+			// echte Wurf wurde auf 33 Einheiten getroffen, es lohnt sich also -
+			// aber nur, wo die Vorhersage den Weg dorthin auch wirklich glaubt.
+			reach = CL_AimAssistSideways( time ) * CL_AimAssistTrust( entity, time )
+				* CL_AimAssistTune( weapon, time, pace );
+			padEnd[0] = entity->pos.trBase[0] + motion[0] * reach;
+			padEnd[1] = entity->pos.trBase[1] + motion[1] * reach;
 			padEnd[2] = entity->pos.trBase[2];
-			if ( CL_AimAssistJumpPad( entity->pos.trBase, padEnd, mins, maxs, &share, launch ) ) {
-				float	rise = time * ( 1.0f - share );		// was nach dem Wurf bleibt
+			// Die Zeit bis zum Feld richtet sich nach dem wirklichen Tempo - das
+			// Ziel laeuft, wie es laeuft. Nur WIE WEIT wir ihm auf seiner Linie
+			// folgen, ist eine Frage des Zutrauens.
+			if ( CL_AimAssistJumpPad( entity->pos.trBase, padEnd, mins, maxs, &share, launch )
+				&& ( contact = share * reach ) < time ) {
+				float	rise = time - contact;			// was nach dem Wurf bleibt
 
-				predicted[0] = entity->pos.trBase[0] + motion[0] * time * share + launch[0] * rise;
-				predicted[1] = entity->pos.trBase[1] + motion[1] * time * share + launch[1] * rise;
+				predicted[0] = entity->pos.trBase[0] + motion[0] * contact + launch[0] * rise;
+				predicted[1] = entity->pos.trBase[1] + motion[1] * contact + launch[1] * rise;
 				predicted[2] = entity->pos.trBase[2] + launch[2] * rise
 					- 0.5f * gravity * rise * rise;
 
