@@ -367,14 +367,24 @@ statt stillschweigend Felder zu lesen, die es damals nicht gab.
 | `aim pick:` | jede Änderung der Zielwahl mit dem Beitrag **jeder** Priorität und den Punktzahlen der übrigen Bewerber |
 | `aim skip:` | warum die Hilfe **nichts** tat: kein Ziel, kein Durchkommen, eigener Splash |
 | `aim learn:` | eine gemessene Probe: wie weit der Bot wirklich lief gegen die Erwartung |
-| `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame |
+| `aim drop:` | warum eine Probe **nicht** zählte: Ziel in der Luft, kaum Bewegung, Vorhersage von Geometrie beschnitten, schon beobachtet, Ziel weg, teleportiert, kein Snapshot im Ankunfts-Frame, landet zu spät zum Laufen |
 | `aim hold:` | jede Sperre des Abzugs mit Grund und Entfernung, und wie lange sie hielt |
 | `land` auf der Schusszeile | wann die Fußlage des Ziels wieder erwartet wird, oder −1 |
 | `aim tune:` | die **Korrektur**, die auf die Lernzeile darüber folgt: welches Fach, und mit `was`/`now` sein Wert davor und danach |
 | `aim table:` | der **Abzug** der ganzen Vorhalte-Tabelle, vom Befehl `aimtune` und beim Verbindungsende |
+| `aim land:` | eine gemessene **Landeprobe**: der Lauf ab dem Landepunkt entlang der Anflugrichtung, gegen die Erwartung des Lande-Fachs; `pace` wie angekommen, `run` wie geführt (nach der 320er-Kappe), `fall`/`rest` in ms, `landed` zählt diese Proben getrennt |
+| `aim landtable:` | der Abzug der Lande-Fächer, zusammen mit `aim table:` |
 | `aim rate:` | der Abzug der Trefferquoten-Tabelle, vom Befehl `aimrate` — je Fach Schüsse, Treffer, das Paar für aufsetzende Ziele und wieviel es sagen darf |
 | `aim rated:` | ein abgeschlossener Schuss: Waffe, Entfernungsfach, getroffen oder daneben |
 | `aim impact:` / `aim missile:` | jeder Einschlag mit den Stellungen aller Bots, jedes Geschoss beim Start |
+
+Fassung 9 hat dem Aufsetzen eigene Fächer gegeben. Ein Ziel, das vor dem
+Einschlag landet, wurde bis dahin mit seiner Fluggeschwindigkeit weitergeführt
+und vom Läufer-Fach gedämpft, das nie von solchen Schüssen gelernt hatte. Jetzt
+wird die Geschwindigkeit auf 320 gekappt, der Restlauf kommt aus `aim land:`-
+Proben, und `tune` auf der Schusszeile ist bei `land` ≥ 0 dieser Lande-Faktor.
+In `aimtune.cfg` stehen die Fächer auf `land`-Zeilen, die ein älterer Bau
+überliest.
 
 Fassung 7 hat die beiden `aim tune:`-Arten getrennt. Bis dahin sahen eine
 Korrektur und ein Abzug der ganzen Tabelle gleich aus, und kein Feld sagte,

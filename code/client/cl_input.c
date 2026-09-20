@@ -891,7 +891,17 @@ in seconds, and the learner tunes it from what the bots really do.
 // anderen Zeilen cl.snap.serverTime. Fassung sieben stand unveraendert, waehrend
 // sich die Zeilen darunter mehrfach geaendert haben; das soll nicht wieder
 // passieren.
-#define AIM_LOG_VERSION	8
+//
+// Neun: das Aufsetzen hat eigene Faecher bekommen, und das Protokoll sagt es.
+// "aim land:" ist eine Lernprobe der Landegruppe - der Lauf ab dem Landepunkt
+// entlang der Anflugrichtung, mit "pace" wie angekommen und "run" wie gefuehrt
+// (nach der Kappe), "fall" und "rest" in Millisekunden, und einem eigenen
+// Zaehler "landed", damit "learned" auf "aim learn:" lueckenlos bleibt.
+// "aim landtable:" ist der Abzug dieser Faecher. "aim drop:" kennt den Grund
+// "lands too late to run". Und "tune" auf der Schusszeile ist bei "land" >= 0
+// der Lande-Faktor an der Restzeit, nicht mehr der Laeufer-Faktor: der wurde
+// fuer diese Schuesse nie angewandt, und die Spalte soll sagen, was galt.
+#define AIM_LOG_VERSION	9
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 
@@ -1000,6 +1010,22 @@ typedef struct {
 } aimTune_t;
 
 static aimTune_t	aimTune[WP_NUM_WEAPONS][AIM_BANDS][AIM_SPEEDS];
+
+// What a target does after it has come down. Boxes of their own, because it is
+// a thing of its own: a landing target used to be led with the runners' factor
+// at the airborne speed it arrived with, and the record put that group at nine
+// per cent hits against eighteen for a runner and fifty for a target that stays
+// in the air. Two reasons, both in bg_pmove.c. The game takes thirty per cent
+// of the speed off per frame and gives back at most g_speed, so a pad flight's
+// seven hundred is a run's three hundred and twenty two frames after touchdown.
+// And a bot that lands does not run its line on: measured, the run after
+// touchdown is nought to half of what a runner does, not one. So the box is
+// keyed on the time left after touchdown, and an untouched one starts well
+// under one instead of at it. The runners' boxes are not asked for this group
+// any more, and were never taught by it.
+#define AIM_RUN_SPEED		320.0f	// g_speed: the most a run on the ground gets
+#define AIM_LAND_START		0.4f	// the factor an untouched landing box carries
+static aimTune_t	aimLand[WP_NUM_WEAPONS][AIM_BANDS];
 static qboolean		aimTuneLoaded;
 static qboolean		aimTuneDirty;
 static int			aimTuneWritten;		// when the table last reached the disk
@@ -1075,7 +1101,19 @@ static void CL_AimAssistTuneLoad( void ) {
 		if ( sscanf( line, "format %i", &format ) == 1 && format != AIM_TUNE_FORMAT ) {
 			break;			// written by an older build, its boxes mean something else
 		}
-		if ( *line != '/' && sscanf( line, "%i %i %i %f %f %f %i",
+		// The landing boxes come on marked lines of their own, so that a build
+		// from before them reads past them instead of into the wrong box.
+		if ( sscanf( line, "land %i %i %f %f %f %i",
+				&weapon, &band, &sum, &weight, &square, &samples ) == 6
+			&& weapon > WP_NONE && weapon < WP_NUM_WEAPONS
+			&& band >= 0 && band < AIM_BANDS
+			&& weight >= 0.0f && square >= 0.0f && samples >= 0 ) {
+			t = &aimLand[weapon][band];
+			t->sum = sum;
+			t->weight = weight;
+			t->square = square;
+			t->samples = samples;
+		} else if ( *line != '/' && sscanf( line, "%i %i %i %f %f %f %i",
 				&weapon, &band, &pace, &sum, &weight, &square, &samples ) == 7
 			&& weapon > WP_NONE && weapon < WP_NUM_WEAPONS
 			&& band >= 0 && band < AIM_BANDS && pace >= 0 && pace < AIM_SPEEDS
@@ -1099,7 +1137,7 @@ static void CL_AimAssistTuneLoad( void ) {
 }
 
 static void CL_AimAssistTuneSave( void ) {
-	char		text[8192];
+	char		text[16384];
 	aimTune_t	*t;
 	int			weapon, band, pace;
 
@@ -1109,7 +1147,8 @@ static void CL_AimAssistTuneSave( void ) {
 
 	Com_sprintf( text, sizeof( text ),
 		"format %i\n// what the aim assist has measured about its own lead.\n"
-		"// weapon band pace sum weight square samples\n", AIM_TUNE_FORMAT );
+		"// weapon band pace sum weight square samples\n"
+		"// land weapon band sum weight square samples - the run after touchdown\n", AIM_TUNE_FORMAT );
 
 	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
 		for ( band = 0; band < AIM_BANDS; band++ ) {
@@ -1125,6 +1164,17 @@ static void CL_AimAssistTuneSave( void ) {
 			}
 		}
 	}
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( band = 0; band < AIM_BANDS; band++ ) {
+			t = &aimLand[weapon][band];
+			if ( !t->samples ) {
+				continue;
+			}
+			Q_strcat( text, sizeof( text ), va( "land %i %i %.4f %.4f %.1f %i\t// %s %.1fs after touchdown\n",
+				weapon, band, t->sum, t->weight, t->square, t->samples,
+				CL_AimAssistWeaponName( weapon ), CL_AimAssistBandStart( band ) ) );
+		}
+	}
 
 	FS_WriteFile( AIM_TUNE_FILE, text, strlen( text ) );
 	aimTuneDirty = qfalse;
@@ -1135,6 +1185,13 @@ static float CL_AimAssistBoxFactor( int weapon, int band, int pace ) {
 	const aimTune_t	*t = &aimTune[weapon][band][pace];
 
 	return ( t->sum + AIM_TUNE_PRIOR ) / ( t->weight + AIM_TUNE_PRIOR );
+}
+
+// The same for a landing box, whose untouched answer is not one
+static float CL_AimAssistLandBoxFactor( int weapon, int band ) {
+	const aimTune_t	*t = &aimLand[weapon][band];
+
+	return ( t->sum + AIM_TUNE_PRIOR * AIM_LAND_START ) / ( t->weight + AIM_TUNE_PRIOR );
 }
 
 // Where a value falls between the middles of its own band and the next one,
@@ -1204,6 +1261,43 @@ static float CL_AimAssistTune( int weapon, float lead, float speed ) {
 
 /*
 =================
+CL_AimAssistLandTune
+
+How much of a run to expect after touchdown, as a share of the capped straight
+run over the time left. One axis, the time left, blended like the other table;
+no speed axis, because after the cap every landing runs at much the same speed
+and the group is thin enough as it is. Nought is a real answer here - a bot
+that stops where it lands - so the floor of the runners' clamp does not apply.
+=================
+*/
+static float CL_AimAssistLandTune( int weapon, float rest ) {
+	float	over, here, there;
+	int		band, next;
+
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || rest <= 0.0f ) {
+		return AIM_LAND_START;
+	}
+
+	band = CL_AimAssistBand( rest );
+	here = CL_AimAssistBandCentre( band );
+	next = band;
+	if ( rest < here && band > 0 ) {
+		next = band - 1;
+	} else if ( rest > here && band < AIM_BANDS - 1 ) {
+		next = band + 1;
+	}
+	there = CL_AimAssistBandCentre( next );
+	over = CL_AimAssistBlend( rest, here, there, band, next, &next );
+
+	return Com_Clamp( 0.0f, 2.0f, CL_AimAssistLandBoxFactor( weapon, band ) * ( 1.0f - over )
+		+ CL_AimAssistLandBoxFactor( weapon, next ) * over );
+}
+
+/*
+=================
 CL_AimAssistScatter
 
 How far the shot is expected to land from the target, in units, after the lead
@@ -1240,20 +1334,9 @@ so the table can follow an opponent that changes without throwing away an
 evening's worth of shots.
 =================
 */
-static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
-		float base, float aimed, float actual, float aside, float weight ) {
-	aimTune_t	*t;
-	float		ratio, along, miss;
-
-	if ( !aimTuneLoaded ) {
-		CL_AimAssistTuneLoad();
-	}
-	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f
-		|| base <= 1.0f || weight <= 0.0f ) {
-		return;
-	}
-
-	t = &aimTune[weapon][CL_AimAssistBand( lead )][CL_AimAssistSpeedBand( speed )];
+static void CL_AimAssistBoxUpdate( aimTune_t *t, float base, float aimed, float actual,
+		float aside, float weight ) {
+	float	ratio, along, miss;
 
 	// The factor is what the model has to be multiplied by, so it has to be
 	// measured against the model - the expectation before this box touched it.
@@ -1277,6 +1360,35 @@ static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
 	t->square = t->square * AIM_TUNE_DECAY + miss * miss * weight;
 	t->samples++;
 	aimTuneDirty = qtrue;
+}
+
+static void CL_AimAssistTuneUpdate( int weapon, float lead, float speed,
+		float base, float aimed, float actual, float aside, float weight ) {
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || lead <= 0.0f
+		|| base <= 1.0f || weight <= 0.0f ) {
+		return;
+	}
+
+	CL_AimAssistBoxUpdate( &aimTune[weapon][CL_AimAssistBand( lead )][CL_AimAssistSpeedBand( speed )],
+		base, aimed, actual, aside, weight );
+}
+
+// One landing sample into the box for the time it had left after touchdown
+static void CL_AimAssistLandUpdate( int weapon, float rest,
+		float base, float aimed, float actual, float aside, float weight ) {
+	if ( !aimTuneLoaded ) {
+		CL_AimAssistTuneLoad();
+	}
+	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS || rest <= 0.0f
+		|| base <= 1.0f || weight <= 0.0f ) {
+		return;
+	}
+
+	CL_AimAssistBoxUpdate( &aimLand[weapon][CL_AimAssistBand( rest )],
+		base, aimed, actual, aside, weight );
 }
 
 
@@ -1362,6 +1474,24 @@ void CL_AimAssistTuneDump( void ) {
 					CL_AimAssistScatter( weapon, CL_AimAssistBandCentre( band ), CL_AimAssistSpeedCentre( pace ) ),
 					CL_AimAssistHitRadius( weapon ), t->samples, CL_AimAssistStamp() );
 			}
+		}
+	}
+
+	// and the landing boxes, on a line of their own kind: their columns are
+	// not the runners' columns, and a reader of the table must not mix them
+	for ( weapon = WP_NONE + 1; weapon < WP_NUM_WEAPONS; weapon++ ) {
+		for ( band = 0; band < AIM_BANDS; band++ ) {
+			t = &aimLand[weapon][band];
+			if ( !t->samples ) {
+				continue;
+			}
+			boxes++;
+			Com_Printf( "aim landtable: %s band %i from %.1f factor %.2f scatter %.0f reach %.0f samples %i%s\n",
+				CL_AimAssistWeaponName( weapon ), band, CL_AimAssistBandStart( band ),
+				CL_AimAssistLandTune( weapon, CL_AimAssistBandCentre( band ) ),
+				// negative until the box can speak, as CL_AimAssistScatter has it
+				t->samples >= 6 && t->weight > 0.0f ? sqrt( t->square / t->weight ) : -1.0f,
+				CL_AimAssistHitRadius( weapon ), t->samples, CL_AimAssistStamp() );
 		}
 	}
 
@@ -1947,7 +2077,7 @@ static float CL_AimAssistLanding( const entityState_t *entity, const vec3_t moti
 static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
-	float		gravity, sideways, floor, pace, fall, rest, landing;
+	float		gravity, sideways, floor, pace, fall, rest, landing, scale;
 	trace_t		trace;
 	qboolean	grounded, floats, stopped, snapped, walks;
 	int			i;
@@ -1983,18 +2113,20 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	// course is kept, the rise and the fall included. Swimming and flying can
 	// turn, and are damped like running.
 	//
-	// Two of those three do nothing for a landing target, and it is worth
-	// saying so rather than letting the call list imply otherwise. The turn
-	// damping is measured by comparing two snapshots' velocities, and a target
-	// in the air has no turn to measure, so it answers one whatever is asked.
-	// The learned factor is read at the band of the leftover time, but no
-	// airborne shot ever teaches that table - those samples are dropped on
-	// purpose - so it answers with the prior. What actually shortens the guess
-	// is the hold time, and that is the one that should.
+	// A target that comes down on the way is two things in turn: the arc up to
+	// touchdown, exact and taken whole, and then a run - but not the flight
+	// going on at the speed it flew. The game caps a run at g_speed within two
+	// frames of touchdown, so the flown speed is scaled down to the cap; and
+	// what a bot does with the run after landing is a behaviour of its own,
+	// measured in its own box, not the runners' box at a speed no runner has.
+	// That box starts well under one, because the record says so: the run
+	// after a landing was nought to half of a runner's. Neither the turn
+	// damping nor the runners' factor is asked here - the first has no turn to
+	// measure on a target in the air, and the second was never taught by one.
 	if ( fall >= 0.0f ) {
 		rest = time - fall;
-		sideways = fall + CL_AimAssistSideways( rest ) * CL_AimAssistTrust( entity, rest )
-			* CL_AimAssistTune( weapon, rest, pace );
+		scale = pace > AIM_RUN_SPEED ? AIM_RUN_SPEED / pace : 1.0f;		// flown speed down to the cap
+		sideways = fall + scale * CL_AimAssistSideways( rest ) * CL_AimAssistLandTune( weapon, rest );
 	} else if ( !grounded && !floats ) {
 		sideways = time;
 	} else {
@@ -2278,13 +2410,20 @@ CL_AimAssistImpact
 The point on the target the shot is meant to reach. A splash weapon at a
 target on the floor goes for the feet: a near miss still bursts on the ground
 under it, where a miss past the body would fly on. Anything else, and anything
-at a target in the air, goes for the body.
+at a target still in the air when the shot gets there, goes for the body.
+
+"On the floor" is asked about the arrival, not about now: landed says the
+prediction has set the point down on a floor by the time the shot reaches it.
+Choosing by the footing of the moment aimed twenty-four units too high at every
+target that came down on the way, and a rocket that flew through that point
+burst behind the target instead of beside it.
 =================
 */
-static void CL_AimAssistImpact( const entityState_t *entity, int weapon, const vec3_t predicted, vec3_t impact ) {
+static void CL_AimAssistImpact( const entityState_t *entity, int weapon, const vec3_t predicted,
+		qboolean landed, vec3_t impact ) {
 	VectorCopy( predicted, impact );
 	if ( ( weapon == WP_ROCKET_LAUNCHER || weapon == WP_GRENADE_LAUNCHER || weapon == WP_BFG )
-		&& entity->groundEntityNum != ENTITYNUM_NONE ) {
+		&& ( entity->groundEntityNum != ENTITYNUM_NONE || landed ) ) {
 		impact[2] -= 20.0f;
 	} else {
 		impact[2] += CL_AimAssistBodyHeight( entity );
@@ -2456,12 +2595,13 @@ view and meets the box at its near face, and it is spawned a prestep along,
 which the game counts as already flown. A grenade flies its arc.
 =================
 */
-static float CL_AimAssistFlight( const entityState_t *entity, int weapon, const vec3_t eye, const vec3_t predicted ) {
+static float CL_AimAssistFlight( const entityState_t *entity, int weapon, const vec3_t eye,
+		const vec3_t predicted, qboolean landed ) {
 	vec3_t	impact, aim, offset;
 	float	speed, time;
 
 	speed = CL_AimAssistProjectileSpeed( weapon );
-	CL_AimAssistImpact( entity, weapon, predicted, impact );
+	CL_AimAssistImpact( entity, weapon, predicted, landed, impact );
 
 	if ( CL_AimAssistArcWeapon( weapon ) ) {
 		CL_AimAssistArc( eye, impact, aim, &time );
@@ -2525,7 +2665,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		for ( i = 1; i < 60; i++ ) {
 			lead = i * frame;
 			CL_AimAssistPredict( entity, weapon, lead, targetOrigin, &blocked, &pinned );
-			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
+			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin, pinned );
 			if ( flight <= lead ) {
 				break;
 			}
@@ -2534,8 +2674,8 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 		// between shots: the unrounded time, centred on the frames above,
 		// settled by repeating distance over speed
 		for ( i = 0; i < 5; i++ ) {
-			CL_AimAssistPredict( entity, weapon, lead, targetOrigin, NULL, NULL );
-			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
+			CL_AimAssistPredict( entity, weapon, lead, targetOrigin, &blocked, &pinned );
+			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin, pinned );
 			lead = Com_Clamp( 0.0f, 3.0f, flight + frame * 0.5f );
 		}
 		CL_AimAssistPredict( entity, weapon, lead, targetOrigin, &blocked, &pinned );
@@ -2572,7 +2712,7 @@ static void CL_AimAssistTargetPoint( const entityState_t *entity, const vec3_t v
 
 	// the body or the feet, and for a grenade the point to aim at so that
 	// its arc comes down there
-	CL_AimAssistImpact( entity, weapon, targetOrigin, impact );
+	CL_AimAssistImpact( entity, weapon, targetOrigin, pinned, impact );
 	if ( CL_AimAssistArcWeapon( weapon ) ) {
 		CL_AimAssistArc( viewOrigin, impact, targetOrigin, NULL );
 	} else {
@@ -4072,7 +4212,11 @@ static void CL_AimAssistLogShot( const entityState_t *entity, int weapon, const 
 		pace, VectorLength( cl.snap.ps.velocity ), cl.snap.ps.clientNum,
 		exact ? 1 : 0,
 		CL_AimAssistHold(), CL_AimAssistCrouched( entity ) ? 1 : 0,
-		CL_AimAssistTune( weapon, lead, pace ),
+		// the factor the model gives at this flight: the landing box at the
+		// time left after touchdown when the target is due down on the way,
+		// the runners' box otherwise. On a fallback shot (fall 1) neither was
+		// applied, and the value is what it would have been.
+		touchdown >= 0.0f ? CL_AimAssistLandTune( weapon, lead - touchdown ) : CL_AimAssistTune( weapon, lead, pace ),
 		CL_AimAssistScatter( weapon, lead, pace ),
 		fallback ? 1 : 0, cl.snap.ps.groundEntityNum == ENTITYNUM_NONE ? 1 : 0,
 		touchdown >= 0.0f ? (int)( touchdown * 1000.0f ) : -1,
@@ -4109,11 +4253,15 @@ typedef struct {
 	float	rate;			// its sideways speed after the trust of the moment
 	float	speed;			// and before it, which is the axis the table is kept on
 	float	lead;			// flight time, a whole number of frames
+	qboolean landed;		// a landing sample: origin is the landing point, along the heading flown in on
+	float	fall;			// when it was due to touch down, from the shot
+	float	rest;			// the flight left after that, which is the landing boxes' axis
 } aimPending_t;
 
 static aimPending_t	aimPending[AIM_PENDING];
 static int			aimPendingNum;
 static int			aimLearned;		// shots learned from so far
+static int			aimLanded;		// landing samples learned from so far, counted apart
 
 // Warum ein Schuss dem Lerner nichts beibringt. Fuellt sich die Tabelle nicht,
 // steht hier, woran es liegt.
@@ -4124,21 +4272,132 @@ static void CL_AimAssistDrop( int weapon, const char *why ) {
 	}
 }
 
+// One open sample per target at a time. A stream of plasma at one bot watches
+// the same run over and over, and would step the table once per bolt for what
+// is one observation.
+static qboolean CL_AimAssistWatching( int target ) {
+	int	i;
+
+	for ( i = 0; i < AIM_PENDING; i++ ) {
+		if ( aimPending[i].arrival && aimPending[i].target == target
+			&& aimPending[i].arrival - cl.snap.serverTime <= 5000 ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+/*
+=================
+CL_AimAssistRememberLanding
+
+A target in the air used to teach nothing: a jump says nothing about how long a
+bot holds a line on the ground. True - and it left the one group the record
+scored worst, a target that comes down before the shot arrives, with a
+prediction that nothing could correct. What that group does after touchdown is
+measured here, into boxes of its own: the run is counted from the landing point,
+along the heading it flew in on, against the capped speed a run can have, over
+the time it had left. A target still in the air on arrival teaches nothing
+still; its arc is exact, and there is no run to measure.
+=================
+*/
+static void CL_AimAssistRememberLanding( const entityState_t *entity, int weapon, float lead,
+		const vec3_t aimed ) {
+	aimPending_t	*p;
+	vec3_t			motion, mins, maxs, origin, offset, along;
+	float			gravity, fall, floor, rest, pace, run, frame, used, unclipped;
+
+	if ( CL_AimAssistFloats( entity ) ) {
+		CL_AimAssistDrop( weapon, "target in the air" );
+		return;
+	}
+
+	// Solved at the lead the shot was really steered with, exactly as the
+	// prediction solved it: the geometry test below compares against that
+	// point, and half a frame of rounding moves the expectation by more than
+	// the test's tolerance. The rounding to the frame grid comes after, as
+	// it does for a runner.
+	CL_AimAssistVelocity( entity, motion );
+	CL_AimAssistHull( entity, mins, maxs );
+	gravity = cl.snap.ps.gravity > 0 ? cl.snap.ps.gravity : DEFAULT_GRAVITY;
+	floor = 0.0f;
+	fall = CL_AimAssistLanding( entity, motion, gravity, lead, mins, maxs, &floor );
+	if ( fall < 0.0f ) {
+		CL_AimAssistDrop( weapon, "target in the air" );
+		return;
+	}
+
+	pace = sqrt( motion[0] * motion[0] + motion[1] * motion[1] );
+	if ( pace < 1.0f ) {
+		CL_AimAssistDrop( weapon, "lands too late to run" );
+		return;
+	}
+	run = pace > AIM_RUN_SPEED ? AIM_RUN_SPEED : pace;
+	along[0] = motion[0] / pace;
+	along[1] = motion[1] / pace;
+	along[2] = 0.0f;
+	origin[0] = entity->pos.trBase[0] + motion[0] * fall;
+	origin[1] = entity->pos.trBase[1] + motion[1] * fall;
+	origin[2] = floor;
+
+	// As for a runner: a run that a wall or a ledge cut short never aimed at
+	// the run it expected, so where the target got to says nothing about it.
+	rest = lead - fall;
+	VectorSubtract( aimed, origin, offset );
+	offset[2] = 0.0f;
+	used = DotProduct( offset, along );
+	unclipped = run * CL_AimAssistSideways( rest ) * CL_AimAssistLandTune( weapon, rest );
+	if ( used < unclipped - 2.0f ) {
+		CL_AimAssistDrop( weapon, "prediction cut short by geometry" );
+		return;
+	}
+	if ( CL_AimAssistWatching( entity->clientNum ) ) {
+		CL_AimAssistDrop( weapon, "already watching this target" );
+		return;
+	}
+
+	// The arrival is a game frame, whichever lead was steered with, and the
+	// run is measured to that frame - so the record is kept in its terms.
+	frame = CL_AimAssistFrameTime();
+	lead = (int)( lead / frame + 0.5f ) * frame;
+	rest = lead - fall;
+	if ( rest <= 0.0f || run * rest < 40.0f ) {
+		CL_AimAssistDrop( weapon, "lands too late to run" );
+		return;
+	}
+
+	p = &aimPending[aimPendingNum++ & ( AIM_PENDING - 1 )];
+	p->target = entity->clientNum;
+	p->arrival = cl.snap.serverTime + (int)( lead * 1000.0f + 0.5f );
+	p->weapon = weapon;
+	VectorCopy( origin, p->origin );
+	VectorCopy( along, p->along );
+	p->straight = run * rest;
+	p->speed = pace;					// as it arrived - the record splits on this
+	p->base = run * CL_AimAssistSideways( rest );
+	p->expected = p->base * CL_AimAssistLandTune( weapon, rest );
+	p->rate = run;						// as it was led, after the cap
+	p->lead = lead;
+	p->landed = qtrue;
+	p->fall = fall;
+	p->rest = rest;
+}
+
 static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float lead,
 		const vec3_t aimed ) {
 	aimPending_t	*p;
 	vec3_t			motion, offset, along;
 	float			speed, frame, trust, used, unclipped;
-	int				i;
 
 	if ( !cl_aimAssistLearn->integer || CL_AimAssistProjectileSpeed( weapon ) <= 0.0f || lead <= 0.0f ) {
 		return;
 	}
 
-	// A jump says nothing about how long a bot holds a line on the ground,
-	// and its course is not damped by the hold time in the first place.
+	// A jump says nothing about how long a bot holds a line on the ground -
+	// but what it does after it comes down is worth knowing, and that goes to
+	// boxes of its own.
 	if ( entity->groundEntityNum == ENTITYNUM_NONE ) {
-		CL_AimAssistDrop( weapon, "target in the air" );
+		CL_AimAssistRememberLanding( entity, weapon, lead, aimed );
 		return;
 	}
 
@@ -4169,15 +4428,9 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 		return;
 	}
 
-	// One open sample per target at a time. A stream of plasma at one bot
-	// watches the same run over and over, and would step the hold time once
-	// per bolt for what is one observation.
-	for ( i = 0; i < AIM_PENDING; i++ ) {
-		if ( aimPending[i].arrival && aimPending[i].target == entity->clientNum
-			&& aimPending[i].arrival - cl.snap.serverTime <= 5000 ) {
-			CL_AimAssistDrop( weapon, "already watching this target" );
-			return;
-		}
+	if ( CL_AimAssistWatching( entity->clientNum ) ) {
+		CL_AimAssistDrop( weapon, "already watching this target" );
+		return;
 	}
 
 	// the arrival is a game frame, whichever lead was steered with
@@ -4199,6 +4452,22 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 	p->expected = p->base * CL_AimAssistTune( weapon, lead, speed );
 	p->rate = speed * trust;
 	p->lead = lead;
+	p->landed = qfalse;
+	p->fall = 0.0f;
+	p->rest = 0.0f;
+}
+
+// Put the table on disk while the game is still running. It used to be written
+// only when the map ended, so a game that stopped any other way took the whole
+// evening's measuring with it - and a box fills a handful of samples at a time,
+// so an evening is what it is. The file is a few hundred bytes and a sample
+// arrives a few times a minute; a quarter of a minute between writes is more
+// than enough caution for that.
+static void CL_AimAssistTuneSaveSoon( void ) {
+	if ( cl.serverTime - aimTuneWritten > 15000 || aimTuneWritten > cl.serverTime ) {
+		aimTuneWritten = cl.serverTime;
+		CL_AimAssistTuneSave();
+	}
 }
 
 static void CL_AimAssistLearn( void ) {
@@ -4265,6 +4534,33 @@ static void CL_AimAssistLearn( void ) {
 		expected = p->expected;
 		error = Com_Clamp( -1.0f, 1.0f, ( actual - expected ) / p->straight );
 		weight = p->straight / ( p->straight + lateral );
+
+		// A landing sample goes to the landing boxes, and says so on one line
+		// of its own kind: what it measures is the run after touchdown, from
+		// the landing point along the heading flown in on, and none of the
+		// runners' columns mean the same thing for it.
+		if ( p->landed ) {
+			band = CL_AimAssistBand( p->rest );
+			before = CL_AimAssistLandBoxFactor( p->weapon, band );
+			CL_AimAssistLandUpdate( p->weapon, p->rest, p->base, expected, actual, lateral, weight );
+			CL_AimAssistTuneSaveSoon();
+			aimLanded++;
+
+			// "pace" is the speed it arrived with and "run" the one it was led
+			// at after the cap - the first is what the record splits on
+			info = cl.gameState.stringData + cl.gameState.stringOffsets[CS_PLAYERS + p->target];
+			Com_Printf( "aim land: %s target %s ran %.0f of %.0f expected %.0f aside %.0f"
+				" error %.2f weight %.2f pace %.0f run %.0f fall %i rest %i band %i was %.2f now %.2f"
+				" factor %.2f samples %i landed %i frame %i\n",
+				CL_AimAssistWeaponName( p->weapon ), Info_ValueForKey( info, "n" ),
+				actual, p->straight, expected, lateral, error, weight, p->speed, p->rate,
+				(int)( p->fall * 1000.0f ), (int)( p->rest * 1000.0f ), band,
+				before, CL_AimAssistLandBoxFactor( p->weapon, band ),
+				CL_AimAssistLandTune( p->weapon, p->rest ), aimLand[p->weapon][band].samples,
+				aimLanded, cl.snap.serverTime );
+			continue;
+		}
+
 		// Into the box for this weapon at this flight time, and nowhere else.
 		// There used to be a single hold time that every shot moved, and that
 		// was wrong: a run of long rockets pulled it down and shortened the
@@ -4282,18 +4578,7 @@ static void CL_AimAssistLearn( void ) {
 
 		CL_AimAssistTuneUpdate( p->weapon, p->lead, p->speed, p->base, expected, actual,
 			lateral, weight );
-
-		// Put it on disk while the game is still running. Until now the table
-		// was only written when the map ended, so a game that stopped any
-		// other way took the whole evening's measuring with it - and a box
-		// fills a handful of samples at a time, so an evening is what it is.
-		// The file is a few hundred bytes and a sample arrives a few times a
-		// minute; a quarter of a minute between writes is more than enough
-		// caution for that.
-		if ( cl.serverTime - aimTuneWritten > 15000 || aimTuneWritten > cl.serverTime ) {
-			aimTuneWritten = cl.serverTime;
-			CL_AimAssistTuneSave();
-		}
+		CL_AimAssistTuneSaveSoon();
 
 		hold = CL_AimAssistHold();
 		aimLearned++;
@@ -4771,7 +5056,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		// fallback shot's damage lands outside its own window and books as a
 		// miss, which made the worst-hitting group of shots look worse still.
 		if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f ) {
-			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin );
+			flight = CL_AimAssistFlight( entity, weapon, viewOrigin, targetOrigin, qfalse );
 			if ( flight < 0.0f ) {
 				flight = 0.0f;		// point blank: it is there the moment it leaves
 			}
