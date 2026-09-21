@@ -163,6 +163,7 @@ typedef struct bot_state_s
 	float ltime;									//local bot time
 	float entergame_time;							//time the bot entered the game
 	float ltg_time;									//long term goal time
+	float rethink_time;								//Werkbank: fruehestens dann wegen Schaden neu planen
 	float nbg_time;									//nearby goal time
 	float respawn_time;								//time the bot takes to respawn
 	float respawnchat_time;							//time the bot started a chat during respawn

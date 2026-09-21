@@ -2193,6 +2193,49 @@ BotAggression
 */
 /*
 ==================
+BotHurtRethink
+
+Wer Schaden nimmt, plant neu.
+
+Ein Bot waehlt sein Fernziel und sperrt es fuer zwanzig Sekunden
+(ai_dmnet.c: ltg_time = FloatTime() + 20). Neu gewaehlt wird nur, wenn die
+Sperre ablaeuft, das Ziel erreicht ist oder die Bewegung scheitert - Schaden
+setzt sie nirgends zurueck. Ein Bot, der von hundert auf dreissig faellt,
+laeuft also bis zu zwanzig Sekunden weiter zu dem Ziel, das sein gesundes Ich
+ausgesucht hat, meist zu einer Waffe statt zur Gesundheit.
+
+Dabei sind die Gewichte in den Botdateien sehr wohl von Gesundheit und
+Ruestung abhaengig - sie werden nur nicht neu ausgewertet, weil der
+Wahlvorgang gar nicht stattfindet. Es genuegt also, die Sperre zu loesen; die
+richtige Entscheidung faellt der Bot dann von allein.
+
+Fuenfundzwanzig Schaden als Schwelle: eine MG-Kugel macht sieben, ein
+Raketensplash das Vielfache. Kratzer sollen nicht jedes Mal den Plan
+umwerfen. Und hoechstens alle zwei Sekunden, sonst plant ein Bot unter
+Dauerfeuer in einem fort neu, statt irgendwo anzukommen.
+==================
+*/
+static void BotHurtRethink(bot_state_t *bs) {
+	int	lost;
+
+	if (!g_botRethink.integer) {
+		return;
+	}
+	// frisch gespawnt oder gerade gestorben: da ist nichts umzuplanen
+	if (bs->lastframe_health <= 0 || bs->inventory[INVENTORY_HEALTH] <= 0) {
+		return;
+	}
+	lost = bs->lastframe_health - bs->inventory[INVENTORY_HEALTH];
+	if (lost < 25 || bs->rethink_time > FloatTime()) {
+		return;
+	}
+	bs->rethink_time = FloatTime() + 2;
+	// dieselbe Schreibweise, mit der das Spiel die Sperre sonst loest
+	bs->ltg_time = 0;
+}
+
+/*
+==================
 BotChar
 
 Eine Charaktereigenschaft lesen - oder eine Vorgabe der Werkbank an ihre
@@ -5324,6 +5367,8 @@ void BotDeathmatchAI(bot_state_t *bs, float thinktime) {
 		BotSetTeleportTime(bs);
 		//update some inventory values
 		BotUpdateInventory(bs);
+		// Werkbank: Schaden bricht die Zielsperre
+		BotHurtRethink(bs);
 		//check out the snapshot
 		BotCheckSnapshot(bs);
 		//check for air

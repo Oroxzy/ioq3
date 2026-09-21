@@ -729,6 +729,7 @@ extern	vmCvar_t	g_botJump;
 extern	vmCvar_t	g_botFightUp;
 extern	vmCvar_t	g_botAttackSkill;
 extern	vmCvar_t	g_botCamper;
+extern	vmCvar_t	g_botRethink;
 extern	vmCvar_t	g_weaponRespawn;
 extern	vmCvar_t	g_weaponTeamRespawn;
 extern	vmCvar_t	g_synchronousClients;

@@ -68,6 +68,7 @@ vmCvar_t	g_botJump;
 vmCvar_t	g_botFightUp;
 vmCvar_t	g_botAttackSkill;
 vmCvar_t	g_botCamper;
+vmCvar_t	g_botRethink;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -189,6 +190,10 @@ static cvarTable_t		gameCvarTable[] = {
 	// Lagern ab - Lagern ist Stillstand.
 	{ &g_botAttackSkill, "g_botAttackSkill", "-1", 0, 0, qtrue },
 	{ &g_botCamper, "g_botCamper", "-1", 0, 0, qtrue },
+	// Schaden loest die Zwanzig-Sekunden-Sperre auf das Fernziel, damit ein
+	// verletzter Bot neu plant statt die Besorgung seines gesunden Ichs zu Ende
+	// zu bringen.
+	{ &g_botRethink, "g_botRethink", "0", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

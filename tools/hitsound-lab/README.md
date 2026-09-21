@@ -931,3 +931,25 @@ Lagern ist Stillstand, und Stillstand ist für diese Werkbank Gift.
 **Beides ändert, wie sich die Bots bewegen** — also das, wogegen die Vorhersage
 gemessen wird. Nach dem Einschalten braucht es eine neue Basislinie, bevor
 gegen alte Zahlen verglichen wird.
+
+**„Bots nach Treffern neu planen lassen"** (`g_botRethink`). Ein Bot wählt sein
+Fernziel und sperrt es für **zwanzig Sekunden**:
+
+```c
+bs->ltg_time = FloatTime() + 20;   // ai_dmnet.c:308
+```
+
+Neu gewählt wird nur, wenn die Sperre abläuft, das Ziel erreicht ist oder die
+Bewegung scheitert. **Schaden setzt sie nirgends zurück.** Ein Bot, der von
+hundert auf dreißig fällt, läuft also bis zu zwanzig Sekunden weiter zu dem
+Ziel, das sein gesundes Ich ausgesucht hat — meist zu einer Waffe, an der
+Gesundheit vorbei.
+
+Das Ärgerliche daran: die Gewichte in den Botdateien **sind** von Gesundheit
+und Rüstung abhängig. Sie werden nur nicht neu ausgewertet, weil der
+Wahlvorgang gar nicht stattfindet. Es genügt deshalb, die Sperre zu lösen — die
+richtige Entscheidung trifft der Bot dann von allein.
+
+Schwelle fünfundzwanzig Schaden (eine MG-Kugel macht sieben, ein Raketensplash
+das Vielfache), und höchstens alle zwei Sekunden: sonst plant ein Bot unter
+Dauerfeuer in einem fort neu, statt irgendwo anzukommen.

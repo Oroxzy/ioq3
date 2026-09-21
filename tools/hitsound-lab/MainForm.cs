@@ -104,6 +104,9 @@ public class MainForm : Form, IMessageFilter {
 	// Eine Zahl, die ganze Leiter: unter 0,2 steht der Bot still, über 0,7
 	// umkreist er mit Rhythmus. Und Lagern ist Stillstand.
 	readonly CheckBox botMoveSkill = new() { Text = "Bots beweglicher (Kampfkönnen hoch, kein Lagern)", Checked = false, AutoSize = true };
+	// Das Fernziel ist zwanzig Sekunden gesperrt, und Schaden loest die Sperre
+	// nirgends - ein Bot auf dreissig Leben holt weiter die Waffe statt Medipack.
+	readonly CheckBox botRethink = new() { Text = "Bots nach Treffern neu planen lassen", Checked = false, AutoSize = true };
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -1171,6 +1174,7 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( botNoChat ) ),
 			Row( Pad( botFightUp ) ),
 			Row( Pad( botMoveSkill ) ),
+			Row( Pad( botRethink ) ),
 			Row( Labelled( "Munition:", infiniteAmmo ) ),
 			Row( Labelled( "Nachladezeit:", weaponRate ), weaponRateDefault ),
 			Row( Pad( weaponRateValue ) ),
@@ -1370,6 +1374,11 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( botRethink, "Ein Bot sperrt sein Fernziel für zwanzig Sekunden, und Schaden löst die"
+ 			+ " Sperre nirgends – wer von hundert auf dreiüig fällt, holt weiter die Waffe, die sein"
+ 			+ " gesundes Ich ausgesucht hat. Die Gewichte sind sehr wohl gesundheitsabhängig, sie"
+ 			+ " werden nur nie neu ausgewertet. Ab 25 Schaden wird die Sperre gelöst, höchstens alle"
+ 			+ " zwei Sekunden." );
 		hintTip.SetToolTip( botFightUp, "BotAggression gibt null zurück, sobald der Gegner mehr als 200 Einheiten"
  			+ " höher steht – noch bevor Waffe oder Munition angesehen werden – und der Bot zieht"
  			+ " sich zurück. Auf q3dm17 ist das fast jeder Kampf. Mit dem Haken gilt die Grenze nur"
@@ -1868,6 +1877,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botNoChat=" + botNoChat.Checked );
 		s.AppendLine( "botFightUp=" + botFightUp.Checked );
 		s.AppendLine( "botMoveSkill=" + botMoveSkill.Checked );
+		s.AppendLine( "botRethink=" + botRethink.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
@@ -1951,6 +1961,7 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botNoChat, v, "botNoChat" );
 		SetBool( botFightUp, v, "botFightUp" );
 		SetBool( botMoveSkill, v, "botMoveSkill" );
+		SetBool( botRethink, v, "botRethink" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
@@ -2135,6 +2146,7 @@ public class MainForm : Form, IMessageFilter {
 		// -1 laesst die Werte aus der Charakterdatei stehen
 		cfg.AppendLine( $"set g_botAttackSkill {( botMoveSkill.Checked ? "0.9" : "-1" )}" );
 		cfg.AppendLine( $"set g_botCamper {( botMoveSkill.Checked ? "0" : "-1" )}" );
+		cfg.AppendLine( $"set g_botRethink {( botRethink.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
