@@ -953,3 +953,37 @@ richtige Entscheidung trifft der Bot dann von allein.
 Schwelle fünfundzwanzig Schaden (eine MG-Kugel macht sieben, ein Raketensplash
 das Vielfache), und höchstens alle zwei Sekunden: sonst plant ein Bot unter
 Dauerfeuer in einem fort neu, statt irgendwo anzukommen.
+
+**„Bots die Respawn-Zeiten mitzählen lassen"** (`g_botTiming`). Das
+Spielmodul kennt den Wiederkehr-Zeitpunkt jedes Gegenstands auf die
+Millisekunde — `ent->nextthink = level.time + respawn * 1000`, mit
+`RESPAWN_POWERUP 120`, `RESPAWN_ARMOR 25`, `RESPAWN_HEALTH 35` — und gibt ihn
+**nie weiter**.
+
+Die einzige Respawn-Kenntnis eines Bots ist seine private Vermeidungsliste, und
+die wird nur scharf, wenn **er** den Gegenstand angefasst oder ausgewählt hat.
+Nimmst *du* das Quad, bewertet jeder andere Bot es weiterhin, als läge es da:
+die Anwesenheitsprüfung in `BotChooseLTGItem` fragt `li->entitynum` ab, und das
+wird nach dem Verknüpfen nie wieder gelöscht. Die Bots laufen also zu einer
+leeren Stelle — und wenn der Gegenstand nach zwei Minuten wiederkommt, steht
+keiner dort. Item-Timing ist das Kennzeichen des guten Quake-Spielers, und der
+Zugang dazu lag die ganze Zeit offen.
+
+`BotItemTaken` schließt das: jede Aufnahme setzt bei **allen** Bots die
+Vermeidungszeit auf die echte Respawn-Dauer, minus zwei Sekunden Vorlauf, damit
+einer sich rechtzeitig auf den Weg macht statt erst loszugehen, wenn das Ding
+schon wieder liegt. Die Level-Item-Nummer wird über den Aufsammelnamen
+(`item->pickup_name`, also „Quad Damage") gesucht — die Bot-Gegenstandsliste
+kennt keine Klassennamen.
+
+**„Bots öfter Raketensprünge machen lassen"** (`g_botRocketJump`). Auf q3dm17
+liegen **225** Raketensprung-Verbindungen, und der Ausführer in botlib ist
+vollständig. Was sie in der Praxis verhindert, ist nicht die Charakterdatei —
+26 der 33 Charaktere bestehen die Prüfung —, sondern die Klausel darüber:
+mindestens 60 Leben, und unter 90 Leben zusätzlich 40 Rüstung. Mit dem Haken
+reichen 55 Leben (so viel, dass der Sprung selbst den Bot nicht umbringt), und
+die Sprungfreude aus der Charakterdatei wird übergangen.
+
+Ehrlich dazu: dass die Klausel *die* Ursache der Seltenheit ist, ist belegt;
+wie oft sie danach wirklich springen, ist Schätzung. Das muss eine Sitzung
+zeigen.

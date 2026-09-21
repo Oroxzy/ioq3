@@ -2471,14 +2471,23 @@ int BotCanAndWantsToRocketJump(bot_state_t *bs) {
 	if (bs->inventory[INVENTORY_ROCKETS] < 3) return qfalse;
 	//never rocket jump with the Quad
 	if (bs->inventory[INVENTORY_QUAD]) return qfalse;
-	//if low on health
-	if (bs->inventory[INVENTORY_HEALTH] < 60) return qfalse;
+	// Gesundheit und Ruestung. Die Karte haelt 225 Raketensprung-Verbindungen
+	// bereit und der Ausfuehrer in botlib ist vollstaendig - was den Sprung in
+	// der Praxis verhindert, ist diese Klausel, nicht die Charakterdatei
+	// (26 der 33 Charaktere bestehen die Pruefung unten). Ein Mensch springt
+	// auch mit weniger, wenn der Weg es wert ist; mit g_botRocketJump reicht
+	// die Halfte, also so viel, dass der Sprung selbst (etwa 50 Schaden) ihn
+	// nicht umbringt.
+	if (bs->inventory[INVENTORY_HEALTH] < (g_botRocketJump.integer ? 55 : 60)) return qfalse;
 	//if not full health
-	if (bs->inventory[INVENTORY_HEALTH] < 90) {
+	if (!g_botRocketJump.integer && bs->inventory[INVENTORY_HEALTH] < 90) {
 		//if the bot has insufficient armor
 		if (bs->inventory[INVENTORY_ARMOR] < 40) return qfalse;
 	}
-	rocketjumper = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_WEAPONJUMPING, 0, 1);
+	// Und die Sprungfreude aus der Charakterdatei: sieben Charaktere liegen
+	// darunter, klesk hat den Wert gar nicht. Mit dem Haken duerfen auch die.
+	rocketjumper = BotChar(bs, CHARACTERISTIC_WEAPONJUMPING, 0, 1,
+		g_botRocketJump.integer ? 1.0f : -1.0f);
 	if (rocketjumper < 0.5) return qfalse;
 	return qtrue;
 }

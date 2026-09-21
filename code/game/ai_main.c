@@ -941,6 +941,59 @@ funktioniert:
 Damit kann der Griff keine Strecke sperren, die der Bot wirklich gehen wollte.
 ==================
 */
+/*
+==================
+BotItemTaken
+
+Jemand hat einen Gegenstand genommen - allen Bots sagen, wann er wiederkommt.
+
+Bisher wusste das niemand ausser dem, der ihn genommen hat: die einzige
+Respawn-Kenntnis eines Bots ist seine private Vermeidungsliste, und die wird
+nur scharf, wenn ER den Gegenstand angefasst oder ausgewaehlt hat. Nimmt der
+Mensch das Quad, bewertet jeder Bot es weiterhin, als laege es da - die
+Anwesenheitspruefung in BotChooseLTGItem fragt li->entitynum ab, und das wird
+nach dem Verknuepfen nie wieder geloescht. Die Bots laufen also zu einer
+leeren Stelle, und wenn der Gegenstand wiederkommt, steht keiner dort.
+
+Dabei kennt das Spielmodul den Zeitpunkt auf die Millisekunde genau - es gibt
+ihn nur nicht weiter. Genau das passiert hier.
+
+Zwei Sekunden Vorlauf: die Sperre endet etwas frueher als der Gegenstand
+kommt, damit ein Bot sich rechtzeitig auf den Weg macht statt erst loszugehen,
+wenn das Ding schon wieder liegt. Das ist die billige Naeherung an das, was
+ein Mensch tut, wenn er mitzaehlt.
+==================
+*/
+void BotItemTaken( gentity_t *ent, float respawn ) {
+	bot_goal_t	goal;
+	int			i, index;
+	float		avoid;
+
+	if ( !g_botTiming.integer || !ent->item || !ent->item->pickup_name ) {
+		return;
+	}
+	// Die Level-Item-Nummer zu dieser Entitaet suchen. Der Name ist der
+	// Aufsammelname ("Quad Damage"), nicht der Klassenname.
+	index = trap_BotGetLevelItemGoal( -1, ent->item->pickup_name, &goal );
+	while ( index >= 0 && goal.entitynum != ent->s.number ) {
+		index = trap_BotGetLevelItemGoal( index, ent->item->pickup_name, &goal );
+	}
+	if ( index < 0 ) {
+		return;				// steht nicht in der Gegenstandsliste der Karte
+	}
+
+	avoid = respawn - 2.0f;
+	if ( avoid < 1.0f ) {
+		avoid = 1.0f;
+	}
+	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+		if ( !botstates[i] || !botstates[i]->inuse ) {
+			continue;
+		}
+		trap_BotSetAvoidGoalTime( botstates[i]->gs, goal.number, avoid );
+	}
+}
+
 // Ist in dieser Richtung, so weit voraus, ueberhaupt Boden? Tausend Einheiten
 // tief gesucht: ein gewollter Absatz ist auf q3dm17 im Mittel 174 tief, alles
 // darunter ist die Leere. Steckt der Punkt in einer Wand, zaehlt das als Boden

@@ -107,6 +107,11 @@ public class MainForm : Form, IMessageFilter {
 	// Das Fernziel ist zwanzig Sekunden gesperrt, und Schaden loest die Sperre
 	// nirgends - ein Bot auf dreissig Leben holt weiter die Waffe statt Medipack.
 	readonly CheckBox botRethink = new() { Text = "Bots nach Treffern neu planen lassen", Checked = false, AutoSize = true };
+	// Das Spielmodul kennt jeden Respawn-Zeitpunkt und gibt ihn nie weiter.
+	readonly CheckBox botTiming = new() { Text = "Bots die Respawn-Zeiten mitzählen lassen", Checked = false, AutoSize = true };
+	// 225 Raketensprung-Verbindungen auf der Karte, blockiert von einer
+	// Gesundheitsklausel.
+	readonly CheckBox botRocketJump = new() { Text = "Bots öfter Raketensprünge machen lassen", Checked = false, AutoSize = true };
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -1175,6 +1180,8 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( botFightUp ) ),
 			Row( Pad( botMoveSkill ) ),
 			Row( Pad( botRethink ) ),
+			Row( Pad( botTiming ) ),
+			Row( Pad( botRocketJump ) ),
 			Row( Labelled( "Munition:", infiniteAmmo ) ),
 			Row( Labelled( "Nachladezeit:", weaponRate ), weaponRateDefault ),
 			Row( Pad( weaponRateValue ) ),
@@ -1374,6 +1381,15 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( botTiming, "Das Spielmodul kennt den Wiederkehr-Zeitpunkt jedes Gegenstands auf die"
+ 			+ " Millisekunde und gibt ihn nie weiter. Ein Bot merkt sich nur, was er SELBST genommen"
+ 			+ " hat – nimmst du das Quad, laufen sie weiter zu der leeren Stelle, und wenn es"
+ 			+ " wiederkommt, steht keiner dort. Mit dem Haken erfährt jeder Bot jede Aufnahme, mit"
+ 			+ " zwei Sekunden Vorlauf, damit er rechtzeitig losgeht." );
+		hintTip.SetToolTip( botRocketJump, "Auf q3dm17 liegen 225 Raketensprung-Verbindungen, und der Ausführer ist"
+ 			+ " vollständig – was sie verhindert, ist eine Klausel: mindestens 60 Leben, und unter 90"
+ 			+ " zusätzlich 40 Rüstung. Mit dem Haken reichen 55 Leben, und die Sprungfreude aus der"
+ 			+ " Charakterdatei wird übergangen (sieben Charaktere liegen darunter)." );
 		hintTip.SetToolTip( botRethink, "Ein Bot sperrt sein Fernziel für zwanzig Sekunden, und Schaden löst die"
  			+ " Sperre nirgends – wer von hundert auf dreiüig fällt, holt weiter die Waffe, die sein"
  			+ " gesundes Ich ausgesucht hat. Die Gewichte sind sehr wohl gesundheitsabhängig, sie"
@@ -1878,6 +1894,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botFightUp=" + botFightUp.Checked );
 		s.AppendLine( "botMoveSkill=" + botMoveSkill.Checked );
 		s.AppendLine( "botRethink=" + botRethink.Checked );
+		s.AppendLine( "botTiming=" + botTiming.Checked );
+		s.AppendLine( "botRocketJump=" + botRocketJump.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
@@ -1962,6 +1980,8 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botFightUp, v, "botFightUp" );
 		SetBool( botMoveSkill, v, "botMoveSkill" );
 		SetBool( botRethink, v, "botRethink" );
+		SetBool( botTiming, v, "botTiming" );
+		SetBool( botRocketJump, v, "botRocketJump" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
@@ -2147,6 +2167,8 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botAttackSkill {( botMoveSkill.Checked ? "0.9" : "-1" )}" );
 		cfg.AppendLine( $"set g_botCamper {( botMoveSkill.Checked ? "0" : "-1" )}" );
 		cfg.AppendLine( $"set g_botRethink {( botRethink.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botTiming {( botTiming.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botRocketJump {( botRocketJump.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
