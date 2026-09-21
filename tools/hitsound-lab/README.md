@@ -724,3 +724,24 @@ Und weil eine Sitzung mit anderem Takt mit den alten nicht direkt vergleichbar
 ist, stehen `rate` und `ammo` im Kopf des Protokolls, wird neu gestempelt,
 sobald sich eines ändert, und die Werkbank schreibt die Bedingung neben die
 Fassungsangabe — in Rot, wenn eine Datei mehrere davon enthält.
+
+**Was die Nachladezeit der Trefferquoten-Tabelle antut.** Gemessen an vier
+Sitzungen bei zwölf Prozent: die gebuchte Trefferquote der Rakete im ersten
+Entfernungsfach fiel von 88 auf **22 Prozent** — während dieselben Schüsse
+genauso genau zielten wie vorher (52,3 gegen 53,3 % innerhalb von 120 Einheiten
+am Einschlag gemessen). Die Quote war also falsch, nicht das Zielen.
+
+Der Grund sitzt auf der Gutschriftseite. `PERS_HITS` ist der einzige Zähler,
+den der Server über eigene Treffer schickt, und die Zahl der *Schadensereignisse*
+ist nicht die Zahl der Treffer: eine direkt einschlagende Rakete steppt ihn
+zweimal, eine Schrotladung elfmal. Deshalb vergibt die Tabelle **höchstens
+einen Treffer je Schnappschuss**. Das stimmt, solange eine Waffe langsamer
+feuert als ein Server-Bild — bei zwölf Prozent fliegen aber zehn Raketen
+gleichzeitig, zwei landen im selben Bild, und eine davon bucht als Fehlschuss.
+
+Die Tabelle überdauert die Sitzung und verfällt nur langsam (0,99 je Probe,
+also rund hundert wirksame Proben je Fach). Sie darf solche Zahlen gar nicht
+erst sehen: **bei jeder Nachladezeit außer 100 % lernt sie nichts** und sagt
+das einmal je Sitzung als `aim rateskip`. Eine schnelle Sitzung ist damit gut
+für Vorhersage-Messungen am Einschlag und für Statistik über einzelne Schüsse,
+aber sie trägt nichts zur Trefferquoten-Kurve bei.

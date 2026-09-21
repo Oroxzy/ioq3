@@ -1838,6 +1838,7 @@ static void CL_AimAssistRateForget( void ) {
 
 static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, float flight,
 		const vec3_t viewOrigin, qboolean landing ) {
+	static qboolean		saidRate;
 	aimRatePending_t	*p = NULL;
 	vec3_t				offset;
 	int					arrive, open, shut, i;
@@ -1845,6 +1846,30 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 	if ( !cl_aimAssistLearn->integer ) {
 		return;
 	}
+
+	// Mit veraenderter Nachladezeit lernt diese Tabelle nichts mehr - und das
+	// ist kein Geschmack, sondern gemessen. Die Gutschrift unten vergibt
+	// hoechstens einen Treffer je Schnappschuss, weil die Zahl der
+	// Schadensereignisse nicht die Zahl der Treffer ist (eine Rakete steppt
+	// PERS_HITS zweimal, eine Schrotladung elfmal). Solange eine Waffe
+	// langsamer feuert als ein Server-Bild, kommt auch nur ein Schuss je Bild
+	// an und die Regel stimmt. Bei zwoelf Prozent Nachladezeit fliegen zehn
+	// Raketen gleichzeitig, zwei landen im selben Bild - und eine davon bucht
+	// als Fehlschuss. Nachgemessen an vier Sitzungen: die Trefferquote der
+	// Rakete im ersten Entfernungsfach fiel von 88 auf 22 Prozent, waehrend
+	// die Zielgenauigkeit derselben Schuesse unveraendert blieb (52,3 gegen
+	// 53,3 Prozent innerhalb von 120 Einheiten). Die Tabelle ueberdauert die
+	// Sitzung und verfaellt nur langsam, also darf sie solche Zahlen gar
+	// nicht erst sehen.
+	if ( (int)Cvar_VariableValue( "g_weaponRateActive" ) != 100
+		&& (int)Cvar_VariableValue( "g_weaponRateActive" ) != 0 ) {
+		if ( !saidRate && cl_aimAssistDebug->integer ) {
+			saidRate = qtrue;
+			Com_Printf( "aim rateskip: reload time changed, the hit table stays out of this session\n" );
+		}
+		return;
+	}
+	saidRate = qfalse;
 
 	// Eine Waffe feuert hoechstens einmal je Server-Bild - der schnellste
 	// Zyklus im Spiel ist der des Blitzwerfers mit genau einem. Der Klient
