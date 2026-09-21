@@ -98,6 +98,12 @@ public class MainForm : Form, IMessageFilter {
 	// Jede Chatzeile kostet den Bot genau zwei Sekunden Stillstand - AINode_Stand
 	// gibt gar keinen Bewegungsbefehl. Betrifft auch "Gegner tot" mitten im Kampf.
 	readonly CheckBox botNoChat = new() { Text = "Bots nicht quatschen lassen (kostet 2 s Stillstand)", Checked = false, AutoSize = true };
+	// BotAggression gibt null zurück, sobald der Gegner 200 Einheiten höher
+	// steht - auf einer Karte aus Plattformen also fast immer.
+	readonly CheckBox botFightUp = new() { Text = "Bots auch nach oben kämpfen lassen", Checked = false, AutoSize = true };
+	// Eine Zahl, die ganze Leiter: unter 0,2 steht der Bot still, über 0,7
+	// umkreist er mit Rhythmus. Und Lagern ist Stillstand.
+	readonly CheckBox botMoveSkill = new() { Text = "Bots beweglicher (Kampfkönnen hoch, kein Lagern)", Checked = false, AutoSize = true };
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -1163,6 +1169,8 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( botEdgeCare ) ),
 			Row( Pad( botJump ) ),
 			Row( Pad( botNoChat ) ),
+			Row( Pad( botFightUp ) ),
+			Row( Pad( botMoveSkill ) ),
 			Row( Labelled( "Munition:", infiniteAmmo ) ),
 			Row( Labelled( "Nachladezeit:", weaponRate ), weaponRateDefault ),
 			Row( Pad( weaponRateValue ) ),
@@ -1362,6 +1370,16 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( botFightUp, "BotAggression gibt null zurück, sobald der Gegner mehr als 200 Einheiten"
+ 			+ " höher steht – noch bevor Waffe oder Munition angesehen werden – und der Bot zieht"
+ 			+ " sich zurück. Auf q3dm17 ist das fast jeder Kampf. Mit dem Haken gilt die Grenze nur"
+ 			+ " noch für Waffen, mit denen nach oben nichts auszurichten ist." );
+		hintTip.SetToolTip( botMoveSkill, "Setzt das Kampfkönnen auf 0,9 und das Lagern auf 0. Diese eine Zahl ist"
+ 			+ " die ganze Leiter der Kampfbewegung: unter 0,2 steht der Bot still, bis 0,4 läuft er"
+ 			+ " nur geradeaus vor und zurück, erst darüber umkreist er, und erst über 0,7 mit dem"
+ 			+ " zufälligen Rhythmus, den ein Mensch hat.\n\nAchtung: beide Haken ändern, wie sich"
+ 			+ " die Bots bewegen – also das, wogegen die Vorhersage gemessen wird. Neue Basislinie"
+ 			+ " nötig, bevor du gegen alte Zahlen vergleichst." );
 		hintTip.SetToolTip( botNoChat, "Ein Bot, der etwas sagt, steht dafür genau zwei Sekunden vüllig still –"
  			+ " AINode_Stand gibt keinen einzigen Bewegungsbefehl. Ausgelöst wird das unter"
  			+ " anderem durch \"Gegner tot\" mitten im Gefecht, durch Treffer und durch reinen"
@@ -1848,6 +1866,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botEdgeCare=" + botEdgeCare.Checked );
 		s.AppendLine( "botJump=" + botJump.Checked );
 		s.AppendLine( "botNoChat=" + botNoChat.Checked );
+		s.AppendLine( "botFightUp=" + botFightUp.Checked );
+		s.AppendLine( "botMoveSkill=" + botMoveSkill.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
@@ -1929,6 +1949,8 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botEdgeCare, v, "botEdgeCare" );
 		SetBool( botJump, v, "botJump" );
 		SetBool( botNoChat, v, "botNoChat" );
+		SetBool( botFightUp, v, "botFightUp" );
+		SetBool( botMoveSkill, v, "botMoveSkill" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
@@ -2109,6 +2131,10 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botEdgeCare {( botEdgeCare.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botJump {( botJump.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set bot_nochat {( botNoChat.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botFightUp {( botFightUp.Checked ? 1 : 0 )}" );
+		// -1 laesst die Werte aus der Charakterdatei stehen
+		cfg.AppendLine( $"set g_botAttackSkill {( botMoveSkill.Checked ? "0.9" : "-1" )}" );
+		cfg.AppendLine( $"set g_botCamper {( botMoveSkill.Checked ? "0" : "-1" )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );

@@ -2191,6 +2191,26 @@ int TeamPlayIsOn(void) {
 BotAggression
 ==================
 */
+/*
+==================
+BotChar
+
+Eine Charaktereigenschaft lesen - oder eine Vorgabe der Werkbank an ihre
+Stelle setzen. Minus eins heisst "nimm den Wert aus der Charakterdatei".
+
+Das geht, weil KEINE einzige Lesestelle in code/botlib/ liegt: jedes
+CHARACTERISTIC_ wird in ai_dmq3.c, ai_main.c oder ai_dmnet.c gelesen, also im
+Spielmodul, das wir selbst ausliefern. Die Charakterdateien in pak0 bleiben
+unberuehrt; hier wird nur der Wert auf dem Weg nach draussen abgeklemmt.
+==================
+*/
+static float BotChar(bot_state_t *bs, int characteristic, float min, float max, float override) {
+	if (override >= 0.0f) {
+		return override;
+	}
+	return trap_Characteristic_BFloat(bs->character, characteristic, min, max);
+}
+
 float BotAggression(bot_state_t *bs) {
 	//if the bot has quad
 	if (bs->inventory[INVENTORY_QUAD]) {
@@ -2200,8 +2220,26 @@ float BotAggression(bot_state_t *bs) {
 			return 70;
 		}
 	}
-	//if the enemy is located way higher than the bot
-	if (bs->inventory[ENEMY_HEIGHT] > 200) return 0;
+	// Steht der Gegner viel hoeher, war hier bisher Schluss - Aggression null,
+	// noch bevor Waffe oder Munition ueberhaupt angesehen werden, und
+	// BotWantsToRetreat schickt den Bot weg. Auf einer Karte aus Plattformen
+	// heisst das: kein Kampf nach oben, also kein Kampf auf der halben Karte.
+	// Ein Mensch schiesst genau dann Raketen auf den Plattformboden.
+	//
+	// Mit g_botFightUp gilt die Grenze nur noch fuer Waffen, mit denen nach
+	// oben wirklich nichts auszurichten ist.
+	if (bs->inventory[ENEMY_HEIGHT] > 200) {
+		qboolean reaches = qfalse;
+
+		if (g_botFightUp.integer) {
+			if (bs->inventory[INVENTORY_ROCKETLAUNCHER] > 0 && bs->inventory[INVENTORY_ROCKETS] > 0) reaches = qtrue;
+			else if (bs->inventory[INVENTORY_RAILGUN] > 0 && bs->inventory[INVENTORY_SLUGS] > 0) reaches = qtrue;
+			else if (bs->inventory[INVENTORY_PLASMAGUN] > 0 && bs->inventory[INVENTORY_CELLS] > 0) reaches = qtrue;
+			else if (bs->inventory[INVENTORY_LIGHTNING] > 0 && bs->inventory[INVENTORY_LIGHTNINGAMMO] > 0) reaches = qtrue;
+			else if (bs->inventory[INVENTORY_BFG10K] > 0 && bs->inventory[INVENTORY_BFGAMMO] > 0) reaches = qtrue;
+		}
+		if (!reaches) return 0;
+	}
 	//if the bot is very low on health
 	if (bs->inventory[INVENTORY_HEALTH] < 60) return 0;
 	//if the bot is low on health
@@ -2467,7 +2505,7 @@ void BotGoCamp(bot_state_t *bs, bot_goal_t *goal) {
 	//set the team goal
 	memcpy(&bs->teamgoal, goal, sizeof(bot_goal_t));
 	//get the team goal time
-	camper = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_CAMPER, 0, 1);
+	camper = BotChar(bs, CHARACTERISTIC_CAMPER, 0, 1, g_botCamper.value);
 	if (camper > 0.99) bs->teamgoal_time = FloatTime() + 99999;
 	else bs->teamgoal_time = FloatTime() + 120 + 180 * camper + random() * 15;
 	//set the last time the bot started camping
@@ -2488,7 +2526,7 @@ int BotWantsToCamp(bot_state_t *bs) {
 	int cs, traveltime, besttraveltime;
 	bot_goal_t goal, bestgoal;
 
-	camper = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_CAMPER, 0, 1);
+	camper = BotChar(bs, CHARACTERISTIC_CAMPER, 0, 1, g_botCamper.value);
 	if (camper < 0.1) return qfalse;
 	//if the bot has a team goal
 	if (bs->ltgtype == LTG_TEAMHELP ||
@@ -2656,7 +2694,11 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 	//
 	memset(&moveresult, 0, sizeof(bot_moveresult_t));
 	//
-	attack_skill = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_ATTACK_SKILL, 0, 1);
+	// Diese eine Zahl ist die ganze Leiter der Kampfbewegung: unter 0,2 steht
+	// der Bot still, bis 0,4 laeuft er nur geradeaus auf den Gegner zu und
+	// zurueck, erst darueber umkreist er ihn, und erst ueber 0,7 bekommt das
+	// Umkreisen den zufaelligen Rhythmus, den ein Mensch hat.
+	attack_skill = BotChar(bs, CHARACTERISTIC_ATTACK_SKILL, 0, 1, g_botAttackSkill.value);
 	jumper = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_JUMPER, 0, 1);
 	croucher = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_CROUCHER, 0, 1);
 	//if the bot is really stupid

@@ -878,3 +878,56 @@ Plattformecken sind dem Ausweichsystem unsichtbar; zwei Bots auf einer schmalen
 Plattform blockieren sich gegenseitig ohne dritten Versuch; und bei
 Kampf-Können ≤ 0,4 gibt ein Bot gar keinen Bewegungsbefehl, solange der Gegner
 in seiner Wunschentfernung steht.
+
+## Menschlichere Bots, erste Stufe
+
+Zwei Haken, beide aus voreingestellt, beide im Spielmodul — kein pak0, keine
+Engine.
+
+**„Bots auch nach oben kämpfen lassen"** (`g_botFightUp`). Im Original steht in
+`BotAggression`:
+
+```c
+if (bs->inventory[ENEMY_HEIGHT] > 200) return 0;
+```
+
+Steht der Gegner mehr als zweihundert Einheiten höher, ist die Aggression
+**null** — noch bevor Waffe oder Munition überhaupt angesehen werden. Und
+`BotWantsToRetreat` feuert unter fünfzig, der Bot geht also weg. Auf q3dm17,
+einer Karte, die aus nichts als Höhenunterschieden besteht, heißt das: kein
+Kampf nach oben, und damit kein Kampf auf der halben Karte. Ein Mensch macht
+das Gegenteil — das ist genau der Moment, in dem er Raketen auf den
+Plattformboden schießt. Mit dem Haken gilt die Grenze nur noch für Waffen, mit
+denen nach oben wirklich nichts auszurichten ist; wer Rakete, Rail, Blitz,
+Plasma oder BFG mit Munition hat, darf hinauf.
+
+Dazu ein zweiter, stiller Fehler derselben Ecke: `ENEMY_HEIGHT` und
+`ENEMY_HORIZONTAL_DIST` werden nur in `BotUpdateBattleInventory` gesetzt und
+**nirgends gelöscht**. `AINode_Seek_LTG` setzt `bs->enemy = -1` und ruft direkt
+danach `BotWantsToCamp`, das wieder `BotAggression` liest — die
+Lager-Entscheidung fällt also anhand der Höhe eines Gegners, der dreißig
+Sekunden tot sein kann. An allen drei Stellen werden beide Werte jetzt
+mitgelöscht.
+
+**„Bots beweglicher"** (`g_botAttackSkill 0.9`, `g_botCamper 0`). Möglich wird
+das durch eine Beobachtung, die alles aufschließt: `grep -rn "CHARACTERISTIC_"
+code/botlib/*.c` liefert **nichts**. Jede Charaktereigenschaft wird
+ausschließlich im Spielmodul gelesen — die Dateien in pak0 bleiben unberührt,
+wir klemmen den Wert auf dem Weg nach draußen ab (`BotChar`, −1 lässt den
+Originalwert stehen).
+
+`CHARACTERISTIC_ATTACK_SKILL` ist dabei die ganze Leiter der Kampfbewegung:
+
+| Wert | Verhalten |
+|---|---|
+| < 0,2 | der Bot gibt **gar keinen** Bewegungsbefehl |
+| ≤ 0,4 | nur geradeaus auf den Gegner zu und zurück |
+| > 0,4 | Umkreisen |
+| > 0,7 | Umkreisen mit zufälligem Rhythmus — das, was ein Mensch tut |
+
+Und `CHARACTERISTIC_CAMPER` auf null lässt `BotWantsToCamp` sofort aussteigen.
+Lagern ist Stillstand, und Stillstand ist für diese Werkbank Gift.
+
+**Beides ändert, wie sich die Bots bewegen** — also das, wogegen die Vorhersage
+gemessen wird. Nach dem Einschalten braucht es eine neue Basislinie, bevor
+gegen alte Zahlen verglichen wird.

@@ -1479,6 +1479,13 @@ int AINode_Seek_ActivateEntity(bot_state_t *bs) {
 	BotMapScripts(bs);
 	// no enemy
 	bs->enemy = -1;
+	// Und die Werte, die am Gegner haengen, mit weg: ENEMY_HEIGHT und
+	// ENEMY_HORIZONTAL_DIST werden nur in BotUpdateBattleInventory gesetzt und
+	// nirgends geloescht. Ohne das entscheidet BotAggression - und damit das
+	// Lagern - gleich darunter anhand der Hoehe eines Gegners, der laengst tot
+	// oder verschwunden sein kann.
+	bs->inventory[ENEMY_HEIGHT] = 0;
+	bs->inventory[ENEMY_HORIZONTAL_DIST] = 0;
 	// if the bot has no activate goal
 	if (!bs->activatestack) {
 		BotClearActivateGoalStack(bs);
@@ -1696,6 +1703,13 @@ int AINode_Seek_NBG(bot_state_t *bs) {
 	BotMapScripts(bs);
 	//no enemy
 	bs->enemy = -1;
+	// Und die Werte, die am Gegner haengen, mit weg: ENEMY_HEIGHT und
+	// ENEMY_HORIZONTAL_DIST werden nur in BotUpdateBattleInventory gesetzt und
+	// nirgends geloescht. Ohne das entscheidet BotAggression - und damit das
+	// Lagern - gleich darunter anhand der Hoehe eines Gegners, der laengst tot
+	// oder verschwunden sein kann.
+	bs->inventory[ENEMY_HEIGHT] = 0;
+	bs->inventory[ENEMY_HORIZONTAL_DIST] = 0;
 	//if the bot has no goal
 	if (!trap_BotGetTopGoal(bs->gs, &goal)) bs->nbg_time = 0;
 	//if the bot touches the current goal
@@ -1839,6 +1853,13 @@ int AINode_Seek_LTG(bot_state_t *bs)
 	BotMapScripts(bs);
 	//no enemy
 	bs->enemy = -1;
+	// Und die Werte, die am Gegner haengen, mit weg: ENEMY_HEIGHT und
+	// ENEMY_HORIZONTAL_DIST werden nur in BotUpdateBattleInventory gesetzt und
+	// nirgends geloescht. Ohne das entscheidet BotAggression - und damit das
+	// Lagern - gleich darunter anhand der Hoehe eines Gegners, der laengst tot
+	// oder verschwunden sein kann.
+	bs->inventory[ENEMY_HEIGHT] = 0;
+	bs->inventory[ENEMY_HORIZONTAL_DIST] = 0;
 	//
 	if (bs->killedenemy_time > FloatTime() - 2) {
 		if (random() < bs->thinktime * 1) {

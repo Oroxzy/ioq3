@@ -65,6 +65,9 @@ vmCvar_t	g_weaponRate;
 vmCvar_t	g_infiniteAmmo;
 vmCvar_t	g_botEdgeCare;
 vmCvar_t	g_botJump;
+vmCvar_t	g_botFightUp;
+vmCvar_t	g_botAttackSkill;
+vmCvar_t	g_botCamper;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -176,6 +179,16 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_botEdgeCare, "g_botEdgeCare", "0", 0, 0, qtrue },
 	// Bots huepfen, um beim Laufen kein Tempo an die Reibung zu verlieren.
 	{ &g_botJump, "g_botJump", "0", 0, 0, qtrue },
+	// Der Gegner steht hoeher: bisher hiess das Aggression null und Rueckzug,
+	// auch mit vollem Raketenwerfer. Mit 1 gilt das nur noch fuer Waffen, die
+	// nach oben wirklich nichts ausrichten.
+	{ &g_botFightUp, "g_botFightUp", "0", 0, 0, qtrue },
+	// Vorgaben statt Charakterdatei, -1 laesst den Wert aus pak0 stehen.
+	// attackSkill ist die ganze Leiter der Kampfbewegung (unter 0,2 steht der
+	// Bot still, ueber 0,7 umkreist er mit Rhythmus), camper 0 schaltet das
+	// Lagern ab - Lagern ist Stillstand.
+	{ &g_botAttackSkill, "g_botAttackSkill", "-1", 0, 0, qtrue },
+	{ &g_botCamper, "g_botCamper", "-1", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },
