@@ -63,6 +63,8 @@ vmCvar_t	g_weaponSpawns;
 vmCvar_t	g_selfDamage;
 vmCvar_t	g_weaponRate;
 vmCvar_t	g_infiniteAmmo;
+vmCvar_t	g_botEdgeCare;
+vmCvar_t	g_botJump;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -169,6 +171,11 @@ static cvarTable_t		gameCvarTable[] = {
 	// Wege - sie laufen dann keine Munitionskiste mehr an -, und genau diese
 	// Wege sind es, an denen die Vorhersage gemessen wird.
 	{ &g_infiniteAmmo, "g_infiniteAmmo", "0", 0, 0, qtrue },
+	// Bots bremsen, statt in die Leere zu laufen. 2 schreibt jede Bremsung ins
+	// Protokoll, damit sich nachzaehlen laesst, ob der Griff ueberhaupt greift.
+	{ &g_botEdgeCare, "g_botEdgeCare", "0", 0, 0, qtrue },
+	// Bots huepfen, um beim Laufen kein Tempo an die Reibung zu verlieren.
+	{ &g_botJump, "g_botJump", "0", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

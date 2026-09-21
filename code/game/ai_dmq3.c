@@ -2676,6 +2676,20 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 	if (bs->attackcrouch_time < FloatTime() - 1) {
 		if (random() < jumper) {
 			movetype = MOVE_JUMP;
+			// Werkbank: der Kampfsprung ist ein Wuerfelwurf gegen die
+			// Sprungfreude des Charakters und hat mit dem Weg nichts zu tun -
+			// ueber einem Abgrund ist er schlicht ein Sturz. Der Weg nach der
+			// Karte laeuft hier nicht durch, also kann das keine Strecke sperren.
+			if (g_botEdgeCare.integer) {
+				vec3_t vel, dir;
+
+				VectorCopy(bs->cur_ps.velocity, vel);
+				vel[2] = 0;
+				if (VectorNormalize2(vel, dir) < 40) VectorCopy(forward, dir);
+				dir[2] = 0;
+				VectorNormalize(dir);
+				if (!BotGroundAhead(bs, dir, 220)) movetype = MOVE_WALK;
+			}
 		}
 		//wait at least one second before crouching again
 		else if (bs->attackcrouch_time < FloatTime() - 1 && random() < croucher) {
@@ -2756,8 +2770,24 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 		bs->flags ^= BFL_STRAFERIGHT;
 		bs->attackstrafe_time = 0;
 	}
-	//bot couldn't do any useful movement
-//	bs->attackchase_time = AAS_Time() + 6;
+	// Der Bot konnte sich nicht bewegen - und das ist auf einer Plattformkarte
+	// kein Ausnahmefall. Beide Ausweichrichtungen fuehren dort ueber die Leere,
+	// BotWalkInDirection lehnt beide ab, ohne je einen Bewegungsbefehl zu geben,
+	// und das Ergebnis ist ein Nullsatz: failure 0, blocked 0. Der Knoten sieht
+	// also keinen Fehler, BotAIBlocked steigt in der ersten Zeile aus, und der
+	// Bot steht - einen ganzen Denkschritt lang, also hundert Millisekunden, und
+	// wieder und wieder, solange er an der Stelle steht und der Gegner auf
+	// derselben Entfernung bleibt. Das ist das Haengenbleiben auf Plattformen.
+	//
+	// Die Rettung dafuer steht seit id Software im Quelltext, auskommentiert:
+	// attackchase_time schickt den Bot den Weg nach der Karte zum Gegner statt
+	// ihn stehen zu lassen (der Zweig oben). Weil sie nie gesetzt wird, ist der
+	// Zweig toter Code. Hier wird sie gesetzt - aber eine halbe Sekunde und
+	// nicht sechs: sechs Sekunden machen aus jedem Scharmuetzel eine Verfolgung,
+	// eine halbe reicht, um den naechsten Denkschritt in Bewegung zu bringen.
+	if (g_botEdgeCare.integer) {
+		bs->attackchase_time = FloatTime() + 0.5f;
+	}
 	return moveresult;
 }
 

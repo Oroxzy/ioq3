@@ -724,6 +724,8 @@ extern	vmCvar_t	g_weaponSpawns;
 extern	vmCvar_t	g_selfDamage;
 extern	vmCvar_t	g_weaponRate;
 extern	vmCvar_t	g_infiniteAmmo;
+extern	vmCvar_t	g_botEdgeCare;
+extern	vmCvar_t	g_botJump;
 extern	vmCvar_t	g_weaponRespawn;
 extern	vmCvar_t	g_weaponTeamRespawn;
 extern	vmCvar_t	g_synchronousClients;

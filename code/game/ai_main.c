@@ -910,6 +910,162 @@ void BotInputToUserCommand(bot_input_t *bi, usercmd_t *ucmd, int delta_angles[3]
 BotUpdateInput
 ==============
 */
+/*
+==================
+BotEdgeCare
+
+Bremsen, statt in die Leere zu laufen.
+
+Der Anlass, nachgezaehlt: auf q3dm17 gehen 17,5 Prozent aller Tode auf
+MOD_TRIGGER_HURT und MOD_FALLING. Aus dem Protokoll der Zielhilfe liessen sich
+sechsundvierzig Stuerze rekonstruieren - neunzehn davon hatte ein Einschlag im
+Wirkradius in den vierhundert Millisekunden davor, das ist der Rueckstoss und
+keine Entscheidung. Sechs sprangen selbst, der Rest lief. Wo das Tempo messbar
+war, lag es bei 322 Einheiten je Sekunde, also am Anschlag.
+
+Und genau da liegt die Luecke. Die Bots haben durchaus eine Kantenpruefung,
+aber nur auf dem freien Weg (BotWalkInDirection), sie schaut beim Gehen nur
+zwei Bilder voraus, und vor allem: sie VERWEIGERT den Befehl nur. Ein Bot, der
+mit dreihundertzwanzig Einheiten je Sekunde laeuft, bleibt davon nicht stehen -
+die Reibung braucht rund fuenfzig Einheiten Weg. Gebremst wird nirgends.
+
+Hier wird gebremst. Das Fenster ist eng gewaehlt, damit nichts kaputtgeht, was
+funktioniert:
+- nur auf dem Boden und nur ueber hundert Einheiten je Sekunde,
+- nicht, wenn der Bot springen will: ueber die Leere zu springen ist auf dieser
+  Karte die normale Art, sich zu bewegen, und das bleibt seine Sache,
+- und nur, wenn unter dem Punkt am Ende des Bremswegs auf tausend Einheiten
+  ueberhaupt nichts ist. Ein gewollter Absatz ist auf q3dm17 im Mittel
+  hundertvierundsiebzig Einheiten tief; tausend trifft nur die Leere.
+
+Damit kann der Griff keine Strecke sperren, die der Bot wirklich gehen wollte.
+==================
+*/
+// Ist in dieser Richtung, so weit voraus, ueberhaupt Boden? Tausend Einheiten
+// tief gesucht: ein gewollter Absatz ist auf q3dm17 im Mittel 174 tief, alles
+// darunter ist die Leere. Steckt der Punkt in einer Wand, zaehlt das als Boden
+// - dann laeuft der Bot ohnehin nicht weiter.
+qboolean BotGroundAhead( bot_state_t *bs, vec3_t dir, float dist ) {
+	vec3_t		ahead, below;
+	trace_t		tr;
+
+	VectorMA( bs->origin, dist, dir, ahead );
+	ahead[2] = bs->origin[2] + 24.0f;
+	VectorCopy( ahead, below );
+	below[2] -= 1024.0f;
+	trap_Trace( &tr, ahead, NULL, NULL, below, bs->entitynum, MASK_PLAYERSOLID );
+	return ( tr.fraction < 1.0f || tr.startsolid );
+}
+
+static qboolean BotEdgeCare( bot_state_t *bs, bot_input_t *bi ) {
+	vec3_t		vel, dir;
+	float		speed;
+
+	if ( !g_botEdgeCare.integer ) {
+		return qfalse;
+	}
+	// In der Luft ist es ohnehin zu spaet, und wer springen will, darf das.
+	//
+	// ACTION_DELAYEDJUMP gehoert ausdruecklich dazu, und das war der Fehler der
+	// ersten Fassung: einen Sprung ueber eine Luecke kuendigt botlib mit
+	// EA_DelayedJump an und drueckt erst ein Bild spaeter wirklich. Waehrend des
+	// Anlaufs steht also nur diese Flagge - und vor dem Bot ist naturgemaess
+	// nichts. Ohne diese Zeile bremst die Werkbank den Bot aus jedem geplanten
+	// Sprung heraus, also aus genau der Bewegung, die auf dieser Karte das
+	// Fortkommen ist.
+	if ( bs->cur_ps.groundEntityNum == ENTITYNUM_NONE
+		|| ( bi->actionflags & ( ACTION_JUMP | ACTION_DELAYEDJUMP ) ) ) {
+		return qfalse;
+	}
+
+	VectorCopy( bs->cur_ps.velocity, vel );
+	vel[2] = 0.0f;
+	speed = VectorLength( vel );
+	if ( speed < 100.0f ) {
+		return qfalse;			// langsam genug, um von allein stehenzubleiben
+	}
+	VectorScale( vel, 1.0f / speed, dir );
+
+	// Ende des Bremswegs: die Reibung nimmt etwa ein Sechstel der
+	// Geschwindigkeit je Sekunde, dazu ein Bild Bedenkzeit.
+	if ( BotGroundAhead( bs, dir, 18.0f + speed * 0.3f ) ) {
+		return qfalse;
+	}
+
+	// Nichts darunter. Rueckwaerts, mit allem was da ist.
+	VectorNegate( dir, bi->dir );
+	bi->speed = 400.0f;
+	// Und die vier Richtungsflaggen weg: BotInputToUserCommand ueberschreibt
+	// forward- und rightmove damit stumpf, nachdem es die Richtung ausgerechnet
+	// hat; die Bremse waere sonst je nach Laune der KI wirkungslos.
+	bi->actionflags &= ~( ACTION_MOVEFORWARD | ACTION_MOVEBACK
+		| ACTION_MOVELEFT | ACTION_MOVERIGHT );
+	if ( g_botEdgeCare.integer > 1 ) {
+		G_Printf( "bot edge: client %i braked at %.0f %.0f %.0f, %.0f ups\n",
+			bs->client, bs->origin[0], bs->origin[1], bs->origin[2], speed );
+	}
+	return qtrue;
+}
+
+/*
+==================
+BotSpeedJump
+
+Springen, um schneller voranzukommen.
+
+In Quake laeuft man beim Springen ohne Bodenreibung weiter - wer huepft,
+behaelt sein Tempo, statt es in jedem Bild ein Stueck zu verlieren. Die Bots
+machen das von sich aus nie: sie springen nur, wo die Karte es verlangt
+(TRAVEL_JUMP, Sprungfeld, Hindernis) oder zufaellig im Gefecht.
+
+Gesprungen wird nur, wo es wirklich hilft, und das heisst hier: der Bot ist
+auf dem Boden, laeuft schon schnell, will weiter in dieselbe Richtung, und da
+vorne ist auch Boden. Kein Huepfen beim Ausweichen - ein Bot in der Luft ist
+auf einer Wurfparabel und damit leichter zu treffen, nicht schwerer.
+
+PM_CheckJump verlangt, dass die Taste zwischendurch losgelassen wird
+(PMF_JUMP_HELD), sonst bleibt es beim ersten Sprung. Weil hier nur auf dem
+Boden gedrueckt wird und in der Luft nicht, loest sich das von selbst: beim
+Absprung gesetzt, waehrend des Flugs nicht mehr, bei der Landung wieder.
+==================
+*/
+static void BotSpeedJump( bot_state_t *bs, bot_input_t *bi ) {
+	vec3_t		vel, dir;
+	float		speed;
+
+	if ( !g_botJump.integer ) {
+		return;
+	}
+	if ( bs->cur_ps.groundEntityNum == ENTITYNUM_NONE
+		|| ( bi->actionflags & ( ACTION_JUMP | ACTION_DELAYEDJUMP | ACTION_CROUCH ) )
+		|| ( bs->cur_ps.pm_flags & PMF_JUMP_HELD ) ) {
+		return;					// fliegt schon, springt schon, oder haelt noch
+	}
+
+	VectorCopy( bs->cur_ps.velocity, vel );
+	vel[2] = 0.0f;
+	speed = VectorLength( vel );
+	// unter zweihundert lohnt es nicht - und wer kaum Tempo hat, will meist
+	// gerade zielen und nicht reisen
+	if ( speed < 200.0f || bi->speed < 300.0f ) {
+		return;
+	}
+	VectorScale( vel, 1.0f / speed, dir );
+
+	// Nur geradeaus: zeigt der gewollte Weg woandershin, wird gerade
+	// ausgewichen oder gewendet, und ein Sprung macht beides schlechter.
+	if ( DotProduct( dir, bi->dir ) < 0.9f ) {
+		return;
+	}
+	// Und nicht ins Leere huepfen. Weiter voraus als beim Bremsen, weil ein
+	// Sprung laenger traegt als ein Schritt.
+	if ( !BotGroundAhead( bs, dir, 64.0f + speed * 0.6f ) ) {
+		return;
+	}
+
+	bi->actionflags |= ACTION_JUMP;
+}
+
 void BotUpdateInput(bot_state_t *bs, int time, int elapsed_time) {
 	bot_input_t bi;
 	int j;
@@ -925,6 +1081,11 @@ void BotUpdateInput(bot_state_t *bs, int time, int elapsed_time) {
 	//respawn hack
 	if (bi.actionflags & ACTION_RESPAWN) {
 		if (bs->lastucmd.buttons & BUTTON_ATTACK) bi.actionflags &= ~(ACTION_RESPAWN|ACTION_ATTACK);
+	}
+	// Werkbank: nicht in die Leere laufen - und wenn nicht gebremst wurde,
+	// darf gesprungen werden, um Tempo zu halten.
+	if ( !BotEdgeCare(bs, &bi) ) {
+		BotSpeedJump(bs, &bi);
 	}
 	//convert the bot input to a usercmd
 	BotInputToUserCommand(&bi, &bs->lastucmd, bs->cur_ps.delta_angles, time);

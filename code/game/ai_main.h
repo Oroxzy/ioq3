@@ -291,3 +291,6 @@ int		BotAI_GetClientState( int clientNum, playerState_t *state );
 int		BotAI_GetEntityState( int entityNum, entityState_t *state );
 int		BotAI_GetSnapshotEntity( int clientNum, int sequence, entityState_t *state );
 int		BotTeamLeader(bot_state_t *bs);
+// Werkbank: ist in dieser Richtung, so weit voraus, ueberhaupt Boden - oder
+// geht es dort tausend Einheiten weit nach unten ins Nichts?
+qboolean BotGroundAhead(bot_state_t *bs, vec3_t dir, float dist);

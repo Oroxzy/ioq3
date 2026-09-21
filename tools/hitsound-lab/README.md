@@ -745,3 +745,136 @@ erst sehen: **bei jeder Nachladezeit außer 100 % lernt sie nichts** und sagt
 das einmal je Sitzung als `aim rateskip`. Eine schnelle Sitzung ist damit gut
 für Vorhersage-Messungen am Einschlag und für Statistik über einzelne Schüsse,
 aber sie trägt nichts zur Trefferquoten-Kurve bei.
+
+## Warum die Bots in die Leere laufen
+
+Die Klage ist berechtigt und lässt sich beziffern. Aus `games.log`, rund 6700
+Tode: **937 MOD_TRIGGER_HURT** — das ist die Grube unter q3dm17 — plus 238
+MOD_FALLING. Die zweite Zahl gehört allerdings nicht dazu: `EV_FALL_FAR` macht
+zehn Schaden, das sind also Bots, die einen tiefen Sturz überlebt hätten, wenn
+sie nicht ohnehin fast tot gewesen wären. Bleiben **14 % aller Tode**, die in
+der Grube enden. Der Mensch liegt mit 21 % nicht besser — das ist ein Hinweis,
+dass ein Teil davon die Karte ist und nicht die KI.
+
+**Wer fällt warum.** Aus dem Protokoll der Zielhilfe ließen sich 46 Stürze
+rekonstruieren (Positionen und Boden-Flag aller Bots je Einschlagsbild):
+
+| | |
+|---|---|
+| Einschlag im Wirkradius in den 400 ms davor | **19** |
+| selbst gesprungen und nicht angekommen | 6 |
+| gelaufen, Tempo messbar (Median 322 u/s) | 6 |
+| langsam heruntergelaufen | 2 |
+| eigener Antrieb, Tempo nicht messbar | 13 |
+
+Die ersten neunzehn sind **kein KI-Problem**. `G_Damage` addiert den vollen
+Rückstoß auf die Geschwindigkeit und setzt `PMF_TIME_KNOCKBACK` für 50 bis 200
+Millisekunden; in diesem Fenster lässt `PM_Friction` die Bodenreibung komplett
+aus und `PM_WalkMove` fällt auf `pm_airaccelerate` zurück. Ein direkter
+Raketentreffer gibt rund 500 Einheiten je Sekunde zur Seite, gegen die der Bot
+physikalisch nicht anbremsen kann. Das ist derselbe Schubs, den du selbst
+bekommst — deshalb liegen eure Quoten übereinander.
+
+**Wo die Lücke ist.** Die Bots *haben* eine Kantenprüfung, aber nur auf dem
+freien Weg (`BotWalkInDirection`, also Ausweichen im Kampf), sie schaut beim
+Gehen zwei Bilder voraus — und vor allem: sie **verweigert nur den Befehl**.
+Ein Bot mit 320 Einheiten je Sekunde bleibt davon nicht stehen; die Reibung
+braucht rund fünfzig Einheiten Weg. Gebremst wird an keiner Stelle. Dem Weg
+nach der Karte (`BotMoveToGoal`) fehlt selbst das: `TRAVEL_WALK` benutzt die
+Lückenprüfung nur als Tempodrossel und läuft weiter, `TRAVEL_WALKOFFLEDGE` hat
+gar keine.
+
+Nachgezählt im `.aas` von q3dm17: von 2602 Verbindungen sind 365 „geh über die
+Kante" und 225 „schieß dich mit der Rakete rüber". Die Karte ist so gebaut.
+
+**Was der Haken tut.** `BotEdgeCare` sitzt in `BotUpdateInput`, zwischen dem
+Abholen der Bot-Eingabe und dem Umbau in einen `usercmd` — die letzte Stelle,
+an der die Bewegung noch ein Richtungsvektor in Weltkoordinaten ist. Läuft ein
+Bot auf dem Boden schneller als hundert Einheiten je Sekunde und ist am Ende
+seines Bremswegs auf tausend Einheiten nach unten **nichts**, wird rückwärts
+gedrückt statt weiter vorwärts. Gemessen: in siebzig Sekunden mit sechs Bots
+greift das 112-mal, jeweils bei 320 bis 327 Einheiten je Sekunde.
+
+Drei Einschränkungen stehen absichtlich drin. **Springen bleibt seine Sache** —
+über die Lücke zu springen ist auf dieser Karte die normale Art, sich zu
+bewegen, also wird bei gesetztem `ACTION_JUMP` nichts angefasst. **Tausend
+Einheiten**, weil ein gewollter Absatz auf q3dm17 im Mittel 174 tief ist; so
+kann der Griff keine Strecke sperren, die der Bot wirklich gehen wollte. Und
+die vier Richtungsflaggen werden mitgelöscht, weil `BotInputToUserCommand`
+`forwardmove` und `rightmove` sonst stumpf überschreibt — ohne das wäre die
+Bremse je nach Laune der KI wirkungslos.
+
+**Und der zweite Haken: hüpfen.** In Quake läuft man beim Springen ohne
+Bodenreibung weiter — wer hüpft, behält sein Tempo, statt es in jedem Bild ein
+Stück zu verlieren. Die Bots machen das von sich aus nie; sie springen nur, wo
+die Karte es verlangt (`TRAVEL_JUMP`, Sprungfeld, Hindernis) oder zufällig im
+Gefecht.
+
+`BotSpeedJump` sitzt hinter derselben Stelle wie die Bremse und drückt Sprung,
+wenn vier Dinge zugleich gelten: der Bot steht auf dem Boden, läuft schon
+schneller als zweihundert Einheiten je Sekunde, will weiter **in dieselbe
+Richtung** (Skalarprodukt über 0,9), und vor ihm ist Boden. Beim Ausweichen im
+Gefecht wird ausdrücklich nicht gesprungen — ein Bot in der Luft fliegt eine
+Wurfparabel und ist damit *leichter* zu treffen, nicht schwerer.
+
+Dass daraus überhaupt ein Hüpfen wird und nicht ein einzelner Sprung, liegt an
+`PM_CheckJump`: die Taste muss zwischendurch los sein (`PMF_JUMP_HELD`). Weil
+hier nur auf dem Boden gedrückt wird und in der Luft nicht, löst sich das von
+selbst — beim Absprung gesetzt, während des Flugs nicht, bei der Landung
+wieder.
+
+**Für die Messung wichtig:** mehr springende Bots heißt mehr Ziele in der Luft,
+und die trifft die Vorhersage deutlich besser als laufende (im Bestand 49–56 %
+gegen 18–19 %). Eine Sitzung mit diesem Haken ist mit einer ohne **nicht**
+direkt vergleichbar. Beide Haken sind aus voreingestellt.
+
+## Warum die Bots herumstehen
+
+Drei Gründe, alle im Original-Quelltext, alle nachgelesen.
+
+**Erstens: jede Chatzeile kostet genau zwei Sekunden Stillstand.** `BotChatTime`
+gibt stur `2.0` zurück, und `AINode_Stand` gibt in dieser Zeit **keinen
+einzigen** Bewegungsbefehl — der Bot steht, hebt die Sprechblase, wartet. Die
+Auslöser sind genau die falschen Momente: `AIEnter_Stand(bs, "battle fight:
+enemy dead")` friert ihn direkt nach einem Kill ein, mitten im Gefecht. Dazu
+„getroffen worden", „Zufallsgeplauder", „ins Spiel gekommen". Jedes `BotChat_*`
+beginnt mit `if (bot_nochat.integer) return qfalse;` — der Haken **„Bots nicht
+quatschen lassen"** setzt genau diese Cvar, mehr braucht es nicht.
+
+**Zweitens, und das ist das Hängenbleiben auf Plattformen:** `BotAttackMove`
+hat exakt **zwei** Versuche, sich zu bewegen — seitwärts, und bei Misserfolg
+seitwärts andersrum. An einer Plattformkante führen beide über die Leere,
+`BotWalkInDirection` lehnt beide ab, *ohne je einen Bewegungsbefehl zu geben*,
+und die Funktion fällt mit einem Nullsatz heraus: `failure 0, blocked 0`. Der
+KI-Knoten sieht also keinen Fehler, `BotAIBlocked` steigt in der ersten Zeile
+wieder aus, und niemand merkt etwas. Der Bot steht einen ganzen Denkschritt —
+hundert Millisekunden, nicht ein Bild — und wieder, solange er dort steht.
+
+Die Rettung dafür steht seit id Software im Code, auskommentiert:
+
+```c
+//bot couldn't do any useful movement
+//	bs->attackchase_time = AAS_Time() + 6;
+```
+
+`attackchase_time` schickt den Bot stattdessen den Weg nach der Karte zum
+Gegner. Weil die Zeile nie läuft, ist der Zweig, der sie liest, toter Code.
+Am Haken `g_botEdgeCare` wird sie jetzt gesetzt — mit **einer halben Sekunde
+statt sechs**, denn sechs machen aus jedem Scharmützel eine Verfolgungsjagd.
+
+**Drittens, hausgemacht:** die erste Fassung der Bremse hat die Bots aus ihren
+eigenen Sprüngen gebremst. botlib kündigt einen Sprung über eine Lücke mit
+`EA_DelayedJump` an und drückt erst ein Bild später wirklich; während des
+Anlaufs steht nur `ACTION_DELAYEDJUMP`, und vor dem Bot ist naturgemäß nichts.
+Geprüft wurde aber nur auf `ACTION_JUMP`. Auf einer Karte, auf der Springen die
+Fortbewegung *ist*, heißt das festgenagelt. Beide Flaggen werden jetzt
+respektiert — und die schönen Sturzzahlen der ersten Sitzung sind mit Vorsicht
+zu lesen: ein Teil davon waren Bots, die schlicht nicht mehr hinübergegangen
+sind.
+
+Drei weitere Befunde stehen noch offen: „blockiert" heißt im ganzen Bot-Code
+nur *eine andere Entität in drei Einheiten Abstand* — Weltgeometrie und
+Plattformecken sind dem Ausweichsystem unsichtbar; zwei Bots auf einer schmalen
+Plattform blockieren sich gegenseitig ohne dritten Versuch; und bei
+Kampf-Können ≤ 0,4 gibt ein Bot gar keinen Bewegungsbefehl, solange der Gegner
+in seiner Wunschentfernung steht.

@@ -88,6 +88,16 @@ public class MainForm : Form, IMessageFilter {
 	// Aufgefuellt wird auf 999 und nicht auf "unendlich", weil die Bots ihre
 	// Waffenwahl an den Munitionszahlen festmachen - siehe G_TopUpAmmo.
 	readonly ComboBox infiniteAmmo = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	// Die Bots haben zwar eine Kantenpruefung, aber sie verweigert nur den
+	// Befehl - gebremst wird nirgends, und bei dreihundertzwanzig Einheiten je
+	// Sekunde braucht die Reibung rund fuenfzig Einheiten Weg. Siehe BotEdgeCare.
+	readonly CheckBox botEdgeCare = new() { Text = "Bots nicht in die Leere laufen lassen", Checked = false, AutoSize = true };
+	// Ohne Bodenreibung behaelt man beim Springen sein Tempo. Die Bots machen
+	// das von sich aus nie - siehe BotSpeedJump.
+	readonly CheckBox botJump = new() { Text = "Bots hüpfen, um Tempo zu halten", Checked = false, AutoSize = true };
+	// Jede Chatzeile kostet den Bot genau zwei Sekunden Stillstand - AINode_Stand
+	// gibt gar keinen Bewegungsbefehl. Betrifft auch "Gegner tot" mitten im Kampf.
+	readonly CheckBox botNoChat = new() { Text = "Bots nicht quatschen lassen (kostet 2 s Stillstand)", Checked = false, AutoSize = true };
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -96,6 +106,12 @@ public class MainForm : Form, IMessageFilter {
 		SmallChange = 5, LargeChange = 25, Width = 190,
 	};
 	readonly Label weaponRateValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	// Hundert Prozent trifft man mit dem Schieber kaum genau; der Knopf daneben
+	// ist der Weg zurück zum Spiel-Original.
+	readonly Button weaponRateDefault = new() {
+		Text = "Standard", Width = 84, Height = 24,
+		Margin = new Padding( 12, 4, 0, 0 ), FlatStyle = FlatStyle.System,
+	};
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -511,6 +527,7 @@ public class MainForm : Form, IMessageFilter {
 		itemOutline.CheckedChanged += ( _, _ ) => UpdateItemEnabled();
 		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
 		weaponRate.ValueChanged += ( _, _ ) => ShowWeaponRate();
+		weaponRateDefault.Click += ( _, _ ) => weaponRate.Value = 100;
 		infiniteAmmo.Items.AddRange( new object[] { "wie im Spiel", "unbegrenzt für mich", "unbegrenzt für alle" } );
 		infiniteAmmo.SelectedIndex = 0;
 		infiniteAmmo.SelectedIndexChanged += ( _, _ ) => UpdateSwitchEnabled();
@@ -1143,8 +1160,11 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
 			Row( Pad( noSelfDamage ) ),
+			Row( Pad( botEdgeCare ) ),
+			Row( Pad( botJump ) ),
+			Row( Pad( botNoChat ) ),
 			Row( Labelled( "Munition:", infiniteAmmo ) ),
-			Row( Labelled( "Nachladezeit:", weaponRate ) ),
+			Row( Labelled( "Nachladezeit:", weaponRate ), weaponRateDefault ),
 			Row( Pad( weaponRateValue ) ),
 			Row( Labelled( "Bildschirm:", screenMode ) ),
 			Row( Labelled( "Auflösung:", screenSize ) ),
@@ -1342,6 +1362,23 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( botNoChat, "Ein Bot, der etwas sagt, steht dafür genau zwei Sekunden vüllig still –"
+ 			+ " AINode_Stand gibt keinen einzigen Bewegungsbefehl. Ausgelöst wird das unter"
+ 			+ " anderem durch \"Gegner tot\" mitten im Gefecht, durch Treffer und durch reinen"
+ 			+ " Zufall. Mit diesem Haken reden sie nicht mehr und bleiben in Bewegung." );
+		hintTip.SetToolTip( botJump, "Springt ein Bot beim Laufen, verliert er kein Tempo an die Bodenreibung."
+ 			+ " Gesprungen wird nur geradeaus, schon schnell und mit Boden voraus – nicht beim"
+ 			+ " Ausweichen im Gefecht, denn ein Bot in der Luft fliegt eine Wurfparabel und ist"
+ 			+ " damit leichter zu treffen, nicht schwerer.\n\n"
+ 			+ "Achtung für die Messung: mehr springende Bots heißt mehr Ziele in der Luft, und"
+ 			+ " die Vorhersage trifft die viel besser als laufende. Sitzungen mit und ohne diesen"
+ 			+ " Haken sind nicht direkt vergleichbar." );
+		hintTip.SetToolTip( botEdgeCare, "Läuft ein Bot auf eine Kante zu, hinter der auf tausend Einheiten"
+ 			+ " nichts mehr kommt, bremst er, statt einfach weiterzulaufen. Springen bleibt seine"
+ 			+ " Sache – über die Lücke zu springen ist auf q3dm17 die normale Art, sich zu bewegen.\n\n"
+ 			+ "Was es nicht kann: wer von einer Rakete geschubst wird, hat für bis zu zweihundert"
+ 			+ " Millisekunden gar keine Bodenreibung und kann physikalisch nicht bremsen. Rund die"
+ 			+ " Hälfte der Stürze sind genau das – dein eigener Beschuss." );
 		hintTip.SetToolTip( infiniteAmmo, "Füllt die Munition jedes Server-Bildes auf 999 auf, damit eine Messung"
  			+ " nicht daran endet, dass die Waffe leer ist. „Für alle“ versorgt auch die Bots -"
  			+ " dann laufen sie aber keine Munitionskiste mehr an, und genau diese Wege sind es,"
@@ -1808,6 +1845,9 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
 		s.AppendLine( "aimFreeze=" + aimFreeze.Checked );
 		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
+		s.AppendLine( "botEdgeCare=" + botEdgeCare.Checked );
+		s.AppendLine( "botJump=" + botJump.Checked );
+		s.AppendLine( "botNoChat=" + botNoChat.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
@@ -1886,6 +1926,9 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimAttacker, v, "aimAttacker" );
 		SetBool( aimFreeze, v, "aimFreeze" );
 		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
+		SetBool( botEdgeCare, v, "botEdgeCare" );
+		SetBool( botJump, v, "botJump" );
+		SetBool( botNoChat, v, "botNoChat" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
@@ -2063,6 +2106,9 @@ public class MainForm : Form, IMessageFilter {
 		// richtig beschriftet.
 		cfg.AppendLine( $"set g_weaponRate {weaponRate.Value}" );
 		cfg.AppendLine( $"set g_infiniteAmmo {infiniteAmmo.SelectedIndex}" );
+		cfg.AppendLine( $"set g_botEdgeCare {( botEdgeCare.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botJump {( botJump.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set bot_nochat {( botNoChat.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
