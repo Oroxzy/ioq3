@@ -2471,21 +2471,23 @@ int BotCanAndWantsToRocketJump(bot_state_t *bs) {
 	if (bs->inventory[INVENTORY_ROCKETS] < 3) return qfalse;
 	//never rocket jump with the Quad
 	if (bs->inventory[INVENTORY_QUAD]) return qfalse;
-	// Gesundheit und Ruestung. Die Karte haelt 225 Raketensprung-Verbindungen
-	// bereit und der Ausfuehrer in botlib ist vollstaendig - was den Sprung in
-	// der Praxis verhindert, ist diese Klausel, nicht die Charakterdatei
-	// (26 der 33 Charaktere bestehen die Pruefung unten). Ein Mensch springt
-	// auch mit weniger, wenn der Weg es wert ist; mit g_botRocketJump reicht
-	// die Halfte, also so viel, dass der Sprung selbst (etwa 50 Schaden) ihn
-	// nicht umbringt.
-	if (bs->inventory[INVENTORY_HEALTH] < (g_botRocketJump.integer ? 55 : 60)) return qfalse;
+	// Gesundheit und Ruestung - und die bleiben stehen. Ein Raketensprung
+	// kostet um die fuenfzig Punkte; wer ihn mit fuenfundfuenfzig Leben setzt,
+	// steht danach auf fuenf und faellt beim naechsten Fehler. Ein erster
+	// Versuch hat genau das gemacht - die Klausel gelockert - und in einer
+	// Sitzung verdoppelten sich die Stuerze, fast alles eigene Spruenge.
+	// Raketensprung und Haushalten mit Gesundheit sind dasselbe Thema, und die
+	// Klausel IST das Haushalten. Sie bleibt.
+	if (bs->inventory[INVENTORY_HEALTH] < 60) return qfalse;
 	//if not full health
-	if (!g_botRocketJump.integer && bs->inventory[INVENTORY_HEALTH] < 90) {
+	if (bs->inventory[INVENTORY_HEALTH] < 90 && g_botRocketJump.integer < 2) {
 		//if the bot has insufficient armor
 		if (bs->inventory[INVENTORY_ARMOR] < 40) return qfalse;
 	}
-	// Und die Sprungfreude aus der Charakterdatei: sieben Charaktere liegen
-	// darunter, klesk hat den Wert gar nicht. Mit dem Haken duerfen auch die.
+	// Was dagegen mit Haushalten nichts zu tun hat, ist die Sprungfreude aus
+	// der Charakterdatei: sieben der dreiunddreissig liegen unter der Schwelle,
+	// klesk hat den Wert gar nicht. Das ist Geschmack, keine Vorsicht - und nur
+	// das uebergeht dieser Haken.
 	rocketjumper = BotChar(bs, CHARACTERISTIC_WEAPONJUMPING, 0, 1,
 		g_botRocketJump.integer ? 1.0f : -1.0f);
 	if (rocketjumper < 0.5) return qfalse;

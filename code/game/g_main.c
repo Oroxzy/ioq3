@@ -198,8 +198,10 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_botRethink, "g_botRethink", "0", 0, 0, qtrue },
 	// Jeder Bot erfaehrt von jedem genommenen Gegenstand, wann er wiederkommt.
 	{ &g_botTiming, "g_botTiming", "0", 0, 0, qtrue },
-	// Raketenspruenge auch mit weniger Gesundheit und unabhaengig von der
-	// Sprungfreude des Charakters.
+	// 1: die Sprungfreude des Charakters uebergehen, die Gesundheitsklausel
+	// aber stehen lassen - ein Raketensprung kostet fuenfzig Punkte, und das
+	// Haushalten damit ist kein Zierat. 2 laesst zusaetzlich die Ruestungs-
+	// bedingung fallen, fuer wen es krachen soll.
 	{ &g_botRocketJump, "g_botRocketJump", "0", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },

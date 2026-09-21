@@ -987,3 +987,26 @@ die Sprungfreude aus der Charakterdatei wird übergangen.
 Ehrlich dazu: dass die Klausel *die* Ursache der Seltenheit ist, ist belegt;
 wie oft sie danach wirklich springen, ist Schätzung. Das muss eine Sitzung
 zeigen.
+
+**Nachgemessen: das Hüpfen bringt nichts.** Zwei headless-Läufe von je zehn
+Minuten, sechs Bots, alle übrigen Haken an, nur `g_botJump` unterschiedlich:
+
+| | Tode | in der Grube | |
+|---|---|---|---|
+| Hüpfen **an** | 151 | 18 | **11,9 %** |
+| Hüpfen **aus** | 177 | 10 | **5,6 %** |
+
+Der Anteil verdoppelt sich, und die Bots töten insgesamt seltener. Rund zwei
+Sigma — nicht in Stein gemeißelt, aber die Richtung stimmt mit allem anderen
+überein. Aus den Spielprotokollen dazu: mit Hüpfen waren die Bots **73 % der
+Zeit in der Luft** statt 33–36 %, und ihr Tempo lag bei **291 u/s statt
+310–312** — also *langsamer*.
+
+Der Grund ist Quake-Physik, und er war vorhersehbar: Springen **erhält** das
+Tempo, es erhöht es nicht. Der Gewinn beim echten Strafe-Jumping kommt aus dem
+Zusammenspiel von Blickrichtung und seitlicher Beschleunigung in der Luft —
+und die Blickrichtung des Bots gehört dem Zielen. Geradeaus hüpfen hat also nur
+die Nachteile: eine Wurfparabel ist leichter zu treffen, und wer öfter in der
+Luft ist, verpasst öfter die Landung.
+
+Der Haken bleibt drin, damit man es selbst sehen kann. Empfohlen ist er nicht.
