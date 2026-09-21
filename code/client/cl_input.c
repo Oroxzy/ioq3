@@ -912,7 +912,7 @@ in seconds, and the learner tunes it from what the bots really do.
 // dem geworfenen Ziel hindurch; ohne diese Spalte waere nicht nachzusehen, ob
 // der neue Weg ueberhaupt je greift.
 // Zwoelf: "edge" auf der Schusszeile - eins, wenn das Ziel ueber eine Kante// lief und die Vorhersage es deshalb fallen laesst. Vorher blieb der Punkt auf// Plattformhoehe ueber der Leere stehen; ohne die Spalte waere nicht zu sehen,// wie oft der Fall ueberhaupt gerechnet wird.
-#define AIM_LOG_VERSION	13
+#define AIM_LOG_VERSION	14
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -933,6 +933,12 @@ static qboolean	aimSteered;
 static float	aimOwnMove;
 
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
+// Womit zuletzt gestempelt wurde. Nachladezeit und Munition sind Cvars und
+// koennen mitten in einer Sitzung umgestellt werden; aendert sich eine, wird
+// neu gestempelt, damit eine Auswertung die Schuesse danach nicht mit denen
+// davor in einen Topf wirft.
+static int	aimLogRate = -1;
+static int	aimLogAmmo = -1;
 
 /*
 =================
@@ -1791,7 +1797,11 @@ auseinander, tief in einem fuenfhundert Einheiten breiten Fach. Die Quote je
 Fach stimmt also, die Zuordnung der einzelnen Kugel nicht.
 =================
 */
-#define AIM_RATE_PENDING	32
+// Auch dieser Ring wird mit einer kuerzeren Nachladezeit voller: bei zehn
+// Prozent gehen zehnmal so viele Schuesse raus, waehrend die Fenster gleich
+// lang offen bleiben. Er sagt wenigstens Bescheid (aim ratelost), aber er
+// soll es moeglichst nicht muessen.
+#define AIM_RATE_PENDING	128
 
 typedef struct {
 	int			target;			// auf wen geschossen wurde
@@ -4214,7 +4224,7 @@ shortened by haste the way the game does it.
 =================
 */
 static int CL_AimAssistFireDelay( int weapon ) {
-	int	delay;
+	int	delay, rate;
 
 	switch ( weapon ) {
 	case WP_LIGHTNING:			delay = 50; break;
@@ -4235,6 +4245,30 @@ static int CL_AimAssistFireDelay( int weapon ) {
 
 	if ( cl.snap.ps.powerups[PW_HASTE] ) {
 		delay /= 1.3;
+	}
+
+	// Die Nachladezeit der Werkbank, in Prozent. Dieselbe Rechnung wie in
+	// PM_Weapon, in derselben Reihenfolge und mit demselben Boden - laufen die
+	// beiden auseinander, sagt diese Vorhersage den Schuss auf dem falschen
+	// Befehl voraus, und der exakte Griff im Schussmoment greift daneben.
+	//
+	// Gelesen wird g_weaponRateActive und NICHT g_weaponRate: die zweite kann
+	// jeder setzen, die erste legt nur ein Spielmodul an, das sie auch
+	// anwendet. Engine und Modul sind zwei getrennte Dateien - wird nur die
+	// Engine neu eingespielt, glaubte sie sonst einem alten Modul eine Zahl,
+	// nach der dort niemand schiesst, und schnappte fortan daneben. Fehlt die
+	// Cvar, kommt null heraus und es bleibt bei den Originalzeiten.
+	//
+	// Direkt aus der Cvar-Tabelle gelesen, weil die Hilfe ohnehin nur auf dem
+	// eigenen Prozess laeuft (NA_LOOPBACK) - dort ist es dieselbe Tabelle.
+	rate = (int)Cvar_VariableValue( "g_weaponRateActive" );
+	if ( rate > 0 && rate != 100 ) {
+		delay = delay * rate / 100;
+		// Derselbe Boden wie in PM_Weapon, wo auch steht, warum es ein ganzes
+		// Server-Bild ist und nicht zehn Millisekunden.
+		if ( delay < 50 ) {
+			delay = 50;
+		}
 	}
 
 	return delay;
@@ -4590,7 +4624,15 @@ little about holding a line and counts for less. The result lives in
 cl_aimAssistLead, in seconds, which is what the prediction reads.
 =================
 */
-#define AIM_PENDING		16
+// Wieviele Schuesse gleichzeitig auf ihr Eintreffen warten koennen. Sechzehn
+// reichten, solange eine Rakete alle achthundert Millisekunden rausging: bei
+// einer Sekunde Flugzeit liegen dann zwei in der Luft. Mit der Nachladezeit
+// der Werkbank (g_weaponRate) koennen es ein Dutzend und mehr sein, und der
+// Ring haette die aeltesten still ueberschrieben - Schuesse, die dann weder
+// in der Trefferquoten-Tabelle noch beim Lerner ankommen. Vierundsechzig ist
+// ein paar Kilobyte und deckt auch zehn Prozent Nachladezeit ab. Muss eine
+// Zweierpotenz bleiben, der Ring rechnet mit UND.
+#define AIM_PENDING		64
 
 typedef struct {
 	int		target;			// client number of the bot aimed at
@@ -4611,8 +4653,32 @@ typedef struct {
 
 static aimPending_t	aimPending[AIM_PENDING];
 static int			aimPendingNum;
+static int			aimPendingLost;	// wieviele der Ring schon verschluckt hat
 static int			aimLearned;		// shots learned from so far
 static int			aimLanded;		// landing samples learned from so far, counted apart
+
+/*
+=================
+CL_AimAssistPendingSlot
+
+Der naechste Platz im Ring - und ein Wort, wenn dabei ein Schuss verloren
+geht, der noch auf sein Eintreffen wartete. Lautlos waere das die schlimmste
+Sorte Fehler: die Tabelle fuellte sich weiter, nur eben ohne die Schuesse, die
+am dichtesten aufeinander folgten.
+=================
+*/
+static aimPending_t *CL_AimAssistPendingSlot( void ) {
+	aimPending_t	*p = &aimPending[aimPendingNum++ & ( AIM_PENDING - 1 )];
+
+	if ( p->arrival != 0 ) {
+		aimPendingLost++;
+		if ( cl_aimAssistDebug->integer ) {
+			Com_Printf( "aim pendinglost: ring full, dropped a shot due at %i lost %i frame %i\n",
+				p->arrival, aimPendingLost, cl.snap.serverTime );
+		}
+	}
+	return p;
+}
 
 // Warum ein Schuss dem Lerner nichts beibringt. Fuellt sich die Tabelle nicht,
 // steht hier, woran es liegt.
@@ -4717,7 +4783,7 @@ static void CL_AimAssistRememberLanding( const entityState_t *entity, int weapon
 		return;
 	}
 
-	p = &aimPending[aimPendingNum++ & ( AIM_PENDING - 1 )];
+	p = CL_AimAssistPendingSlot();
 	p->target = entity->clientNum;
 	p->arrival = cl.snap.serverTime + (int)( lead * 1000.0f + 0.5f );
 	p->weapon = weapon;
@@ -4791,7 +4857,7 @@ static void CL_AimAssistRemember( const entityState_t *entity, int weapon, float
 		return;
 	}
 
-	p = &aimPending[aimPendingNum++ & ( AIM_PENDING - 1 )];
+	p = CL_AimAssistPendingSlot();
 	p->target = entity->clientNum;
 	p->arrival = cl.snap.serverTime + (int)( lead * 1000.0f + 0.5f );
 	p->weapon = weapon;
@@ -5075,7 +5141,7 @@ void CL_AimAssistSnapshot( void ) {
 	const char			*info;
 	char				bots[1024];
 	vec3_t				far;
-	int					i, j, event, kind, present;
+	int					i, j, event, kind, present, rate, ammo;
 
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable, nothing else counts. Learning and the log both
@@ -5089,10 +5155,17 @@ void CL_AimAssistSnapshot( void ) {
 	// Womit dieses Protokoll geschrieben wurde. Die Zahl steigt, sobald sich
 	// eine der Zeilen aendert, damit eine Auswertung nicht stillschweigend
 	// Felder liest, die es damals noch nicht gab.
-	if ( !aimLogStamped ) {
+	// g_weaponRateActive und nicht g_weaponRate: im Kopf soll stehen, was das
+	// Spielmodul wirklich anlegt, nicht was jemand gewuenscht hat. Damit ist
+	// diese Zeile zugleich die Probe, dass Engine und Modul zusammenpassen.
+	rate = (int)Cvar_VariableValue( "g_weaponRateActive" );
+	ammo = (int)Cvar_VariableValue( "g_infiniteAmmo" );
+	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo ) {
 		aimLogStamped = qtrue;
-		Com_Printf( "aim log: version %i built %s %s frame %i\n",
-			AIM_LOG_VERSION, __DATE__, __TIME__, cl.snap.serverTime );
+		aimLogRate = rate;
+		aimLogAmmo = ammo;
+		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i frame %i\n",
+			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();

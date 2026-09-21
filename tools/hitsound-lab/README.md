@@ -650,3 +650,77 @@ Und die Liste hat beim geführten Griff überhaupt keinen Sichtkegel — die
 dreißig Grad im Quelltext gelten nur für den Vergleichsgriff des Protokolls. Für eine saubere Messung ist das richtig, zum Spielen
 nicht — deshalb ist der Haken aus voreingestellt. Mit ihm an muss `own` auf
 jeder Zeile 0,00 stehen; das ist die Probe, dass er greift.
+
+**Munition und Nachladezeit.** Zwei Stellschrauben, die nichts messen, sondern
+das Messen beschleunigen: eine Messung soll nicht daran enden, dass die Waffe
+leer ist, und wer hundert Raketen braucht, will nicht achthundert Millisekunden
+je Schuss warten.
+
+*Munition* füllt jedes Server-Bild auf **200** auf — nicht auf „unendlich".
+Das Spiel kennt −1 als unendlich (`PM_Weapon` zieht dann nichts ab), aber
+`BotUpdateInventory` kopiert `ps.ammo[]` roh in die Bot-Inventur, und die
+Fuzzy-Logik der Waffenwahl vergleicht diese Zahlen gegen Schwellen. Eine −1
+läge unter jeder davon: der Bot hätte unendlich Raketen und würde den
+Raketenwerfer nie mehr nehmen. 200 heißt für beide Seiten dasselbe — und es
+ist die Zahl, die der Rest des Spiels für „voll“ hält: `Add_Ammo` klemmt dort
+ab, sodass ein Aufsammeln den Wert nicht mehr zurücksetzt. Dass
+Munitionskisten damit liegen bleiben, ist keine Panne, sondern was „immer
+voll“ bedeutet — und der Haken „Waffe wechseln, wenn die Munition leer ist“
+wird ausgegraut, weil er nie auslösen könnte.
+„Für alle" versorgt auch die Bots — dann laufen sie aber keine Munitionskiste
+mehr an, und **genau diese Wege sind es, an denen die Vorhersage gemessen
+wird**. Mehr noch: die Entscheidungen der Bot-Bibliothek zwischen Angreifen,
+Fliehen, Verfolgen und Lagern hängen an Munitionsschwellen zwischen fünf und
+fünfzig. Sind die dauerhaft erfüllt, greifen die Bots an, statt sich
+abzusetzen. Eine Sitzung in diesem Modus misst also andere Bots als jede
+davor; „nur für mich" ist der gemeinte Normalfall.
+
+*Nachladezeit* ist ein Prozentsatz der normalen Zeiten und gilt **nur für
+Menschen**: schössen die Bots mit, käme man vor lauter Einschlägen nicht zum
+Messen. Sie steht in `PM_Weapon`, und dieselbe Rechnung — dieselbe Reihenfolge,
+derselbe Boden von zehn Millisekunden — steht ein zweites Mal in
+`CL_AimAssistFireDelay`. Das ist kein Versehen: die Zielhilfe sagt voraus, auf
+**welchem** Befehl der Schuss rausgeht, und setzt die Sicht auf genau diesem
+Befehl exakt auf den Punkt. Laufen die beiden Rechnungen auseinander, schnappt
+sie auf dem falschen Befehl, und der ganze Gewinn von Befund F03 wäre weg.
+
+**Der Boden liegt bei einem Server-Bild**, fünfzig Millisekunden, und das ist
+keine Vorsicht, sondern eine Bedingung. Unterhalb davon fällt dreierlei
+zusammen: der Spielerzustand trägt nur **zwei** Ereignisse je Bild, also gingen
+Mündungsfeuer und Schussgeräusch verloren — und mit ihnen Schritt- und
+Landegeräusche aus denselben zwei Plätzen; der Trefferton kommt einmal je
+Schnappschuss; und die **Trefferquoten-Tabelle bucht höchstens einen Schuss je
+Waffe und Bild**. Sie ruht darauf, dass keine Waffe schneller feuert als der
+Blitzwerfer, und der trifft mit seinen fünfzig Millisekunden genau ein Bild.
+Ohne den Boden hätte die Tabelle von sechs Schüssen einen gebucht und einen
+Treffer gutgeschrieben — also gemessen, ob *irgendeiner* von sechs traf, und
+das als Trefferquote in eine Datei geschrieben, die Sitzungen überdauert.
+Fünfzig lässt der Rakete immer noch das Sechzehnfache und der Railgun das
+Dreißigfache; Blitz und MG sind schlicht schon am Boden.
+
+Drei Dinge noch, der Reihe nach ehrlich:
+
+*Die Engine glaubt nicht der Wunschzahl.* `CL_AimAssistFireDelay` liest nicht
+`g_weaponRate`, sondern `g_weaponRateActive` — eine Cvar, die **nur ein
+Spielmodul anlegt, das sie auch anwendet**. Engine und Modul sind zwei Dateien,
+die einzeln veralten können; würde nur die Engine neu eingespielt, rechnete
+sie sonst mit einem Takt, nach dem auf dem Server niemand schießt. Damit ist
+die Kopfzeile des Protokolls zugleich die Probe, dass beide zusammenpassen.
+
+*Das Bild läuft nicht mit.* Das cgame sagt die Bewegung mit den Originalzeiten
+voraus und setzt das Feld gar nicht — auch unser eigenes nicht, es braucht
+keine Schusstakte, und das hier geladene kommt ohnehin aus einem fremden pk3.
+Die Waffenanimation kann also zucken. Über den Schuss entscheidet der Server,
+und die Zielhilfe liest dessen `weaponTime` aus dem Schnappschuss.
+
+*Mehr Schüsse sind nicht mehr Lernproben.* Der Vorhalt-Lerner nimmt nur
+Projektilwaffen und höchstens **eine offene Probe je Ziel** — zwei Proben auf
+denselben Lauf wären derselbe Lauf, zweimal gezählt. Schneller schießen
+erhöht dort gar nichts; dafür braucht es **mehr Bots**. Die
+Trefferquoten-Tabelle dagegen bucht je Waffe und Bild und nimmt die
+zusätzlichen Schüsse sehr wohl — bis zu zwanzig in der Sekunde.
+
+Und weil eine Sitzung mit anderem Takt mit den alten nicht direkt vergleichbar
+ist, stehen `rate` und `ammo` im Kopf des Protokolls, wird neu gestempelt,
+sobald sich eines ändert, und die Werkbank schreibt die Bedingung neben die
+Fassungsangabe — in Rot, wenn eine Datei mehrere davon enthält.

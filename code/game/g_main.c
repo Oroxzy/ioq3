@@ -61,6 +61,8 @@ vmCvar_t	g_debugDamage;
 vmCvar_t	g_hitSoundDebug;
 vmCvar_t	g_weaponSpawns;
 vmCvar_t	g_selfDamage;
+vmCvar_t	g_weaponRate;
+vmCvar_t	g_infiniteAmmo;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -160,6 +162,13 @@ static cvarTable_t		gameCvarTable[] = {
 	// Aus: ein Raketen- oder BFG-Sprung traegt wie immer, tut aber nicht weh.
 	// Der Splash auf andere bleibt davon unberuehrt.
 	{ &g_selfDamage, "g_selfDamage", "1", 0, 0, qtrue },
+	// Nachladezeiten in Prozent der normalen, nur fuer Menschen: schoessen die
+	// Bots mit, kaeme man vor lauter Einschlaegen nicht zum Messen.
+	{ &g_weaponRate, "g_weaponRate", "100", 0, 0, qtrue },
+	// 0 aus, 1 nur die Menschen, 2 alle. Bots mitzuversorgen aendert ihre
+	// Wege - sie laufen dann keine Munitionskiste mehr an -, und genau diese
+	// Wege sind es, an denen die Vorhersage gemessen wird.
+	{ &g_infiniteAmmo, "g_infiniteAmmo", "0", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },
@@ -382,6 +391,9 @@ void G_RegisterCvars( void ) {
 G_UpdateCvars
 =================
 */
+// Der zuletzt gemeldete Stand, damit die Cvar nicht jedes Bild neu gesetzt wird.
+static int	weaponRateEchoed = -1;
+
 void G_UpdateCvars( void ) {
 	int			i;
 	cvarTable_t	*cv;
@@ -408,6 +420,18 @@ void G_UpdateCvars( void ) {
 
 	if (remapped) {
 		G_RemapTeamShaders();
+	}
+
+	// Was dieses Spielmodul wirklich anlegt, in einer eigenen Cvar. Die
+	// Zielhilfe in der Engine muss dieselbe Nachladezeit rechnen wie PM_Weapon,
+	// sonst schnappt sie auf dem falschen Befehl - und Engine und Spielmodul
+	// sind zwei getrennte Dateien, die einzeln veralten koennen. Laege dort
+	// g_weaponRate, glaubte eine neue Engine einem alten Modul die Zahl, die
+	// es gar nicht anwendet. Diese Cvar legt nur ein Modul an, das sie auch
+	// anwendet; fehlt sie, rechnet die Engine mit den Originalzeiten.
+	if ( g_weaponRate.integer != weaponRateEchoed ) {
+		weaponRateEchoed = g_weaponRate.integer;
+		trap_Cvar_Set( "g_weaponRateActive", va( "%i", weaponRateEchoed ) );
 	}
 }
 

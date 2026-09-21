@@ -1701,6 +1701,31 @@ static void PM_Weapon( void ) {
 		addTime /= 1.3;
 	}
 
+	// Werkbank: die Nachladezeit in Prozent. Nach Haste, damit das Powerup
+	// weiter multiplikativ wirkt, und mit einem Boden von zehn Millisekunden -
+	// darunter schoesse die Waffe auf fast jedem Befehl, und der Zielhilfe
+	// bliebe kein Bild mehr, auf dem sie den Schuss kommen sieht.
+	// Dieselbe Rechnung steht in CL_AimAssistFireDelay; laufen die beiden
+	// auseinander, schnappt die Hilfe auf dem falschen Befehl.
+	if ( pm->weaponRate > 0 && pm->weaponRate != 100 ) {
+		addTime = addTime * pm->weaponRate / 100;
+	// Der Boden ist ein Server-Bild, fuenfzig Millisekunden, und nicht etwa
+	// zehn. Darunter faellt mehr auseinander als nur die Optik: der
+	// Spielerzustand traegt nur zwei Ereignisse je Bild (MAX_PS_EVENTS), also
+	// gingen Muendungsfeuer, Schussgeraeusch und mit ihnen Schritt- und
+	// Landegeraeusche verloren; der Trefferton kommt einmal je Schnappschuss;
+	// und die Trefferquoten-Tabelle der Werkbank bucht hoechstens einen Schuss
+	// je Waffe und Bild und schreibt hoechstens einen Treffer gut - sie ruht
+	// darauf, dass keine Waffe schneller als der Blitzwerfer feuert, und der
+	// trifft mit seinen fuenfzig Millisekunden genau ein Bild. Schneller
+	// schiessen hiesse also: mehr Schuesse fallen, aber die Tabelle zaehlt sie
+	// nicht - und die Quote stiege, ohne dass irgendetwas besser geworden
+	// waere. Fuenfzig laesst der Rakete immer noch das Sechzehnfache.
+		if ( addTime < 50 ) {
+			addTime = 50;
+		}
+	}
+
 	pm->ps->weaponTime += addTime;
 }
 

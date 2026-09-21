@@ -190,6 +190,20 @@ typedef struct {
 	int			pmove_fixed;
 	int			pmove_msec;
 
+	// Werkbank: die Nachladezeiten in Prozent der normalen, 100 laesst alles
+	// wie es ist. Steht hier und nicht in einer Cvar, weil bg_pmove.c auch im
+	// cgame liegt und dort keine Spiel-Cvars kennt.
+	//
+	// Gesetzt wird es allein vom Spiel, in ClientThink_real. Das cgame setzt es
+	// absichtlich NICHT: es sagt nur die Bewegung voraus und braucht dafuer
+	// keine Schusstakte, und der cgame, der hier wirklich laeuft, kommt aus
+	// einem fremden pk3 und kennt dieses Feld ohnehin nicht. Null heisst
+	// deshalb dasselbe wie hundert - wer das Feld nicht setzt, rechnet mit den
+	// Originalzeiten. Die Waffenanimation kann dadurch zucken; ueber den Schuss
+	// entscheidet der Server, und die Zielhilfe liest dessen weaponTime aus dem
+	// Schnappschuss, nicht die Vorhersage des cgame.
+	int			weaponRate;
+
 	// callbacks to test the world
 	// these will be different functions during game and cgame
 	void		(*trace)( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentMask );

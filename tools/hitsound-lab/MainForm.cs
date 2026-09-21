@@ -84,6 +84,18 @@ public class MainForm : Form, IMessageFilter {
 	// 2 immer am Fadenkreuz.
 	readonly ComboBox damagePlums = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
 	readonly CheckBox noSelfDamage = new() { Text = "kein Schaden an mir selbst", Checked = false, AutoSize = true };
+	// Der Index ist der Wert von g_infiniteAmmo: 0 aus, 1 nur ich, 2 alle.
+	// Aufgefuellt wird auf 999 und nicht auf "unendlich", weil die Bots ihre
+	// Waffenwahl an den Munitionszahlen festmachen - siehe G_TopUpAmmo.
+	readonly ComboBox infiniteAmmo = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
+	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
+	// den Schuss kommen sieht.
+	readonly TrackBar weaponRate = new() {
+		Minimum = 10, Maximum = 200, Value = 100, TickFrequency = 10,
+		SmallChange = 5, LargeChange = 25, Width = 190,
+	};
+	readonly Label weaponRateValue = new() { AutoSize = true, ForeColor = Color.DimGray };
 	// Wen die Hilfe nimmt, entscheidet die Vorrangliste; dieser Haken sagt nur,
 	// dass zum Angreifer ohne Einschwenken gesprungen wird
 	readonly CheckBox aimAttacker = new() { Text = "zum Angreifer springen statt weich schwenken", Checked = true, AutoSize = true };
@@ -421,7 +433,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 13;
+	const int LogVersion = 14;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -498,11 +510,18 @@ public class MainForm : Form, IMessageFilter {
 		aimLearn.CheckedChanged += ( _, _ ) => UpdateAimEnabled();
 		itemOutline.CheckedChanged += ( _, _ ) => UpdateItemEnabled();
 		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
+		weaponRate.ValueChanged += ( _, _ ) => ShowWeaponRate();
+		infiniteAmmo.Items.AddRange( new object[] { "wie im Spiel", "unbegrenzt für mich", "unbegrenzt für alle" } );
+		infiniteAmmo.SelectedIndex = 0;
+		infiniteAmmo.SelectedIndexChanged += ( _, _ ) => UpdateSwitchEnabled();
+		autoSwitch.CheckedChanged += ( _, _ ) => UpdateSwitchEnabled();
 		holdLottery.ValueChanged += ( _, _ ) => ShowHoldLottery();
 		ShowHoldLottery();
 		// die Folge-Felder auf den Standard-Hakenstand bringen
 		UpdateItemEnabled();
 		ShowItemRange();
+		ShowWeaponRate();
+		UpdateSwitchEnabled();
 		UpdateAimEnabled();
 
 		// das eigene Icon der App, auch in der Titelleiste und der Taskleiste
@@ -1124,6 +1143,9 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
 			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
 			Row( Pad( noSelfDamage ) ),
+			Row( Labelled( "Munition:", infiniteAmmo ) ),
+			Row( Labelled( "Nachladezeit:", weaponRate ) ),
+			Row( Pad( weaponRateValue ) ),
 			Row( Labelled( "Bildschirm:", screenMode ) ),
 			Row( Labelled( "Auflösung:", screenSize ) ),
 			Row( Labelled( "Bildrate:", maxFps ) ) );
@@ -1269,6 +1291,15 @@ public class MainForm : Form, IMessageFilter {
 	}
 
 	// Was zu sehen ist - mit dem Zielen hat das nichts zu tun
+	// Mit dauernd voller Munition wird keine Waffe je leer, und der Wechsel
+	// darauf kann nicht ausloesen. Ein Haken, der sichtbar aktiv ist und nichts
+	// tut, kostet spaeter eine Stunde Fehlersuche an der falschen Stelle.
+	void UpdateSwitchEnabled() {
+		bool possible = infiniteAmmo.SelectedIndex == 0;
+		autoSwitch.Enabled = possible;
+		autoSwitchOrder.Enabled = possible && autoSwitch.Checked;
+	}
+
 	void UpdateItemEnabled() {
 		itemOutlineAll.Enabled = itemOutline.Checked;
 		itemRange.Enabled = itemOutline.Checked;
@@ -1284,6 +1315,23 @@ public class MainForm : Form, IMessageFilter {
 			: $"ab {f:0.0}× Wirkradius, Rakete {f * 120:0} Einheiten";
 	}
 
+	// Prozent sagen wenig; die Millisekunden der Waffen, die hier gemessen
+	// werden, sagen alles. Rakete und MG stehen stellvertretend fuer langsam
+	// und schnell.
+	void ShowWeaponRate() {
+		int p = weaponRate.Value;
+		// Fuenfzig Millisekunden sind der Boden, ein ganzes Server-Bild. Darunter
+		// zaehlt die Trefferquoten-Tabelle nicht mehr mit und das halbe
+		// Muendungsfeuer bleibt aus, also wird gar nicht erst schneller gefeuert.
+		int rocket = Math.Max( 50, 800 * p / 100 );
+		int mg = Math.Max( 50, 100 * p / 100 );
+		weaponRateValue.Text = p == 100
+			? "wie im Spiel – Rakete 800 ms, MG 100 ms"
+			: $"{p} % – Rakete {rocket} ms, MG {mg} ms"
+				+ ( mg > 100 * p / 100 ? "  (50 ms ist der Boden)" : "" );
+		weaponRateValue.ForeColor = p == 100 ? Color.DimGray : Color.DarkGoldenrod;
+	}
+
 	void ShowItemRange() {
 		itemRangeValue.Text = itemRange.Value == 0 ? "immer voll sichtbar"
 			: $"voll bis {itemRange.Value / 2}, weg ab {itemRange.Value} Einheiten";
@@ -1294,6 +1342,20 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
+		hintTip.SetToolTip( infiniteAmmo, "Füllt die Munition jedes Server-Bildes auf 999 auf, damit eine Messung"
+ 			+ " nicht daran endet, dass die Waffe leer ist. „Für alle“ versorgt auch die Bots -"
+ 			+ " dann laufen sie aber keine Munitionskiste mehr an, und genau diese Wege sind es,"
+ 			+ " an denen die Vorhersage gemessen wird." );
+		hintTip.SetToolTip( weaponRate, "Die Nachladezeiten in Prozent der normalen, nur für dich – die Bots"
+ 			+ " schießen weiter im Originaltakt, sonst käme man vor lauter Einschlägen nicht zum"
+ 			+ " Messen. Die Zielhilfe rechnet denselben Takt mit, der exakte Griff im Schussmoment"
+ 			+ " greift also weiter richtig.\n\n"
+ 			+ "Was es NICHT bringt: mehr Lernproben. Der Lerner nimmt nur Projektilwaffen und"
+ 			+ " höchstens eine Probe je Ziel, solange die erste noch fliegt – schneller schießen"
+ 			+ " erhöht die Zahl der Schüsse, nicht die der Proben. Dafür braucht es mehr Bots.\n\n"
+ 			+ "Das Bild läuft nicht mit: die Bewegungsvorhersage im cgame kennt nur die"
+ 			+ " Originalzeiten, die Waffenanimation kann also zucken. Und eine Sitzung mit anderem"
+ 			+ " Takt ist mit den alten nicht direkt vergleichbar – der Wert steht im Protokollkopf." );
 		hintTip.SetToolTip( noSelfDamage, "Ein Raketen- oder BFG-Sprung trägt genauso weit wie sonst – der Rückstoß"
 			+ " wird im Spiel vor dem Schaden verrechnet –, kostet aber kein Leben mehr. Nur gegen dich"
 			+ " selbst: wen dein Splash sonst noch erwischt, trifft er unverändert." );
@@ -1745,6 +1807,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimKey=" + aimKey.Text );
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
 		s.AppendLine( "aimFreeze=" + aimFreeze.Checked );
+		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
+		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
 		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
@@ -1821,6 +1885,8 @@ public class MainForm : Form, IMessageFilter {
 		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
 		SetBool( aimAttacker, v, "aimAttacker" );
 		SetBool( aimFreeze, v, "aimFreeze" );
+		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
+		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
 		SetNum( aimLead, v, "aimLead" );
@@ -1990,6 +2056,13 @@ public class MainForm : Form, IMessageFilter {
 		// Aus: Raketen- und BFG-Spruenge tragen wie immer, tun aber nicht weh.
 		// Kein seta - eine Laboreinstellung gehoert nicht in die q3config.
 		cfg.AppendLine( $"set g_selfDamage {( noSelfDamage.Checked ? 0 : 1 )}" );
+		// Nachladezeit und Munition. Ebenfalls kein seta, und ebenfalls vor
+		// "map": die Nachladezeit liest das Spiel zwar bei jedem Schuss neu,
+		// aber die Zielhilfe stempelt sie beim ersten Schnappschuss ins
+		// Protokoll - steht sie dann schon, ist die Sitzung von Anfang an
+		// richtig beschriftet.
+		cfg.AppendLine( $"set g_weaponRate {weaponRate.Value}" );
+		cfg.AppendLine( $"set g_infiniteAmmo {infiniteAmmo.SelectedIndex}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
@@ -2228,6 +2301,10 @@ public class MainForm : Form, IMessageFilter {
 		int segment = 0, clockFrom = 0, clockLast = 0;
 		var learned = "";
 		var stamp = "";
+		// Nachladezeit und Munition koennen mitten in einer Sitzung umgestellt
+		// werden; das Spiel stempelt dann neu. Wer die Zeilen davor und danach in
+		// einen Topf wirft, vergleicht zwei Bedingungen und nennt es ein Ergebnis.
+		var conditions = new HashSet<string>();
 
 		foreach ( var line in text.Split( '\n' ) ) {
 			var trimmed = line.TrimEnd( '\r' );
@@ -2297,6 +2374,7 @@ public class MainForm : Form, IMessageFilter {
 				continue;
 			} else if ( trimmed.StartsWith( "aim log: " ) ) {
 				stamp = trimmed;
+				conditions.Add( StampCondition( trimmed ) );
 			} else if ( trimmed.StartsWith( "aim tune: " ) || trimmed.StartsWith( "aim table: " ) ) {
 				bool fromLearn = trimmed[4] == 't' && trimmed[5] == 'u';
 				var tune = Tune.Parse( trimmed[( fromLearn ? 10 : 11 )..] );
@@ -2329,7 +2407,7 @@ public class MainForm : Form, IMessageFilter {
 			pending = null;
 		}
 
-		ShowLogVersion( stamp );
+		ShowLogVersion( stamp, conditions.Count );
 
 		// Wie oft der Abzug gesperrt wurde und wie lange insgesamt. Ohne diese
 		// Zeile war nicht zu unterscheiden, ob die Sperre nie zugriff oder ob
@@ -2467,7 +2545,19 @@ public class MainForm : Form, IMessageFilter {
 
 	// Ob das Protokoll von einem Spiel stammt, dessen Zeilen dieses Werkzeug
 	// kennt. Ohne Stempel ist es aelter als diese Pruefung.
-	void ShowLogVersion( string line ) {
+	// Die Bedingung, unter der eine Sitzung lief: Nachladezeit und Munition.
+	// Fehlen sie, ist das Protokoll aelter als diese Felder.
+	static string StampCondition( string line ) {
+		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+		string rate = "", ammo = "";
+		for ( int i = 0; i < f.Length - 1; i++ ) {
+			if ( f[i] == "rate" ) rate = f[i + 1];
+			else if ( f[i] == "ammo" ) ammo = f[i + 1];
+		}
+		return rate + "/" + ammo;
+	}
+
+	void ShowLogVersion( string line, int conditions = 1 ) {
 		if ( line.Length == 0 ) {
 			logVersion.Text = "Protokoll ohne Fassungsangabe – älter als dieses Werkzeug";
 			logVersion.ForeColor = Color.DarkGoldenrod;
@@ -2476,15 +2566,28 @@ public class MainForm : Form, IMessageFilter {
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 		int found = 0;
-		string built = "";
+		string built = "", rate = "", ammo = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
 			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
+			else if ( f[i] == "rate" ) rate = f[i + 1];
+			else if ( f[i] == "ammo" ) ammo = f[i + 1];
 		}
 
-		if ( found == LogVersion ) {
-			logVersion.Text = $"Protokoll Fassung {found}, Spiel vom {built}";
-			logVersion.ForeColor = Color.DimGray;
+		// Unter welcher Bedingung gespielt wurde. Nur nennen, wenn sie vom
+		// Normalfall abweicht - sonst steht auf jeder Zeile eine Null-Aussage.
+		var how = "";
+		if ( rate.Length > 0 && rate != "100" && rate != "0" ) how += $", Nachladezeit {rate} %";
+		if ( ammo == "1" ) how += ", Munition unbegrenzt (nur ich)";
+		else if ( ammo == "2" ) how += ", Munition unbegrenzt (alle)";
+
+		if ( conditions > 1 ) {
+			logVersion.Text = $"Protokoll Fassung {found}, Spiel vom {built}{how} – ACHTUNG: {conditions}"
+				+ " verschiedene Bedingungen in einer Datei, die Zahlen unten mischen sie";
+			logVersion.ForeColor = Color.Firebrick;
+		} else if ( found == LogVersion ) {
+			logVersion.Text = $"Protokoll Fassung {found}, Spiel vom {built}{how}";
+			logVersion.ForeColor = how.Length > 0 ? Color.DarkGoldenrod : Color.DimGray;
 		} else {
 			logVersion.Text = found < LogVersion
 				? $"Protokoll Fassung {found} – dieses Werkzeug erwartet {LogVersion}, bitte das Spiel neu bauen"

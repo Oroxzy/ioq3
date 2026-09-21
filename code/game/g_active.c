@@ -921,6 +921,11 @@ void ClientThink_real( gentity_t *ent ) {
 	pm.pmove_fixed = pmove_fixed.integer | client->pers.pmoveFixed;
 	pm.pmove_msec = pmove_msec.integer;
 
+	// Die Nachladezeiten der Werkbank gelten nur fuer Menschen. Die Bots mit zu
+	// beschleunigen hiesse, dass man vor lauter Einschlaegen nicht mehr zum
+	// Schiessen kaeme - und gemessen werden sollen die eigenen Schuesse.
+	pm.weaponRate = ( ent->r.svFlags & SVF_BOT ) ? 100 : g_weaponRate.integer;
+
 	VectorCopy( client->ps.origin, client->oldOrigin );
 
 #ifdef MISSIONPACK
@@ -1107,6 +1112,57 @@ A fast client will have multiple ClientThink for each ClientEdFrame,
 while a slow client may have multiple ClientEndFrame between ClientThink.
 ==============
 */
+/*
+==============
+G_TopUpAmmo
+
+Werkbank: Munition auffuellen, damit eine Messung nicht daran endet, dass die
+Waffe leer ist.
+
+Aufgefuellt wird auf 200 und nicht auf -1, obwohl -1 im Spiel "unendlich"
+heisst und PM_Weapon dann gar nichts abzieht. Der Grund sind die Bots:
+BotUpdateInventory kopiert ps.ammo[] roh in bs->inventory (ai_dmq3.c), und die
+Fuzzy-Logik der Waffenwahl vergleicht diese Zahlen gegen Schwellen. Eine -1
+laege unter jeder davon - der Bot haette unendlich Raketen und wuerde den
+Raketenwerfer nie mehr waehlen. 999 ist fuer beide Seiten dasselbe.
+
+Waffen, die ohnehin schon auf -1 stehen (Gauntlet, Enterhaken), bleiben, wie
+sie sind.
+
+Modus 2 versorgt auch die Bots, und das ist mehr als "sie holen keine
+Munition mehr": die Entscheidungen der Bot-Bibliothek zwischen Angreifen,
+Fliehen, Verfolgen und Lagern haengen an Munitionsschwellen zwischen fuenf
+und fuenfzig. Sind sie alle dauerhaft erfuellt, ist BotAggression keine
+Groesse mehr, sondern eine Konstante, und die Bots greifen an, statt sich
+abzusetzen. Eine Sitzung in Modus 2 misst also andere Bots als jede davor.
+==============
+*/
+static void G_TopUpAmmo( gentity_t *ent ) {
+	int		i;
+
+	if ( !g_infiniteAmmo.integer ) {
+		return;
+	}
+	if ( ( ent->r.svFlags & SVF_BOT ) && g_infiniteAmmo.integer < 2 ) {
+		return;
+	}
+
+	for ( i = WP_NONE + 1; i < WP_NUM_WEAPONS; i++ ) {
+		if ( !( ent->client->ps.stats[STAT_WEAPONS] & ( 1 << i ) ) ) {
+			continue;
+		}
+		// Zweihundert und nicht neunhundertneunundneunzig: das ist die Zahl,
+		// die der Rest des Spiels fuer "voll" haelt. Add_Ammo klemmt dort ab,
+		// sodass ein Aufsammeln den Wert sonst bis zum Bildende auf 200
+		// zurueckrisse, und BG_CanItemBeGrabbed laesst eine Kiste ab dort
+		// liegen. Fuer die Schwellen der Bot-Waffenwahl - die hoechste liegt
+		// bei fuenfzig - ist es genauso unendlich wie 999.
+		if ( ent->client->ps.ammo[i] >= 0 && ent->client->ps.ammo[i] < 200 ) {
+			ent->client->ps.ammo[i] = 200;
+		}
+	}
+}
+
 void ClientEndFrame( gentity_t *ent ) {
 	int			i;
 
@@ -1114,6 +1170,8 @@ void ClientEndFrame( gentity_t *ent ) {
 		SpectatorClientEndFrame( ent );
 		return;
 	}
+
+	G_TopUpAmmo( ent );
 
 	// turn off any expired powerups
 	for ( i = 0 ; i < MAX_POWERUPS ; i++ ) {
