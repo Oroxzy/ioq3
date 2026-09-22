@@ -3714,8 +3714,8 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_hitPitchStack, 1, 999, qtrue );
 	Cvar_SetDescription( cl_hitPitchStack, "Health and armor combined that counts as a full target for cl_hitPitch" );
 	cl_hitSound = Cvar_Get( "cl_hitSound", "0", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_hitSound, 0, 2, qtrue );
-	Cvar_SetDescription( cl_hitSound, "Hit sound to play: 0 the game's own one, 1 the Quake Champions one, 2 the file in cl_hitSoundFile" );
+	Cvar_CheckRange( cl_hitSound, 0, 4, qtrue );
+	Cvar_SetDescription( cl_hitSound, "Hit sound to play: 0 the game's own one, 1 the Quake Champions one, 2 the file in cl_hitSoundFile, 3 Quake 1 style, 4 Quake 2 style" );
 	cl_hitSoundFile = Cvar_Get( "cl_hitSoundFile", "sound/feedback/hit_custom.wav", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_hitSoundFile, "Sound file played for hits when cl_hitSound is 2" );
 	cl_hitSoundDebug = Cvar_Get( "cl_hitSoundDebug", "0", 0 );

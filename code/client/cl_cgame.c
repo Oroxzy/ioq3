@@ -39,6 +39,8 @@ extern qboolean getCameraInfo(int time, vec3_t *origin, vec3_t *angles);
 // see cl_hitPitch. This follows the baseq3 playerState_t conventions.
 #define HIT_SOUND			"sound/feedback/hit.wav"
 #define HIT_SOUND_QC		"sound/feedback/hit_qc.wav"	// from zz-hitsound-qc.pk3
+#define HIT_SOUND_Q1		"sound/feedback/hit_q1.wav"	// from zz-hitsound-retro.pk3
+#define HIT_SOUND_Q2		"sound/feedback/hit_q2.wav"	// dito
 
 static sfxHandle_t	hitSound = -1;		// -1 until the cgame registers HIT_SOUND
 static sfxHandle_t	customHitSound = -1;	// -1 until the chosen file is registered
@@ -678,6 +680,10 @@ static const char *CL_HitSoundFile( void ) {
 		return HIT_SOUND_QC;
 	case 2:
 		return cl_hitSoundFile->string;
+	case 3:
+		return HIT_SOUND_Q1;
+	case 4:
+		return HIT_SOUND_Q2;
 	default:
 		return "";
 	}

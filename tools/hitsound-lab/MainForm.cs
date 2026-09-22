@@ -29,8 +29,10 @@ public class MainForm : Form, IMessageFilter {
 		"TankJr", "Uriel", "Xaero", "Mynx",
 	};
 
+	// Die Reihenfolge ist der Wert von cl_hitSound. Quake 1 und 2 hatten gar
+	// keinen Trefferton - die beiden Toene sind nachgebaut, nicht entnommen.
 	static readonly string[] HitSounds = {
-		"Original", "Quake Champions", "Eigene Datei",
+		"Original", "Quake Champions", "Eigene Datei", "Quake 1 (nachgebaut)", "Quake 2 (nachgebaut)",
 	};
 
 	readonly TextBox gameDir = new() { Width = 258 };

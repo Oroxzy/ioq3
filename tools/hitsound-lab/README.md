@@ -1010,3 +1010,44 @@ die Nachteile: eine Wurfparabel ist leichter zu treffen, und wer öfter in der
 Luft ist, verpasst öfter die Landung.
 
 Der Haken bleibt drin, damit man es selbst sehen kann. Empfohlen ist er nicht.
+
+## Die Trefferton von Quake 1 und Quake 2
+
+Neu in der Auswahl: `cl_hitSound 3` und `4`. Eine Warnung vorweg, damit kein
+falscher Eindruck entsteht: **Quake 1 und Quake 2 hatten überhaupt keinen
+Trefferton.** Es gibt also nichts, was man hätte entnehmen können — was unter
+diesen Namen kursiert, sind entweder andere Töne aus den Spielen, die Mods
+zweckentfremdet haben, oder Nachbauten.
+
+Deshalb zwei Wege, und beide funktionieren gleichzeitig:
+
+**Mitgeliefert (nachgebaut).** `assets/hitsound-retro/` enthält zwei mit einem
+Perl-Skript erzeugte Töne, die nur den Klangcharakter der jeweiligen Zeit
+nachahmen — Quake 1 dunkel und körnig mit Tiefpass, Quake 2 heller und
+metallisch mit einem Sprung nach oben. `build_mingw64.bat` packt sie zu
+`zz-hitsound-retro.pk3`. Damit läuft die Auswahl auf jedem Rechner, auch ohne
+die alten Spiele.
+
+**Echt, aus den eigenen Spieldateien.** Wer Quake 1 und 2 besitzt, holt sich die
+Töne heraus, die die Mods von damals benutzt haben:
+
+| Spiel | Datei im pak | was es ist |
+| --- | --- | --- |
+| Quake 1 | `sound/misc/talk.wav` | der Nachrichten-Piep, der ikonische Blip |
+| Quake 1 | `sound/weapons/tink1.wav` | der Querschläger, als Trefferton oft schöner |
+| Quake 2 | `sound/misc/talk1.wav` | genau das, was Q2-Mods als Hitsound nahmen |
+
+`tools/pak/pak.pl` liest das PAK-Format der beiden Spiele:
+
+```bash
+perl tools/pak/pak.pl "…/id1/pak0.pak" list 'sound/misc'
+perl tools/pak/pak.pl "…/id1/pak0.pak" get sound/misc/talk.wav hit_q1.wav
+```
+
+Die Dateien dann als `sound/feedback/hit_q1.wav` und `hit_q2.wav` in ein pk3
+packen, das **nach** `zz-hitsound-retro.pk3` sortiert — etwa
+`zzz-hitsound-q12.pk3`. Die Engine sucht die später einsortierten zuerst, also
+gewinnen die echten Töne, und der nächste Bau überschreibt sie nicht.
+
+Die so entnommenen Dateien gehören ins eigene Spielverzeichnis, **nicht** in
+dieses Repository.

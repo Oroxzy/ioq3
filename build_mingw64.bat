@@ -62,6 +62,14 @@ set "PK3_ERROR=%ERRORLEVEL%"
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
+REM Die nachgebauten Trefferton der alten Quakes. Gleiche Begruendung wie oben:
+REM die Engine sucht sie als sound/feedback/hit_q1.wav und hit_q2.wav.
+pushd "%PROJECT_DIR%assets\hitsound-retro" || goto :error
+"%CMAKE_EXE%" -E tar cf "%GAME_DIR%\baseq3\zz-hitsound-retro.pk3" --format=zip sound
+set "PK3_ERROR=%ERRORLEVEL%"
+popd
+if not "%PK3_ERROR%"=="0" goto :error
+
 REM Die Silhouetten-Shader fuer die Gegner-Markierung. Wie der Trefferton muessen
 REM sie in einem pk3 liegen, damit der lokale Server sie bei sv_pure findet.
 pushd "%PROJECT_DIR%assets\bot-silhouette" || goto :error
