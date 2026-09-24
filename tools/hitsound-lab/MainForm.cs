@@ -114,6 +114,9 @@ public class MainForm : Form, IMessageFilter {
 	// 225 Raketensprung-Verbindungen auf der Karte, blockiert von einer
 	// Gesundheitsklausel.
 	readonly CheckBox botRocketJump = new() { Text = "Bots öfter Raketensprünge machen lassen", Checked = false, AutoSize = true };
+	// Kein neuer Waffenplatz, sondern das MG mit anderer Ballistik. Der Klang
+	// kommt aus einem pk3 und braucht diese Cvar gar nicht.
+	readonly CheckBox mp40 = new() { Text = "Maschinengewehr als MP40 (härter, streut mehr)", Checked = false, AutoSize = true };
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -1230,7 +1233,8 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Waffen auf der Karte",
 			Row( spawnWeapons ),
 			Row( all, mg ),
-			Row( Pad( spawnValue ) ) );
+			Row( Pad( spawnValue ) ),
+			Row( Pad( mp40 ) ) );
 	}
 
 	// Die Liste für g_weaponSpawns, in Klassennamen. Leer heißt "Karte
@@ -1388,6 +1392,12 @@ public class MainForm : Form, IMessageFilter {
  			+ " hat – nimmst du das Quad, laufen sie weiter zu der leeren Stelle, und wenn es"
  			+ " wiederkommt, steht keiner dort. Mit dem Haken erfährt jeder Bot jede Aufnahme, mit"
  			+ " zwei Sekunden Vorlauf, damit er rechtzeitig losgeht." );
+		hintTip.SetToolTip( mp40, "Kein neuer Waffenplatz – das Maschinengewehr bekommt die Ballistik einer"
+ 			+ " MP40: 14 Schaden je Treffer statt 7, dafür 260 Streuung statt 200. Die Schussfolge"
+ 			+ " bleibt bei 100 ms (600 Schuss/min gegen echte ~550), weil eine nderung daran in der"
+ 			+ " Zielhilfe gespiegelt werden müsste.\n\nDer KLANG kommt aus zzz-mp40.pk3 und ist auch"
+ 			+ " ohne diesen Haken da. Im HUD heißt sie weiter Machinegun und sieht so aus – Name,"
+ 			+ " Symbol und Modell liegen im fremden cgame." );
 		hintTip.SetToolTip( botRocketJump, "Auf q3dm17 liegen 225 Raketensprung-Verbindungen, und der Ausführer ist"
  			+ " vollständig – was sie verhindert, ist eine Klausel: mindestens 60 Leben, und unter 90"
  			+ " zusätzlich 40 Rüstung. Mit dem Haken reichen 55 Leben, und die Sprungfreude aus der"
@@ -1898,6 +1908,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botRethink=" + botRethink.Checked );
 		s.AppendLine( "botTiming=" + botTiming.Checked );
 		s.AppendLine( "botRocketJump=" + botRocketJump.Checked );
+		s.AppendLine( "mp40=" + mp40.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
@@ -1984,6 +1995,7 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botRethink, v, "botRethink" );
 		SetBool( botTiming, v, "botTiming" );
 		SetBool( botRocketJump, v, "botRocketJump" );
+		SetBool( mp40, v, "mp40" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
@@ -2171,6 +2183,7 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botRethink {( botRethink.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botTiming {( botTiming.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botRocketJump {( botRocketJump.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_mp40 {( mp40.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
