@@ -1701,6 +1701,15 @@ static void PM_Weapon( void ) {
 		addTime /= 1.3;
 	}
 
+	// Werkbank: die MP40 feuert alle hundertzwanzig Millisekunden, also fuenf-
+	// hundert Schuss je Minute - so steht es in der Waffendatei von Call of Duty
+	// (fireTime 0.12). Vor Haste und vor der Nachladezeit-Prozentrechnung, weil
+	// es die Grundzeit der Waffe ist und nicht ein Faktor darauf. Dieselbe Zeile
+	// steht in CL_AimAssistFireDelay.
+	if ( pm->mp40 && pm->ps->weapon == WP_MACHINEGUN ) {
+		addTime = 120;
+	}
+
 	// Werkbank: die Nachladezeit in Prozent. Nach Haste, damit das Powerup
 	// weiter multiplikativ wirkt, und mit einem Boden von zehn Millisekunden -
 	// darunter schoesse die Waffe auf fast jedem Befehl, und der Zielhilfe

@@ -925,6 +925,9 @@ void ClientThink_real( gentity_t *ent ) {
 	// beschleunigen hiesse, dass man vor lauter Einschlaegen nicht mehr zum
 	// Schiessen kaeme - und gemessen werden sollen die eigenen Schuesse.
 	pm.weaponRate = ( ent->r.svFlags & SVF_BOT ) ? 100 : g_weaponRate.integer;
+	// Die MP40 gilt fuer alle, Bots wie Menschen - sie ist eine Waffe und keine
+	// Bequemlichkeit der Werkbank.
+	pm.mp40 = g_mp40.integer;
 
 	VectorCopy( client->ps.origin, client->oldOrigin );
 

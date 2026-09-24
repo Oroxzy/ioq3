@@ -287,6 +287,11 @@ struct gclient_s {
 
 	//
 	int			lastkilled_client;	// last client that this client killed
+	// Werkbank, MP40: die Streuung waechst mit jedem Schuss und faellt wieder
+	// ab - in Quake gibt es das sonst nicht, in Call of Duty ist es der Kern
+	// der Waffe.
+	float		mp40Spread;
+	int			mp40SpreadTime;
 	int			lasthurt_client;	// last client that damaged this client
 	int			lasthurt_mod;		// type of damage the client did
 
@@ -733,6 +738,7 @@ extern	vmCvar_t	g_botRethink;
 extern	vmCvar_t	g_botTiming;
 extern	vmCvar_t	g_botRocketJump;
 extern	vmCvar_t	g_mp40;
+extern	vmCvar_t	g_mp40Damage;
 // Werkbank: ein Gegenstand wurde genommen und kommt in respawn Sekunden wieder
 void BotItemTaken( gentity_t *ent, float respawn );
 extern	vmCvar_t	g_weaponRespawn;

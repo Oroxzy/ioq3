@@ -1054,13 +1054,48 @@ dieses Repository.
 
 ## Die MP40 — was geht, und was nicht
 
-`g_mp40 1` gibt dem Maschinengewehr die Ballistik einer MP40: **14 Schaden je
-Treffer statt 7** (im Team 10 statt 5), dafür **260 Streuung statt 200**. Die
-Schussfolge bleibt absichtlich stehen — das MG feuert alle hundert
-Millisekunden, also 600 Schuss je Minute, die echte MP40 kam auf etwa 550. Der
-Unterschied ist zum Ausprobieren belanglos, und eine geänderte Schussfolge
-müsste in `CL_AimAssistFireDelay` gespiegelt werden, sonst schnappt die
-Zielhilfe auf dem falschen Befehl.
+`g_mp40 1` gibt dem Maschinengewehr die Ballistik einer MP40 — und zwar die
+echte. Die Zahlen stehen in `weapons/mp/mp40_mp` von Call of Duty (aus pak9,
+also dem letzten Patch); `tools/pak/pak.pl` holt die Datei heraus, das Format
+ist eine simple Liste aus Schlüssel und Wert, getrennt durch Backslashes.
+
+| aus der Waffendatei | hier |
+| --- | --- |
+| `fireTime 0.12` | 120 ms Takt statt 100 — 500 Schuss/min |
+| `damage 45` | `g_mp40Damage`, Vorgabe **20** (siehe unten) |
+| `hipSpreadStandMin 1.5` | Grundstreuung 214 |
+| `hipSpreadFireAdd 0.53` | +76 je Schuss |
+| `hipSpreadMax 4.0` | Höchststreuung 573 |
+| `hipSpreadDecayRate 4` | fällt mit 573 je Sekunde zurück |
+| `hipSpreadMoveAdd 8.0` | bis +1146 beim Laufen, anteilig zum Tempo |
+
+Die Umrechnung ist exakt: Quake misst die Streuung nicht in Grad, sondern als
+seitlichen Versatz auf 8192·16 Einheiten — ein Grad ist also `tan(1°) · 8192`.
+Damit werden aus 1,5° genau 214 und aus 4° genau 573. Zum Vergleich: das
+Maschinengewehr von Quake streut fest 200, also 1,4°. Die MP40 **beginnt also
+praktisch gleich und wird beim Halten des Abzugs dreimal so ungenau** — und
+beim Laufen noch einmal deutlich mehr. Das ist ihr Charakter, und Quake kennt
+so etwas sonst gar nicht: eine Streuung, die sich aufbaut und wieder abklingt.
+
+**Der Schaden ist die eine Stelle, an der ich nicht originalgetreu bin.**
+Vierzig­fünf Schaden bei 120 ms Takt sind **375 Schaden je Sekunde** — die
+Rakete kommt auf 125. In Call of Duty passt das, weil dort jeder in drei
+Treffern stirbt; in Quake wäre es grotesk. Vorgabe ist deshalb **20** (167 je
+Sekunde), und wer es genau haben will, setzt `g_mp40Damage 45`.
+
+Was **nicht** übernommen ist: `clipSize 32` und `reloadTime 2.0` — Quake hat
+kein Nachladen, und eines einzubauen bräuchte die HUD, die hier aus einem
+fremden pk3 kommt. `moveSpeedScale 1.2` (man läuft mit ihr schneller) ebenso
+nicht, weil es die Bewegung verändert, gegen die die Vorhersage misst.
+
+Die geänderte Schussfolge musste an **zwei** Stellen eingetragen werden: in
+`PM_Weapon`, wo das Spiel den Waffentakt setzt, und in `CL_AimAssistFireDelay`,
+wo die Zielhilfe vorhersagt, auf welchem Befehl der Schuss rausgeht. Laufen die
+beiden auseinander, schnappt sie auf dem falschen Befehl. Die Engine liest
+dabei `g_mp40Active` und nicht `g_mp40` — dieselbe Verriegelung wie bei der
+Nachladezeit: die Cvar legt nur ein Spielmodul an, das den Takt auch anwendet,
+damit eine frisch eingespielte Engine keinem alten Modul einen Takt glaubt, nach
+dem dort niemand schießt.
 
 Der **Klang** braucht überhaupt keine Codeänderung: das cgame lädt vier
 Dateien, `sound/weapons/machinegun/machgf1b.wav` bis `machgf4b.wav`. Wer sie in

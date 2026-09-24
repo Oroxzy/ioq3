@@ -170,9 +170,62 @@ void SnapVectorTowards( vec3_t v, vec3_t to ) {
 // Der Unterschied ist zum Ausprobieren belanglos, und eine geaenderte
 // Schussfolge muesste in CL_AimAssistFireDelay gespiegelt werden, sonst
 // schnappt die Zielhilfe auf dem falschen Befehl.
-#define MP40_SPREAD			260		// streut mehr als das MG
-#define	MP40_DAMAGE			14		// dafuer doppelt so hart je Treffer
-#define	MP40_TEAM_DAMAGE	10
+// Die Zahlen stammen aus weapons/mp/mp40_mp von Call of Duty (pak9, also der
+// letzte Stand). Quake rechnet die Streuung nicht in Grad, sondern als
+// seitlichen Versatz auf 8192*16 Einheiten - ein Grad sind also tan(1 Grad)
+// mal 8192, und damit lassen sich die Werte eins zu eins uebersetzen:
+//
+//   hipSpreadStandMin 1.5 Grad  ->  214
+//   hipSpreadMax      4.0 Grad  ->  573
+//   hipSpreadFireAdd  0.53 Grad ->   76 je Schuss
+//   hipSpreadDecayRate 4 Grad/s ->  573 je Sekunde
+//   hipSpreadMoveAdd  8.0 Grad  -> 1146 bei vollem Tempo
+//
+// Zum Vergleich: das Maschinengewehr von Quake streut fest 200, also 1,4 Grad.
+// Die MP40 beginnt also praktisch gleich und wird beim Halten des Abzugs
+// dreimal so ungenau - genau das ist ihr Charakter.
+#define MP40_SPREAD_MIN		214.0f
+#define MP40_SPREAD_MAX		573.0f
+#define MP40_SPREAD_ADD		76.0f
+#define MP40_SPREAD_DECAY	573.0f		// je Sekunde
+#define MP40_SPREAD_MOVE	1146.0f		// bei g_speed, anteilig darunter
+
+/*
+==================
+G_MP40Spread
+
+Die Streuung dieses Schusses, und danach die fuer den naechsten.
+==================
+*/
+static float G_MP40Spread( gentity_t *ent ) {
+	float	spread, move, speed;
+	int		elapsed;
+
+	elapsed = level.time - ent->client->mp40SpreadTime;
+	spread = ent->client->mp40Spread;
+	if ( elapsed > 0 ) {
+		spread -= MP40_SPREAD_DECAY * elapsed * 0.001f;
+	}
+	if ( spread < MP40_SPREAD_MIN ) {
+		spread = MP40_SPREAD_MIN;
+	}
+
+	// Der naechste Schuss streut mehr, dieser noch nicht
+	ent->client->mp40Spread = spread + MP40_SPREAD_ADD;
+	if ( ent->client->mp40Spread > MP40_SPREAD_MAX ) {
+		ent->client->mp40Spread = MP40_SPREAD_MAX;
+	}
+	ent->client->mp40SpreadTime = level.time;
+
+	// Laufen kostet zusaetzlich, und zwar viel - acht Grad bei vollem Tempo
+	speed = sqrt( ent->client->ps.velocity[0] * ent->client->ps.velocity[0]
+		+ ent->client->ps.velocity[1] * ent->client->ps.velocity[1] );
+	move = speed / (float)g_speed.value;
+	if ( move > 1.0f ) {
+		move = 1.0f;
+	}
+	return spread + MP40_SPREAD_MOVE * move;
+}
 
 void Bullet_Fire (gentity_t *ent, float spread, int damage, int mod ) {
 	trace_t		tr;
@@ -855,9 +908,7 @@ void FireWeapon( gentity_t *ent ) {
 		break;
 	case WP_MACHINEGUN:
 		if ( g_mp40.integer ) {
-			Bullet_Fire( ent, MP40_SPREAD,
-				g_gametype.integer != GT_TEAM ? MP40_DAMAGE : MP40_TEAM_DAMAGE,
-				MOD_MACHINEGUN );
+			Bullet_Fire( ent, G_MP40Spread( ent ), g_mp40Damage.integer, MOD_MACHINEGUN );
 		} else if ( g_gametype.integer != GT_TEAM ) {
 			Bullet_Fire( ent, MACHINEGUN_SPREAD, MACHINEGUN_DAMAGE, MOD_MACHINEGUN );
 		} else {
