@@ -1051,3 +1051,36 @@ gewinnen die echten Töne, und der nächste Bau überschreibt sie nicht.
 
 Die so entnommenen Dateien gehören ins eigene Spielverzeichnis, **nicht** in
 dieses Repository.
+
+## Die MP40 — was geht, und was nicht
+
+`g_mp40 1` gibt dem Maschinengewehr die Ballistik einer MP40: **14 Schaden je
+Treffer statt 7** (im Team 10 statt 5), dafür **260 Streuung statt 200**. Die
+Schussfolge bleibt absichtlich stehen — das MG feuert alle hundert
+Millisekunden, also 600 Schuss je Minute, die echte MP40 kam auf etwa 550. Der
+Unterschied ist zum Ausprobieren belanglos, und eine geänderte Schussfolge
+müsste in `CL_AimAssistFireDelay` gespiegelt werden, sonst schnappt die
+Zielhilfe auf dem falschen Befehl.
+
+Der **Klang** braucht überhaupt keine Codeänderung: das cgame lädt vier
+Dateien, `sound/weapons/machinegun/machgf1b.wav` bis `machgf4b.wav`. Wer sie in
+einem später sortierten pk3 ersetzt, hat den neuen Ton — in *jedem* cgame, auch
+einem fremden. Der Schuss aus Call of Duty steht dort als 583-Millisekunden-Datei
+mit langem Nachhall; auf hundert Millisekunden Schussfolge stapelt sich das, also
+gehören die ersten ~180 ms mit kurzer Ausblendung hinein.
+
+**Warum das kein neuer Waffenplatz ist**, und was einer kosten würde: Ein
+echtes `WP_MP40` bräuchte einen neuen Eintrag in `bg_public.h`, in der
+Gegenstandsliste, eine Feuerfunktion und eine Schussfolge — das ist der
+einfache Teil, alles im Spielmodul. Der schwierige Teil ist das **cgame**: es
+registriert Modell, Symbol, Mündungsfeuer, Animation und Ton je Waffe, und es
+kommt hier aus einem fremden pk3 (`ztm-flexible-hud`). Eine Waffe, die es nicht
+kennt, ist bestenfalls unsichtbar. Wir müssten ein eigenes cgame ausliefern —
+`zz-` sortiert nach `ztm-`, es würde also gewinnen — und damit wäre die
+flexible HUD weg. Dazu fehlte immer noch ein **Modell**: die MP40 aus Call of
+Duty liegt im XModel-Format, nicht als MD3, und eine Konvertierung ist ein
+eigenes Projekt.
+
+Deshalb zuerst die billige Fassung: gleiche Waffe, anderer Charakter, anderer
+Klang. Was sie nicht kann, ist ehrlich aufgezählt — sie heißt im HUD weiter
+„Machinegun" und sieht aus wie eines, weil beides aus dem fremden cgame kommt.

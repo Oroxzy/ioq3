@@ -71,6 +71,7 @@ vmCvar_t	g_botCamper;
 vmCvar_t	g_botRethink;
 vmCvar_t	g_botTiming;
 vmCvar_t	g_botRocketJump;
+vmCvar_t	g_mp40;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -203,6 +204,9 @@ static cvarTable_t		gameCvarTable[] = {
 	// Haushalten damit ist kein Zierat. 2 laesst zusaetzlich die Ruestungs-
 	// bedingung fallen, fuer wen es krachen soll.
 	{ &g_botRocketJump, "g_botRocketJump", "0", 0, 0, qtrue },
+	// Das Maschinengewehr als MP40: haerter je Treffer, dafuer streuender.
+	// Der Klang kommt aus einem pk3 und braucht diese Cvar nicht.
+	{ &g_mp40, "g_mp40", "0", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

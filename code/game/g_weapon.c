@@ -161,6 +161,19 @@ void SnapVectorTowards( vec3_t v, vec3_t to ) {
 #define	MACHINEGUN_DAMAGE	7
 #define	MACHINEGUN_TEAM_DAMAGE	5		// wimpier MG in teamplay
 
+// Werkbank: das Maschinengewehr als MP40. Was hier steht, ist die Ballistik -
+// der Klang kommt aus einem pk3, das die vier machgf*-Dateien ersetzt, und der
+// braucht keine Codeaenderung.
+//
+// Die Schussfolge bleibt absichtlich, wie sie ist: das MG feuert alle hundert
+// Millisekunden, also 600 Schuss je Minute, die echte MP40 kam auf etwa 550.
+// Der Unterschied ist zum Ausprobieren belanglos, und eine geaenderte
+// Schussfolge muesste in CL_AimAssistFireDelay gespiegelt werden, sonst
+// schnappt die Zielhilfe auf dem falschen Befehl.
+#define MP40_SPREAD			260		// streut mehr als das MG
+#define	MP40_DAMAGE			14		// dafuer doppelt so hart je Treffer
+#define	MP40_TEAM_DAMAGE	10
+
 void Bullet_Fire (gentity_t *ent, float spread, int damage, int mod ) {
 	trace_t		tr;
 	vec3_t		end;
@@ -841,7 +854,11 @@ void FireWeapon( gentity_t *ent ) {
 		weapon_supershotgun_fire( ent );
 		break;
 	case WP_MACHINEGUN:
-		if ( g_gametype.integer != GT_TEAM ) {
+		if ( g_mp40.integer ) {
+			Bullet_Fire( ent, MP40_SPREAD,
+				g_gametype.integer != GT_TEAM ? MP40_DAMAGE : MP40_TEAM_DAMAGE,
+				MOD_MACHINEGUN );
+		} else if ( g_gametype.integer != GT_TEAM ) {
 			Bullet_Fire( ent, MACHINEGUN_SPREAD, MACHINEGUN_DAMAGE, MOD_MACHINEGUN );
 		} else {
 			Bullet_Fire( ent, MACHINEGUN_SPREAD, MACHINEGUN_TEAM_DAMAGE, MOD_MACHINEGUN );

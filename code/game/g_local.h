@@ -732,6 +732,7 @@ extern	vmCvar_t	g_botCamper;
 extern	vmCvar_t	g_botRethink;
 extern	vmCvar_t	g_botTiming;
 extern	vmCvar_t	g_botRocketJump;
+extern	vmCvar_t	g_mp40;
 // Werkbank: ein Gegenstand wurde genommen und kommt in respawn Sekunden wieder
 void BotItemTaken( gentity_t *ent, float respawn );
 extern	vmCvar_t	g_weaponRespawn;
