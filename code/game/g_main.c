@@ -71,8 +71,6 @@ vmCvar_t	g_botCamper;
 vmCvar_t	g_botRethink;
 vmCvar_t	g_botTiming;
 vmCvar_t	g_botRocketJump;
-vmCvar_t	g_mp40;
-vmCvar_t	g_mp40Damage;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -205,14 +203,6 @@ static cvarTable_t		gameCvarTable[] = {
 	// Haushalten damit ist kein Zierat. 2 laesst zusaetzlich die Ruestungs-
 	// bedingung fallen, fuer wen es krachen soll.
 	{ &g_botRocketJump, "g_botRocketJump", "0", 0, 0, qtrue },
-	// Das Maschinengewehr als MP40: haerter je Treffer, dafuer streuender.
-	// Der Klang kommt aus einem pk3 und braucht diese Cvar nicht.
-	{ &g_mp40, "g_mp40", "0", 0, 0, qtrue },
-	// Schaden je Treffer. In Call of Duty stehen 45 in der Datei - bei 120 ms
-	// Takt waeren das 375 Schaden je Sekunde, gegen 125 der Rakete. Quake hat
-	// eine andere Rechnung, deshalb zwanzig als Vorgabe; wer es originalgetreu
-	// will, setzt 45.
-	{ &g_mp40Damage, "g_mp40Damage", "20", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },
@@ -437,7 +427,6 @@ G_UpdateCvars
 */
 // Der zuletzt gemeldete Stand, damit die Cvar nicht jedes Bild neu gesetzt wird.
 static int	weaponRateEchoed = -1;
-static int	mp40Echoed = -1;
 
 void G_UpdateCvars( void ) {
 	int			i;
@@ -477,12 +466,6 @@ void G_UpdateCvars( void ) {
 	if ( g_weaponRate.integer != weaponRateEchoed ) {
 		weaponRateEchoed = g_weaponRate.integer;
 		trap_Cvar_Set( "g_weaponRateActive", va( "%i", weaponRateEchoed ) );
-	}
-	// Dasselbe fuer die MP40: die Zielhilfe muss ihren Takt kennen, und sie
-	// darf ihn nur einem Modul glauben, das ihn auch anlegt.
-	if ( g_mp40.integer != mp40Echoed ) {
-		mp40Echoed = g_mp40.integer;
-		trap_Cvar_Set( "g_mp40Active", va( "%i", mp40Echoed ) );
 	}
 }
 

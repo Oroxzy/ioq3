@@ -204,11 +204,6 @@ typedef struct {
 	// Schnappschuss, nicht die Vorhersage des cgame.
 	int			weaponRate;
 
-	// Werkbank: das Maschinengewehr feuert im Takt der MP40 (120 ms statt 100).
-	// Wie weaponRate vom Spiel vor jedem Pmove gesetzt; ein cgame, das das Feld
-	// nicht kennt, laesst es auf null und rechnet mit dem Originaltakt.
-	int			mp40;
-
 	// callbacks to test the world
 	// these will be different functions during game and cgame
 	void		(*trace)( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentMask );

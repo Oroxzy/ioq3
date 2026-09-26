@@ -4268,14 +4268,6 @@ static int CL_AimAssistFireDelay( int weapon ) {
 	default:					delay = 400; break;
 	}
 
-	// Die MP40 der Werkbank feuert alle hundertzwanzig Millisekunden statt
-	// hundert - so steht es in der Waffendatei von Call of Duty. Vor Haste und
-	// vor der Nachladezeit, genau wie in PM_Weapon, und gelesen wird wieder die
-	// Cvar, die nur ein Modul anlegt, das den Takt auch anwendet.
-	if ( weapon == WP_MACHINEGUN && (int)Cvar_VariableValue( "g_mp40Active" ) ) {
-		delay = 120;
-	}
-
 	if ( cl.snap.ps.powerups[PW_HASTE] ) {
 		delay /= 1.3;
 	}
