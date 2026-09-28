@@ -118,7 +118,8 @@ nicht durchkommt. Geprüft wird die Linie zu dem Punkt, auf den **wirklich
 gezielt** wird — bei der Rakete also der vorgehaltene, nicht der Bot: einer
 hinter einer Säule, dessen Vorhaltepunkt im Freien steht, ist ein Schuss wert;
 einer im Freien, dessen Vorhaltepunkt hinter der Säule liegt, nicht. Dasselbe
-gilt, wenn der eigene Splash einen erwischen würde.
+gilt, wenn der eigene Splash einen erwischen würde – aber nur, solange es
+Eigenschaden gibt (siehe *Kein Schaden an dir selbst* weiter unten).
 
 Die Prüfung läuft von der Mündung, vierzehn Einheiten vor dem Auge, wie sie der
 Server baut — und sie sieht auch **Türen und Aufzüge**, die der reine
@@ -820,6 +821,16 @@ verrechnet (`g_combat.c`, der Kommentar dort sagt es ausdrücklich — „calcul
 after knockback, so rocket jumping works“), und genau hinter dieser Stelle
 steigt der Schaden jetzt aus. Kein Schmerz-Ruckler, kein roter Blitz, kein
 Leben weg — der Sprung selbst bleibt unverändert.
+
+Damit fallen auch die beiden Splash-Sperren der Zielhilfe weg: ohne
+Eigenschaden lässt die Lenkung einen Gegner innerhalb der eigenen Splash-Reichweite
+(Rakete 160 Einheiten) nicht mehr los, und *Feuer halten* nimmt dir den Schuss
+unter 120 Einheiten nicht mehr weg – auch der selbsttätige Abzug drückt dort
+wieder. Beide Sperren schützten nur vor dem eigenen Schaden; mit
+`g_selfDamage 0` verhinderten sie nichts als den Schuss auf den, der direkt vor
+dir steht. Gemerkt an einem Abend, an dem fast jede Sitzung ein
+`aim skip: rocket own splash` im Protokoll hatte. Der Rückstoß bleibt: eine
+Rakete aus nächster Nähe schiebt dich weg wie ein Raketensprung.
 
 Nur gegen dich selbst: wen dein Splash sonst noch erwischt, trifft er wie immer.
 Mit den Trefferzählern hat das ohnehin nichts zu tun — die stehen hinter

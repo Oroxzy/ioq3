@@ -3266,6 +3266,29 @@ land on the wrong command in the meantime.
 #define AIM_HOLD_SPLASH		1
 #define AIM_HOLD_LOTTERY	2
 
+/*
+=================
+CL_AimAssistSelfSplash
+
+Whether our own blast can hurt us at all. Both splash guards - the steering
+letting go of a target inside its reach, and the hold taking the trigger away
+- exist only to keep the player out of his own explosion. g_selfDamage lives
+in the game module of this very process, since the assist never runs against
+anything but the local server, and at 0 G_Damage drops every hit on oneself
+right after the knockback. Then the guards protect against nothing and only
+stop the player shooting at whoever stands in front of him: the record had a
+rocket "own splash" skip in nearly every session of an evening played with
+g_selfDamage 0. The knockback stays - that is the rocket jump - and is the
+player's to take.
+
+A cvar the game module never registered reads empty; that is the stock 1.
+=================
+*/
+static qboolean CL_AimAssistSelfSplash( void ) {
+	return !*Cvar_VariableString( "g_selfDamage" )
+		|| Cvar_VariableIntegerValue( "g_selfDamage" ) != 0;
+}
+
 // which weapons take the frame-quantised point, decided beside the weapon
 // timer further down and wanted here to ask about the very same point
 static qboolean CL_AimAssistSingleShot( int weapon );
@@ -3327,8 +3350,8 @@ static int CL_AimAssistHoldReason( const entityState_t *entity, int weapon, cons
 	// either. Here it is the bare radius, with none of the margin the steering
 	// keeps: this one takes the shot away from the player, so it may only do
 	// so where the blast would really arrive - a hundred and twenty units for
-	// a rocket, twenty for plasma.
-	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f ) {
+	// a rocket, twenty for plasma. And only where the blast can hurt us.
+	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f && CL_AimAssistSelfSplash() ) {
 		splash = CL_AimAssistHitRadius( weapon );
 		if ( distance < splash ) {
 			return AIM_HOLD_SPLASH;
@@ -5850,8 +5873,10 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// were measured for a rocket, whose splash reaches a hundred and twenty,
 	// and plasma reaches twenty. It cost twenty plasma shots their help in one
 	// session for a blast that could not have touched us.
+	// Ohne Eigenschaden (g_selfDamage 0) gibt es diesen Bereich nicht: die
+	// eigene Explosion tut dann nichts ausser schieben.
 	VectorSubtract( targetOrigin, viewOrigin, direction );
-	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f
+	if ( CL_AimAssistProjectileSpeed( weapon ) > 0.0f && CL_AimAssistSelfSplash()
 		&& VectorLength( direction ) < CL_AimAssistHitRadius( weapon ) + 40.0f ) {
 		CL_AimAssistSkip( 2, weapon );
 		aimSmoothTarget = -1;
