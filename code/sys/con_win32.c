@@ -193,7 +193,10 @@ static void CON_Show( void )
 	CHAR_INFO line[ MAX_EDIT_LINE ];
 	WORD attrib;
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &binfo );
+	// with stdout redirected to a file or pipe there is no screen buffer and
+	// binfo stays uninitialised - the offset below then points anywhere
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &binfo ) )
+		return;
 
 	// if we're in the middle of printf, don't bother writing the buffer
 	if( !qconsole_drawinput )
