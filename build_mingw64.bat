@@ -41,16 +41,20 @@ echo === Building in "%BUILD_DIR%" ===
 "%CMAKE_EXE%" --build "%BUILD_DIR%" --clean-first -j %NUMBER_OF_PROCESSORS% || goto :error
 "%CMAKE_EXE%" --install "%BUILD_DIR%" --prefix "%GAME_DIR%" || goto :error
 
-REM qagame und ui zusaetzlich als pk3: Bei sv_pure 1 laedt der lokale Server nach einem Mapwechsel
-REM nur noch QVMs aus pk3s, und zz-hitpitch.pk3 wird vor pak8.pk3 durchsucht
+REM qagame, ui UND cgame zusaetzlich als pk3: Bei sv_pure 1 laedt der lokale Server nach einem
+REM Mapwechsel nur noch QVMs aus pk3s, und zz-hitpitch.pk3 wird vor pak8.pk3 durchsucht.
+REM cgame gehoert seit der Zusammenfuehrung mit dem Flexible HUD dazu: lag es nur lose daneben,
+REM lud das Spiel bei sv_pure weiter das cgame aus ztm-flexible-hud-r8-baseq3.pk3, und unsere
+REM Bewegungsvorhersage kam nie beim Client an. zz-hitpitch sortiert hinter ztm-, also gewinnt es.
 pushd "%GAME_DIR%\baseq3" || goto :error
-"%CMAKE_EXE%" -E tar cf zz-hitpitch.pk3 --format=zip vm/qagame.qvm vm/ui.qvm
+"%CMAKE_EXE%" -E tar cf zz-hitpitch.pk3 --format=zip vm/qagame.qvm vm/ui.qvm vm/cgame.qvm
 set "PK3_ERROR=%ERRORLEVEL%"
 REM Die losen Kopien loeschen: sie werden vor jedem pk3 gefunden, dadurch meldet der
 REM Server fuer vm/ui.qvm die Pruefsumme aus zz-hitpitch.pk3, bietet das pk3 aber nie
 REM zum Download an - fremde Spieler fliegen dann als "Unpure Client" raus
 if exist vm\qagame.qvm del vm\qagame.qvm
 if exist vm\ui.qvm del vm\ui.qvm
+if exist vm\cgame.qvm del vm\cgame.qvm
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 

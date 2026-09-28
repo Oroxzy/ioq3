@@ -63,7 +63,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define STAT_MINUS			10	// num frame for '-' stats digit
 
 #define	ICON_SIZE			48
-#undef	CHAR_WIDTH				// ignore define from libc
 #define	CHAR_WIDTH			32
 #define	CHAR_HEIGHT			48
 #define	TEXT_ICON_SPACE		4
@@ -519,6 +518,7 @@ typedef struct {
 	// view rendering
 	refdef_t	refdef;
 	vec3_t		refdefViewAngles;		// will be converted to refdef.viewaxis
+	float		fov;					// either range checked cg_fov or forced value
 
 	// zoom key
 	qboolean	zoomed;
@@ -996,6 +996,10 @@ typedef struct {
 	float			screenXScale;		// derived from glconfig
 	float			screenYScale;
 	float			screenXBias;
+	float			screenYBias;
+	float			screenXScaleStretch;
+	float			screenYScaleStretch;
+
 
 	int				serverCommandSequence;	// reliable command stream counter
 	int				processedSnapshotNum;// the number of snapshots cgame has requested
@@ -1103,6 +1107,14 @@ extern	vmCvar_t		cg_drawCrosshair;
 extern	vmCvar_t		cg_drawCrosshairNames;
 extern	vmCvar_t		cg_drawRewards;
 extern	vmCvar_t		cg_drawTeamOverlay;
+extern	vmCvar_t		cg_drawScores;
+extern	vmCvar_t		cg_drawPickups;
+extern	vmCvar_t		cg_drawWeaponBar;
+extern	vmCvar_t		cg_drawStatusHead;
+extern	vmCvar_t		cg_statusScale;
+extern	vmCvar_t		cg_fovAspectAdjust;
+extern	vmCvar_t		cg_fovGunAdjust;
+extern	vmCvar_t		cg_stretch;
 extern	vmCvar_t		cg_teamOverlayUserinfo;
 extern	vmCvar_t		cg_crosshairX;
 extern	vmCvar_t		cg_crosshairY;
@@ -1201,6 +1213,9 @@ extern	vmCvar_t		cg_obeliskRespawnDelay;
 const char *CG_ConfigString( int index );
 const char *CG_Argv( int arg );
 
+// Die Makros statt roher __attribute__: r8 stammt von einem aelteren ioquake3,
+// unser Stand kapselt sie (Upstream "Wrap __attribute__s in macros"), und der
+// QVM-Uebersetzer lcc kennt __attribute__ nicht.
 void QDECL CG_Printf( const char *msg, ... ) Q_PRINTF_FUNC(1, 2);
 void QDECL CG_Error( const char *msg, ... ) Q_NO_RETURN Q_PRINTF_FUNC(1, 2);
 
@@ -1211,6 +1226,7 @@ void CG_UpdateCvars( void );
 int CG_CrosshairPlayer( void );
 int CG_LastAttacker( void );
 void CG_LoadMenus(const char *menuFile);
+void CG_HudMenuHacks( void );
 void CG_KeyEvent(int key, qboolean down);
 void CG_MouseEvent(int x, int y);
 void CG_EventHandling(int type);
@@ -1239,6 +1255,27 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 //
 // cg_drawtools.c
 //
+// ugly workaround for having it in cg_local.h and ui_shared.h
+#ifndef HAVE_SCREEN_PLACEMENT
+#define HAVE_SCREEN_PLACEMENT
+typedef enum {
+	PLACE_STRETCH,
+	PLACE_CENTER,
+
+	// horizontal only
+	PLACE_LEFT,
+	PLACE_RIGHT,
+
+	// vertical only
+	PLACE_TOP,
+	PLACE_BOTTOM
+} screenPlacement_e;
+#endif
+
+void CG_SetScreenPlacement(screenPlacement_e hpos, screenPlacement_e vpos);
+void CG_PopScreenPlacement(void);
+screenPlacement_e CG_GetScreenHorizontalPlacement(void);
+screenPlacement_e CG_GetScreenVerticalPlacement(void);
 void CG_AdjustFrom640( float *x, float *y, float *w, float *h );
 void CG_FillRect( float x, float y, float width, float height, const float *color );
 void CG_DrawPic( float x, float y, float width, float height, qhandle_t hShader );
