@@ -66,8 +66,12 @@ static const char *soundSystem_items[] = {
 };
 
 // in the order cl_hitSound takes them
+//
+// Quake 1 und Quake 2 kamen spaeter in die Engine, aber nie in dieses Menue -
+// ueber die Konsole waren sie erreichbar, hier nicht. Die Reihenfolge ist der
+// Zahlenwert der Cvar, also darf nur hinten angehaengt werden.
 static const char *hitSound_items[] = {
-	"Original", "Quake Champions", "Custom File", NULL
+	"Original", "Quake Champions", "Custom File", "Quake 1", "Quake 2", NULL
 };
 
 typedef struct {
@@ -459,7 +463,10 @@ static void UI_SoundOptionsMenu_Init( void ) {
 	soundOptionsInfo.quality.curvalue = soundOptionsInfo.quality_original;
 
 	// the spin control draws itemnames[curvalue] unchecked
-	soundOptionsInfo.hitSound.curvalue = Com_Clamp( 0, 2, trap_Cvar_VariableValue( "cl_hitSound" ) );
+	// Vier, nicht zwei: mit der alten Grenze zeigte das Menue fuer Quake 1 und
+	// Quake 2 "Custom File" an und schrieb beim naechsten Verlassen auch das
+	// zurueck - eine Einstellung, die man nur ansehen musste, um sie zu verlieren.
+	soundOptionsInfo.hitSound.curvalue = Com_Clamp( 0, 4, trap_Cvar_VariableValue( "cl_hitSound" ) );
 	soundOptionsInfo.hitPitch.curvalue = trap_Cvar_VariableValue( "cl_hitPitch" ) != 0;
 
 //	soundOptionsInfo.a3d.curvalue = (int)trap_Cvar_VariableValue( "s_usingA3D" );
