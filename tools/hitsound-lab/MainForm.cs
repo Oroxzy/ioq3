@@ -122,6 +122,38 @@ public class MainForm : Form, IMessageFilter {
 		SmallChange = 5, LargeChange = 25, Width = 190,
 	};
 	readonly Label weaponRateValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+
+	// Zielsuch-Raketen. Der Index ist der Wert von g_homingRockets - dieselbe
+	// Zählung wie bei der Munition: nur ich, oder alle samt Bots.
+	readonly ComboBox homingMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
+	// Die Drehrate in Grad je Sekunde. Sie IST der Wendekreis - bei 900
+	// Einheiten Fluggeschwindigkeit: Radius = 900 / (Grad · π / 180). Die
+	// Anzeige daneben rechnet das aus, weil "wie eng" greifbarer ist als "wie
+	// schnell dreht sie".
+	readonly TrackBar homingTurn = new() {
+		Minimum = 30, Maximum = 720, Value = 180, TickFrequency = 60,
+		SmallChange = 15, LargeChange = 90, Width = 190,
+	};
+	readonly Label homingTurnValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	readonly Button homingTurnDefault = new() {
+		Text = "Standard", Width = 84, Height = 24,
+		Margin = new Padding( 12, 4, 0, 0 ), FlatStyle = FlatStyle.System,
+	};
+	readonly NumericUpDown homingCone = new() { DecimalPlaces = 0, Increment = 5m, Minimum = 10m, Maximum = 180m, Value = 45m, Width = 70 };
+	// Festhalten oder umschwenken: mit dem Haken nimmt die Rakete jedes Bild neu
+	// das naechste Ziel, auch mitten im Anflug auf ein anderes.
+	readonly CheckBox homingRetarget = new() { Text = "immer auf das nächste Ziel umschwenken", Checked = false, AutoSize = true };
+	// Lebensdauer in halben Sekunden, 1 bis 30 - der Schieber kennt nur ganze
+	// Zahlen. 30 sind die 15 s, nach denen sich jede Rakete schon immer zerlegt.
+	readonly TrackBar homingLife = new() {
+		Minimum = 1, Maximum = 30, Value = 30, TickFrequency = 2,
+		SmallChange = 1, LargeChange = 4, Width = 190,
+	};
+	readonly Label homingLifeValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+	readonly Button homingLifeDefault = new() {
+		Text = "Standard", Width = 84, Height = 24,
+		Margin = new Padding( 12, 4, 0, 0 ), FlatStyle = FlatStyle.System,
+	};
 	// Hundert Prozent trifft man mit dem Schieber kaum genau; der Knopf daneben
 	// ist der Weg zurück zum Spiel-Original.
 	readonly Button weaponRateDefault = new() {
@@ -510,7 +542,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 17;
+	const int LogVersion = 18;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -589,6 +621,13 @@ public class MainForm : Form, IMessageFilter {
 		itemRange.ValueChanged += ( _, _ ) => ShowItemRange();
 		weaponRate.ValueChanged += ( _, _ ) => ShowWeaponRate();
 		weaponRateDefault.Click += ( _, _ ) => weaponRate.Value = 100;
+		homingMode.Items.AddRange( new object[] { "aus", "nur meine Raketen", "alle (auch die Bots)" } );
+		homingMode.SelectedIndex = 0;
+		homingMode.SelectedIndexChanged += ( _, _ ) => ShowHomingTurn();
+		homingTurn.ValueChanged += ( _, _ ) => ShowHomingTurn();
+		homingTurnDefault.Click += ( _, _ ) => homingTurn.Value = 180;
+		homingLife.ValueChanged += ( _, _ ) => ShowHomingTurn();
+		homingLifeDefault.Click += ( _, _ ) => homingLife.Value = 30;
 		infiniteAmmo.Items.AddRange( new object[] { "wie im Spiel", "unbegrenzt für mich", "unbegrenzt für alle" } );
 		infiniteAmmo.SelectedIndex = 0;
 		infiniteAmmo.SelectedIndexChanged += ( _, _ ) => UpdateSwitchEnabled();
@@ -599,6 +638,7 @@ public class MainForm : Form, IMessageFilter {
 		UpdateItemEnabled();
 		ShowItemRange();
 		ShowWeaponRate();
+		ShowHomingTurn();
 		UpdateSwitchEnabled();
 		UpdateAimEnabled();
 
@@ -1184,7 +1224,7 @@ public class MainForm : Form, IMessageFilter {
 	TabControl BuildSettingsTabs() {
 		var tabs = new TabControl { Dock = DockStyle.Fill };
 		settingsTabs = tabs;
-		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox(), BuildSpawnBox() ) );
+		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox(), BuildSpawnBox(), BuildHomingBox() ) );
 		// Eigene Karte, obwohl erst zwei Haken darauf stehen: die Karte "Spiel"
 		// traegt schon zweiundzwanzig Zeilen, doppelt so viel wie jede andere,
 		// und diese Gruppe waechst von allen am staerksten - Luftsteuerung,
@@ -1383,6 +1423,32 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ) );
 	}
 
+	// Zielsuch-Raketen, nach Anup Shindes Mod von 2007 - aber neu gebaut, weil
+	// dessen Code abstürzt (Raketen ohne Selbstzünder, Kartenschützen ohne
+	// client). Eine Spielregel für die Welt, deshalb auf der Karte "Spiel".
+	GroupBox BuildHomingBox() {
+		hintTip.SetToolTip( homingMode, "Raketen suchen sich ein Ziel im Blickkegel und drehen darauf zu."
+ 			+ " „Nur meine“ heißt: die Raketen der Menschen, Bots schießen normal. „Alle“ heißt, auch"
+ 			+ " die Bots schießen Zielsuch-Raketen – auf dich." );
+		hintTip.SetToolTip( homingTurn, "Wie schnell die Rakete drehen kann, in Grad je Sekunde. Das ist der"
+ 			+ " Wendekreis: je höher, desto enger – und desto schwerer auszuweichen. Die Rakete wird dabei"
+ 			+ " nicht schneller, nur die Richtung wandert." );
+		hintTip.SetToolTip( homingCone, "Wie weit die Rakete zur Seite schaut, um ein Ziel zu finden – der"
+ 			+ " halbe Öffnungswinkel. 45° ist ein Blick nach vorn, 180° sieht auch nach hinten." );
+		hintTip.SetToolTip( homingLife, "Wie lange eine Zielsuch-Rakete fliegt, bevor sie sich in der Luft"
+ 			+ " zerlegt – mit vollem Splash, dort wo sie gerade ist. 15 s ist der Selbstzünder, den jede"
+ 			+ " Rakete schon immer hat. Kürzer heißt: wer lange genug ausweicht, überlebt sie." );
+
+		return Group( "Zielsuch-Raketen",
+			Row( Labelled( "Zielsuche:", homingMode ) ),
+			Row( Labelled( "Drehrate:", homingTurn ), homingTurnDefault ),
+			Row( Pad( homingTurnValue ) ),
+			Row( Labelled( "Lebensdauer:", homingLife ), homingLifeDefault ),
+			Row( Pad( homingLifeValue ) ),
+			Row( Labelled( "Blickkegel (°):", homingCone ) ),
+			Row( Pad( homingRetarget ) ) );
+	}
+
 	// ZTMs Flexible HUD. Seit der Zusammenführung steckt er in unserem eigenen
 	// cgame, das aus zz-hitpitch.pk3 geladen wird - vorher gewann das cgame aus
 	// ztm-flexible-hud-r8-baseq3.pk3 und diese Karte hätte Cvars angeboten, die
@@ -1481,6 +1547,29 @@ public class MainForm : Form, IMessageFilter {
 		double f = holdLottery.Value / 10.0;
 		holdLotteryValue.Text = f <= 0 ? "aus – es wird immer geschossen"
 			: $"ab {f:0.0}× Wirkradius, Rakete {f * 120:0} Einheiten";
+	}
+
+	// Grad je Sekunde sagen wenig; der Wendekreis sagt, ob man ausweichen kann.
+	// Ein Mensch läuft 320 Einheiten je Sekunde - ist der Radius deutlich
+	// kleiner als das, kommt man einer Rakete kaum noch davon.
+	void ShowHomingTurn() {
+		int deg = homingTurn.Value;
+		double radius = 900.0 / ( deg * Math.PI / 180.0 );
+		string feel = radius > 500 ? "weit, gut auszuweichen"
+			: radius > 200 ? "mittel"
+			: radius > 100 ? "eng, schwer auszuweichen"
+			: "sehr eng, kaum zu entkommen";
+		homingTurnValue.Text = $"{deg} °/s – Wendekreis {radius:0} Einheiten ({feel})";
+		homingTurnValue.ForeColor = homingMode.SelectedIndex == 0 ? Color.DimGray : Color.DarkGoldenrod;
+		// Die Strecke bis zum Zerlegen: 900 Einheiten je Sekunde, und die Rakete
+		// wird beim Lenken nicht langsamer. q3dm17 ist gut 3000 Einheiten lang.
+		double life = homingLife.Value * 0.5;
+		homingLifeValue.Text = life >= 15.0
+			? "15,0 s – wie immer, zerlegt sich praktisch nie in der Luft"
+			: $"{life:0.0} s – höchstens {900.0 * life:0} Einheiten Flug, dann zerlegt sie sich";
+		homingLifeValue.ForeColor = homingMode.SelectedIndex == 0 ? Color.DimGray : Color.DarkGoldenrod;
+		homingTurn.Enabled = homingTurnDefault.Enabled = homingCone.Enabled = homingRetarget.Enabled
+			= homingLife.Enabled = homingLifeDefault.Enabled = homingMode.SelectedIndex > 0;
 	}
 
 	// Prozent sagen wenig; die Millisekunden der Waffen, die hier gemessen
@@ -2043,6 +2132,11 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botTiming=" + botTiming.Checked );
 		s.AppendLine( "botRocketJump=" + botRocketJump.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
+		s.AppendLine( "homingMode=" + homingMode.SelectedIndex );
+		s.AppendLine( "homingTurn=" + homingTurn.Value );
+		s.AppendLine( "homingCone=" + Dec( homingCone.Value ) );
+		s.AppendLine( "homingRetarget=" + homingRetarget.Checked );
+		s.AppendLine( "homingLife=" + homingLife.Value );
 		s.AppendLine( "aimEdge=" + aimEdge.Checked );
 		s.AppendLine( "aimSmooth=" + (int)aimSmooth.Value );
 		s.AppendLine( "aimLead=" + Dec( aimLead.Value ) );
@@ -2146,6 +2240,11 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botTiming, v, "botTiming" );
 		SetBool( botRocketJump, v, "botRocketJump" );
 		SetBar( weaponRate, v, "weaponRate" );
+		SetIndex( homingMode, v, "homingMode" );
+		SetBar( homingTurn, v, "homingTurn" );
+		SetNum( homingCone, v, "homingCone" );
+		SetBool( homingRetarget, v, "homingRetarget" );
+		SetBar( homingLife, v, "homingLife" );
 		SetBool( aimEdge, v, "aimEdge" );
 		SetNum( aimSmooth, v, "aimSmooth" );
 		SetNum( aimLead, v, "aimLead" );
@@ -2351,6 +2450,11 @@ public class MainForm : Form, IMessageFilter {
 		// Protokoll - steht sie dann schon, ist die Sitzung von Anfang an
 		// richtig beschriftet.
 		cfg.AppendLine( $"set g_weaponRate {weaponRate.Value}" );
+		cfg.AppendLine( $"set g_homingRockets {homingMode.SelectedIndex}" );
+		cfg.AppendLine( $"set g_homingTurn {homingTurn.Value}" );
+		cfg.AppendLine( $"set g_homingCone {Dec( homingCone.Value )}" );
+		cfg.AppendLine( $"set g_homingRetarget {( homingRetarget.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( "set g_homingLifetime " + ( homingLife.Value * 0.5 ).ToString( "0.0", System.Globalization.CultureInfo.InvariantCulture ) );
 		cfg.AppendLine( $"set g_infiniteAmmo {infiniteAmmo.SelectedIndex}" );
 		cfg.AppendLine( $"set g_botEdgeCare {( botEdgeCare.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botJump {( botJump.Checked ? 1 : 0 )}" );
@@ -2851,7 +2955,7 @@ public class MainForm : Form, IMessageFilter {
 	// abdrueckt - Schuesse mit und ohne ihn sind nicht dieselbe Stichprobe.
 	static string StampCondition( string line ) {
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
-		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "", air = "", step = "";
+		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "", air = "", step = "", homing = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "rate" ) rate = f[i + 1];
 			else if ( f[i] == "ammo" ) ammo = f[i + 1];
@@ -2860,11 +2964,12 @@ public class MainForm : Form, IMessageFilter {
 			else if ( f[i] == "wraise" ) wraise = f[i + 1];
 			else if ( f[i] == "air" ) air = f[i + 1];
 			else if ( f[i] == "step" ) step = f[i + 1];
+			else if ( f[i] == "homing" ) homing = f[i + 1];
 		}
 		// Die Wegsteckzeit bleibt aus dem Schlüssel heraus: sie ist in Quake 3
 		// und Quake Live dieselbe, und wer sie von Hand verstellt, sieht es an
 		// der Zeile darüber. Das Hochnehmen ist der Wert, der sich unterscheidet.
-		return rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise + "/" + air + "/" + step;
+		return rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise + "/" + air + "/" + step + "/" + homing;
 	}
 
 	void ShowLogVersion( string line, int conditions = 1 ) {
@@ -2876,7 +2981,7 @@ public class MainForm : Form, IMessageFilter {
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 		int found = 0;
-		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "", air = "", ramp = "", step = "";
+		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "", air = "", ramp = "", step = "", homing = "", hturn = "", hnear = "", hlife = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
 			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
@@ -2889,6 +2994,10 @@ public class MainForm : Form, IMessageFilter {
 			else if ( f[i] == "air" ) air = f[i + 1];
 			else if ( f[i] == "ramp" ) ramp = f[i + 1];
 			else if ( f[i] == "step" ) step = f[i + 1];
+			else if ( f[i] == "homing" ) homing = f[i + 1];
+			else if ( f[i] == "hturn" ) hturn = f[i + 1];
+			else if ( f[i] == "hnear" ) hnear = f[i + 1];
+			else if ( f[i] == "hlife" ) hlife = f[i + 1];
 		}
 
 		// Unter welcher Bedingung gespielt wurde. Nur nennen, wenn sie vom
@@ -2918,6 +3027,16 @@ public class MainForm : Form, IMessageFilter {
 			if ( ramp == "1" ) how += ", Rampensprung";
 			if ( int.TryParse( step, out var stepUnits ) && stepUnits > 0 )
 				how += $", Schritthöhe {stepUnits}";
+		}
+		// Zielsuch-Raketen stehen außerhalb der Bewegung: sie hängen an einer
+		// eigenen Cvar des Spielmoduls, nicht an pmove_qlActive.
+		{
+			if ( homing == "1" || homing == "2" ) {
+				how += $", Zielsuch-Raketen ({( homing == "1" ? "nur meine" : "alle" )}"
+					+ ( hturn.Length > 0 ? $", {hturn} °/s" : "" )
+					+ ( hnear == "1" ? ", immer nächstes Ziel" : "" )
+					+ ( int.TryParse( hlife, out int ms ) && ms > 0 && ms < 15000 ? $", zerlegt nach {ms / 1000.0:0.0} s" : "" ) + ")";
+			}
 		}
 
 		if ( conditions > 1 ) {

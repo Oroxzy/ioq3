@@ -62,6 +62,11 @@ vmCvar_t	g_hitSoundDebug;
 vmCvar_t	g_weaponSpawns;
 vmCvar_t	g_selfDamage;
 vmCvar_t	g_weaponRate;
+vmCvar_t	g_homingRockets;
+vmCvar_t	g_homingTurn;
+vmCvar_t	g_homingCone;
+vmCvar_t	g_homingRetarget;
+vmCvar_t	g_homingLifetime;
 vmCvar_t	g_infiniteAmmo;
 vmCvar_t	g_botEdgeCare;
 vmCvar_t	g_botJump;
@@ -181,6 +186,22 @@ static cvarTable_t		gameCvarTable[] = {
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen: schoessen die
 	// Bots mit, kaeme man vor lauter Einschlaegen nicht zum Messen.
 	{ &g_weaponRate, "g_weaponRate", "100", 0, 0, qtrue },
+	// Zielsuch-Raketen. 0 aus, 1 nur die Raketen der Menschen, 2 alle - dieselbe
+	// Zaehlung wie g_infiniteAmmo. Die Drehrate ist in Grad je Sekunde und macht
+	// den Wendekreis aus: bei 900 Einheiten Fluggeschwindigkeit sind 180 Grad je
+	// Sekunde ein Radius von knapp 290 Einheiten, also ausweichbar. Der Kegel ist
+	// der halbe Oeffnungswinkel, in dem ein Ziel ueberhaupt gesehen wird.
+	{ &g_homingRockets, "g_homingRockets", "0", 0, 0, qtrue },
+	{ &g_homingTurn, "g_homingTurn", "180", 0, 0, qtrue },
+	{ &g_homingCone, "g_homingCone", "45", 0, 0, qtrue },
+	// 0: das einmal gefasste Ziel halten, solange es gueltig und sichtbar ist.
+	// 1: jedes Bild neu das naechste nehmen - die Rakete schwenkt um, sobald
+	// ein anderer naeher kommt.
+	{ &g_homingRetarget, "g_homingRetarget", "0", 0, 0, qtrue },
+	// Sekunden, bis sich eine Zielsuch-Rakete in der Luft zerlegt. 15 ist der
+	// Selbstzuender, den jede Rakete schon immer hat; kuerzer heisst: wer lange
+	// genug ausweicht oder wegrennt, ueberlebt sie.
+	{ &g_homingLifetime, "g_homingLifetime", "15", 0, 0, qtrue },
 	// 0 aus, 1 nur die Menschen, 2 alle. Bots mitzuversorgen aendert ihre
 	// Wege - sie laufen dann keine Munitionskiste mehr an -, und genau diese
 	// Wege sind es, an denen die Vorhersage gemessen wird.
@@ -445,6 +466,7 @@ G_UpdateCvars
 */
 // Der zuletzt gemeldete Stand, damit die Cvar nicht jedes Bild neu gesetzt wird.
 static int	weaponRateEchoed = -1;
+static int	homingEchoed = -1;
 
 void G_UpdateCvars( void ) {
 	int			i;
@@ -484,6 +506,14 @@ void G_UpdateCvars( void ) {
 	if ( g_weaponRate.integer != weaponRateEchoed ) {
 		weaponRateEchoed = g_weaponRate.integer;
 		trap_Cvar_Set( "g_weaponRateActive", va( "%i", weaponRateEchoed ) );
+	}
+
+	// Dasselbe fuer die Zielsuch-Raketen, fuer den Protokollkopf: sie heben die
+	// Raketenquote so stark, dass Sitzungen mit und ohne nicht in einen Topf
+	// duerfen. Die Engine stempelt diese Cvar und nicht den Wunsch.
+	if ( g_homingRockets.integer != homingEchoed ) {
+		homingEchoed = g_homingRockets.integer;
+		trap_Cvar_Set( "g_homingActive", va( "%i", homingEchoed ) );
 	}
 }
 

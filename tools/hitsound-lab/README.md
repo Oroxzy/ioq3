@@ -636,6 +636,64 @@ Wer der alten Warnung folgte und um einen Frame verschob, hat sich damit
 die diese Datei da ist. Für Hitscan bleibt `plain` auf der Schusszeile
 trotzdem die bequemere Quelle, weil dort keine Verknüpfung nötig ist.
 
+## Zielsuch-Raketen
+
+Karte *Spiel*, Gruppe *Zielsuch-Raketen*. Nachgebaut nach Anup Shindes Mod von
+2007 ([Artikel](https://www.anupshinde.com/modifying-quake3/)), aber **nicht aus
+dessen Code**. Der Mod liefert vier ganze Dateien zum Überschreiben
+(`g_client.c`, `g_cmds.c`, `g_local.h`, `g_missile.c`) – das hätte alles gelöscht,
+was hier in genau diesen Dateien steckt, und er hat Fehler, die mitgekommen wären:
+
+| im Mod von 2007 | Folge | hier |
+| --- | --- | --- |
+| Lenkung über `think`, `nextthink` jedes Bild neu | der 15-s-Selbstzünder ist weg; jeder Fehlschuss ins All fliegt ewig, bis `G_Spawn: no free entities` | Lenkung in `G_RunMissile`, `think` bleibt |
+| `self->client` ohne Prüfung | Absturz auf jeder Karte mit `shooter_rocket` | nur Spieler bekommen Zielsuche |
+| `VectorMA( forward, 0.05, targetdir )` mit ungenormtem `targetdir` | auf 500 Einheiten wiegt das Ziel 25-mal die Flugrichtung: weit weg schnappt sie herum, nah lenkt sie sanft – verkehrt herum | feste Drehrate in °/s, ein echter Wendekreis |
+| „Hysterese“ beim Zielwechsel | bevorzugt Ziele bis 100 Einheiten *weiter* weg, merkt sich nichts | Ziel wird gehalten, solange es gültig und sichtbar ist |
+| Sicht über `contents & CONTENTS_SOLID` zu den Füßen | Treppenstufen verdecken Ziele | Spur zur Körpermitte |
+
+Nicht mitgekommen: die *variable Geschwindigkeit* (sie verglich normierte
+Weltpositionen, also Winkel vom Kartenursprung aus – die schnellen Stufen
+griffen nie) und das *Feuerwerk* (schoss aus der Lenkung weitere Raketen ab,
+über eine globale Uhr für alle).
+
+| Regler | Cvar | Vorgabe | was er tut |
+| --- | --- | --- | --- |
+| Zielsuche | `g_homingRockets` | 0 | 0 aus, 1 nur die Raketen der Menschen, 2 alle samt Bots |
+| Drehrate | `g_homingTurn` | 180 °/s | Wendekreis = 900 / (Rate in Bogenmaß): 180 °/s ≈ 290 Einheiten, 720 °/s ≈ 70 |
+| Lebensdauer | `g_homingLifetime` | 15 s | danach zerlegt sie sich in der Luft, mit vollem Splash |
+| Blickkegel | `g_homingCone` | 45° | halber Öffnungswinkel, in dem ein Ziel gesehen wird; 180° sieht nach hinten |
+| immer nächstes Ziel | `g_homingRetarget` | 0 | 1: jedes Bild neu das nächste nehmen, auch mitten im Anflug |
+
+Die Rakete wird beim Lenken **nicht schneller** – nur die Richtung wandert, 900
+u/s bleiben. Mitspieler, Unsichtbare, Tote, Zuschauer und der Schütze selbst
+sind nie Ziel. Die Lebensdauer gilt nur für Zielsuch-Raketen: eine gerade
+fliegende trifft lange vorher eine Wand, eine kreisende sonst erst nach einer
+Viertelminute.
+
+Das Protokoll stempelt alles davon (`homing hturn hcone hnear hlife`, Fassung
+18); `g_homingActive` legt nur ein Spielmodul an, das die Zielsuche auch
+fliegt – fehlt es, steht `homing -1`.
+
+**Gemessen, fünf Bots auf q3dm17, je 4 Minuten** (`g_homingRockets 2`, sonst
+Vorgaben): ohne Zielsuche 67–75 Kills, davon 13–15 durch direkte Raketen; mit
+117–141 Kills, davon 66–90 direkt. Die Lebensdauer, je zwei Läufe à 3 Minuten:
+
+| Lebensdauer | Kills | direkte Rakete | Raketen-Splash |
+| --- | --- | --- | --- |
+| 15 s | 91–96 | 62–65 | 9 |
+| 1 s | 76–79 | 33–43 | 14 |
+| 0,5 s | 65–70 | 17–26 | 15–20 |
+
+Der Splash steigt, weil sich die Raketen jetzt neben den Zielen zerlegen. Kein
+Absturz, keine Entitäten-Warnung, auch nicht bei 3600 °/s und 180° Kegel.
+
+Zum Testaufbau selbst: `ioq3ded.exe` stürzte mit umgeleiteter Ausgabe bei gut der
+Hälfte der Läufe ab, mit und ohne Zielsuche. Das war `CON_Show` in
+`code/sys/con_win32.c`: ohne echte Konsole schlägt
+`GetConsoleScreenBufferInfo` fehl, und die ungeprüfte Puffergröße schob den
+Schreibzeiger irgendwohin. Mit der Prüfung liefen alle Läufe durch.
+
 ## Bauen und starten
 
 ```

@@ -174,6 +174,13 @@ struct gentity_s {
 	float		random;
 
 	gitem_t		*item;			// for bonus items
+
+	// Werkbank: Zielsuch-Raketen. Eigene Felder statt ->enemy, das die
+	// Annaeherungsminen schon belegen. Beim Abschuss entschieden, nicht in
+	// jedem Bild neu: wer die Einstellung mitten im Flug umstellt, soll die
+	// Raketen, die schon unterwegs sind, nicht ploetzlich abbiegen sehen.
+	qboolean	homing;
+	gentity_t	*homingTarget;	// das Ziel, das die Rakete gerade verfolgt
 };
 
 
@@ -723,6 +730,11 @@ extern	vmCvar_t	g_hitSoundDebug;
 extern	vmCvar_t	g_weaponSpawns;
 extern	vmCvar_t	g_selfDamage;
 extern	vmCvar_t	g_weaponRate;
+extern	vmCvar_t	g_homingRockets;
+extern	vmCvar_t	g_homingTurn;
+extern	vmCvar_t	g_homingCone;
+extern	vmCvar_t	g_homingRetarget;
+extern	vmCvar_t	g_homingLifetime;
 extern	vmCvar_t	g_infiniteAmmo;
 extern	vmCvar_t	g_botEdgeCare;
 extern	vmCvar_t	g_botJump;

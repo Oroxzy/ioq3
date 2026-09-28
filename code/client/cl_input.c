@@ -926,7 +926,13 @@ in seconds, and the learner tunes it from what the bots really do.
 // Luftbeschleunigung, Rampensprung und Schritthoehe. Die drei Bruchzahlen
 // stehen in Tausendsteln, damit die Zeile ganzzahlig bleibt. Wer die Luft
 // steuern kann, laeuft andere Wege und bremst anders; das gehoert in den Kopf.
-#define AIM_LOG_VERSION	17
+// Sechzehn: "homing" - Zielsuch-Raketen, 0 aus, 1 nur die Menschen, 2 alle,
+// minus eins wenn das Spielmodul sie nicht kennt. Eine Rakete, die dem Ziel
+// nachfliegt, trifft ganz anders als eine, die vorgehalten werden muss; eine
+// Raketenquote mit und eine ohne sind nicht dieselbe Messgroesse. Dazu
+// "hturn", "hcone", "hnear" und "hlife" - Drehrate, Blickkegel, Umschwenken
+// und Lebensdauer in Millisekunden.
+#define AIM_LOG_VERSION	18
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -973,6 +979,11 @@ static int	aimLogAirAcc = -2;
 static int	aimLogRamp = -2;
 static int	aimLogRampSc = -2;
 static int	aimLogStep = -2;
+static int	aimLogHoming = -2;
+static int	aimLogHTurn = -2;
+static int	aimLogHCone = -2;
+static int	aimLogHNear = -2;
+static int	aimLogHLife = -2;
 
 /*
 =================
@@ -5201,7 +5212,7 @@ void CL_AimAssistSnapshot( void ) {
 	char				bots[1024];
 	vec3_t				far;
 	int					i, j, event, kind, present, rate, ammo, autoFire;
-	int					hop, wdrop, wraise, air, airacc, ramp, rampsc, step;
+	int					hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, hturn, hcone, hnear, hlife;
 
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable, nothing else counts. Learning and the log both
@@ -5246,11 +5257,34 @@ void CL_AimAssistSnapshot( void ) {
 		air = airacc = ramp = rampsc = step = -1;
 	}
 
+	// Zielsuch-Raketen: g_homingActive legt nur ein Spielmodul an, das sie auch
+	// fliegt. Fehlt die Cvar ganz, steht minus eins - eine leere Zeichenkette
+	// hiesse sonst "null" und damit "aus", was bei einem alten Modul stimmt,
+	// aber nicht dasselbe ist wie "abgeschaltet".
+	homing = *Cvar_VariableString( "g_homingActive" )
+		? (int)Cvar_VariableValue( "g_homingActive" ) : -1;
+	// Wie sie lenkt, gehoert dazu: 90 Grad je Sekunde und 720 sind zwei
+	// verschiedene Waffen. Nur gelesen, wenn das Modul die Zielsuche kennt.
+	if ( homing >= 0 ) {
+		hturn = (int)Cvar_VariableValue( "g_homingTurn" );
+		hcone = (int)Cvar_VariableValue( "g_homingCone" );
+		hnear = (int)Cvar_VariableValue( "g_homingRetarget" ) ? 1 : 0;
+		// In Millisekunden und so begrenzt, wie fire_rocket sie nimmt. Ein
+		// Modul ohne die Cvar hat die festen 15 s jeder Rakete.
+		hlife = *Cvar_VariableString( "g_homingLifetime" )
+			? (int)( Com_Clamp( 0.5f, 15.0f, Cvar_VariableValue( "g_homingLifetime" ) ) * 1000.0f )
+			: 15000;
+	} else {
+		hturn = hcone = hnear = hlife = -1;
+	}
+
 	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo
 		|| autoFire != aimLogAuto || hop != aimLogHop
 		|| wdrop != aimLogDrop || wraise != aimLogRaise
 		|| air != aimLogAir || airacc != aimLogAirAcc || ramp != aimLogRamp
-		|| rampsc != aimLogRampSc || step != aimLogStep ) {
+		|| rampsc != aimLogRampSc || step != aimLogStep || homing != aimLogHoming
+		|| hturn != aimLogHTurn || hcone != aimLogHCone || hnear != aimLogHNear
+		|| hlife != aimLogHLife ) {
 		aimLogStamped = qtrue;
 		aimLogRate = rate;
 		aimLogAmmo = ammo;
@@ -5263,12 +5297,17 @@ void CL_AimAssistSnapshot( void ) {
 		aimLogRamp = ramp;
 		aimLogRampSc = rampsc;
 		aimLogStep = step;
+		aimLogHoming = homing;
+		aimLogHTurn = hturn;
+		aimLogHCone = hcone;
+		aimLogHNear = hnear;
+		aimLogHLife = hlife;
 		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i autofire %i"
 			" autohop %i wdrop %i wraise %i air %i airaccel %i ramp %i"
-			" rampscale %i step %i frame %i\n",
+			" rampscale %i step %i homing %i hturn %i hcone %i hnear %i hlife %i frame %i\n",
 			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, autoFire,
-			hop, wdrop, wraise, air, airacc, ramp, rampsc, step,
-			cl.snap.serverTime );
+			hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, hturn, hcone, hnear,
+			hlife, cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();
