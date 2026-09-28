@@ -190,10 +190,21 @@ public class MainForm : Form, IMessageFilter {
 	// einzelne Spieltypen gehen bei der Schritthöhe auf 20 oder 28.
 	readonly CheckBox qlAirControl = new() { Text = "Luftsteuerung (nur geradeaus, wie Race/PQL)", Checked = false, AutoSize = true };
 	readonly NumericUpDown qlAirControlValue = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.25m, Maximum = 10.00m, Value = 1.00m, Width = 70 };
-	readonly NumericUpDown qlAirAccel = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.00m, Maximum = 10.00m, Value = 0.00m, Width = 70 };
+	// Das Feld zeigt den echten Wert, nicht "0 = Original": vorher stand es auf
+	// 0, und ein Klick nach oben ergab 0,25 - eine SCHWÄCHERE Luftbeschleunigung
+	// als Quake 3, obwohl man mehr wollte. Geschrieben wird trotzdem 0, solange
+	// es auf 1,00 steht, damit der Protokollkopf den Normalfall als solchen zeigt.
+	readonly NumericUpDown qlAirAccel = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.25m, Maximum = 10.00m, Value = 1.00m, Width = 70 };
 	readonly CheckBox qlRampJump = new() { Text = "Rampensprung: Aufwärtsschwung behalten", Checked = false, AutoSize = true };
 	readonly NumericUpDown qlRampScale = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0.50m, Maximum = 3.00m, Value = 1.00m, Width = 70 };
-	readonly NumericUpDown qlStepHeight = new() { DecimalPlaces = 0, Increment = 1m, Minimum = 0m, Maximum = 40m, Value = 0m, Width = 70 };
+	// Dasselbe hier, und hier war es gefährlich: 0 hieß "Original (18)", ein
+	// Klick nach oben ergab 1 - eine Stufe von einer Einheit, und man kam auf
+	// kein erhöhtes Sprungfeld mehr hinauf, ohne zu springen. Jetzt steht der
+	// echte Wert da, und unter 16 geht es nicht: tiefer klettert man keine
+	// normale Treppe mehr. Ein alter gespeicherter Wert darunter wird beim Laden
+	// verworfen (SetNum nimmt nur, was in den Grenzen liegt) - die 1 heilt sich
+	// also von selbst.
+	readonly NumericUpDown qlStepHeight = new() { DecimalPlaces = 0, Increment = 1m, Minimum = 16m, Maximum = 40m, Value = 18m, Width = 70 };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
 	readonly Label statHits = Number();
@@ -1416,14 +1427,14 @@ public class MainForm : Form, IMessageFilter {
  			+ " oder gerade rückwärts drückst; seitwärts bleibt Strafejump unverändert. In id Softwares"
  			+ " eigenen Factories setzt das NUR Race, kein Duell und kein Clan Arena." );
 		hintTip.SetToolTip( qlAirControlValue, "Die Stärke. 1,00 ist der Wert aus den Race-Factories." );
-		hintTip.SetToolTip( qlAirAccel, "Luftbeschleunigung. 0 heißt Originalwert (1,0); PQL geht auf 2." );
+		hintTip.SetToolTip( qlAirAccel, "Luftbeschleunigung. 1,00 ist Quake 3; PQL geht auf 2." );
 		hintTip.SetToolTip( qlRampJump, "Quake 3 überschreibt beim Sprung die Aufwärtsgeschwindigkeit - ein"
  			+ " Sprung von einer Schräge frisst also genau den Schwung, den die Schräge gerade gegeben"
  			+ " hat. Damit wird er stattdessen behalten und der Sprung darauf gelegt, gedeckelt bei 700." );
 		hintTip.SetToolTip( qlRampScale, "Womit der vorhandene Aufwärtsschwung vorher multipliziert wird."
  			+ " Die Factories benutzen 1,25 und 1,75." );
-		hintTip.SetToolTip( qlStepHeight, "Wie hohe Stufen ohne Sprung genommen werden. 0 heißt Originalwert"
- 			+ " (18). Quake Live geht in einzelnen Spieltypen auf 20 oder 28." );
+		hintTip.SetToolTip( qlStepHeight, "Wie hohe Stufen ohne Sprung genommen werden. 18 ist Quake 3"
+ 			+ ". Quake Live geht in einzelnen Spieltypen auf 20 oder 28; unter 16 nimmt man keine normale Treppe mehr." );
 
 		return Group( "Quake Live",
 			Row( Pad( qlAutoHop ) ),
@@ -2286,10 +2297,13 @@ public class MainForm : Form, IMessageFilter {
 		// eine Zahl gesetzt, die nichts tut, und im Protokollkopf stünde eine
 		// Bedingung, die nie galt.
 		cfg.AppendLine( $"seta pmove_AirControl {( qlAirControl.Checked ? Dec( qlAirControlValue.Value ) : "0" )}" );
-		cfg.AppendLine( $"seta pmove_AirAccel {Dec( qlAirAccel.Value )}" );
+		// Beim Originalwert wird 0 geschrieben, nicht die Zahl: die Engine liest
+		// 0 als "Original", und der Protokollkopf zeigt dann keine Bedingung an,
+		// wo keine ist.
+		cfg.AppendLine( $"seta pmove_AirAccel {( qlAirAccel.Value == 1.00m ? "0" : Dec( qlAirAccel.Value ) )}" );
 		cfg.AppendLine( $"seta pmove_RampJump {( qlRampJump.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta pmove_RampJumpScale {Dec( qlRampScale.Value )}" );
-		cfg.AppendLine( $"seta pmove_StepHeight {Dec( qlStepHeight.Value )}" );
+		cfg.AppendLine( $"seta pmove_StepHeight {( qlStepHeight.Value == 18m ? "0" : Dec( qlStepHeight.Value ) )}" );
 		// ZTMs Flexible HUD. Alle acht sind CVAR_ARCHIVE, stehen also auch in
 		// der q3config - diese Zeilen laufen danach und gewinnen damit.
 		cfg.AppendLine( $"seta cg_fovAspectAdjust {( hudFovAspect.Checked ? 1 : 0 )}" );
