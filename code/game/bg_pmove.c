@@ -366,7 +366,14 @@ static qboolean PM_CheckJump( void ) {
 	}
 
 	// must wait for jump to be released
-	if ( pm->ps->pm_flags & PMF_JUMP_HELD ) {
+	//
+	// Ausser bei Auto-Hop, der Bewegung von Quake Live und CPMA: dort springt
+	// man weiter, solange die Taste haelt. Ein Takt braucht es dafuer nicht -
+	// gesprungen wird ohnehin nur vom Boden aus, und der naechste Sprung kann
+	// erst kommen, wenn man wieder aufgesetzt hat. Quake Live hat zusaetzlich
+	// einen Mindestabstand von hundert Millisekunden, der aber zu seinem
+	// Chain-Jump gehoert und ohne den hier nichts zu tun haette.
+	if ( !pm->autoHop && ( pm->ps->pm_flags & PMF_JUMP_HELD ) ) {
 		// clear upmove so cmdscale doesn't lower running speed
 		pm->cmd.upmove = 0;
 		return qfalse;
@@ -1480,7 +1487,9 @@ static void PM_BeginWeaponChange( int weapon ) {
 
 	PM_AddEvent( EV_CHANGE_WEAPON );
 	pm->ps->weaponstate = WEAPON_DROPPING;
-	pm->ps->weaponTime += 200;
+	// Null heisst Original. Quake Live steckt genauso schnell weg wie Quake 3
+	// (200), nimmt aber schneller hoch - der Unterschied sitzt unten.
+	pm->ps->weaponTime += pm->weaponDropTime > 0 ? pm->weaponDropTime : 200;
 	PM_StartTorsoAnim( TORSO_DROP );
 }
 
@@ -1504,7 +1513,10 @@ static void PM_FinishWeaponChange( void ) {
 
 	pm->ps->weapon = weapon;
 	pm->ps->weaponstate = WEAPON_RAISING;
-	pm->ps->weaponTime += 250;
+	// Hier liegt der Unterschied: Quake 3 nimmt in 250 ms hoch, Quake Live in
+	// 200. Zusammen mit dem Wegstecken sind das 450 gegen 400 Millisekunden je
+	// Waffenwechsel.
+	pm->ps->weaponTime += pm->weaponRaiseTime > 0 ? pm->weaponRaiseTime : 250;
 	PM_StartTorsoAnim( TORSO_RAISE );
 }
 

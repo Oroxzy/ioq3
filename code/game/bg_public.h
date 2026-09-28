@@ -196,13 +196,32 @@ typedef struct {
 	//
 	// Gesetzt wird es allein vom Spiel, in ClientThink_real. Das cgame setzt es
 	// absichtlich NICHT: es sagt nur die Bewegung voraus und braucht dafuer
-	// keine Schusstakte, und der cgame, der hier wirklich laeuft, kommt aus
-	// einem fremden pk3 und kennt dieses Feld ohnehin nicht. Null heisst
-	// deshalb dasselbe wie hundert - wer das Feld nicht setzt, rechnet mit den
-	// Originalzeiten. Die Waffenanimation kann dadurch zucken; ueber den Schuss
-	// entscheidet der Server, und die Zielhilfe liest dessen weaponTime aus dem
-	// Schnappschuss, nicht die Vorhersage des cgame.
+	// keine Schusstakte. Null heisst deshalb dasselbe wie hundert - wer das
+	// Feld nicht setzt, rechnet mit den Originalzeiten. Die Waffenanimation
+	// kann dadurch zucken; ueber den Schuss entscheidet der Server, und die
+	// Zielhilfe liest dessen weaponTime aus dem Schnappschuss, nicht die
+	// Vorhersage des cgame.
+	//
+	// Berichtigung 2026-09-28: hier stand, der laufende cgame komme aus einem
+	// fremden pk3 und kenne das Feld nicht. Das stimmt nicht. Die Engine sagt
+	// auf die Frage `which vm/cgame.qvm`: gefunden in baseq3 - die lose Datei
+	// aus unserem eigenen Build schlaegt beide pk3s. Der cgame gehoert uns.
 	int			weaponRate;
+
+	// Quake-Live-Bewegung. Anders als weaponRate setzen BEIDE Module diese
+	// Felder, und zwar aus denselben CVAR_SYSTEMINFO-Cvars, wie ioquake3 es
+	// mit pmove_fixed und pmove_msec vormacht: der Server besitzt den Wert,
+	// die Systeminfo traegt ihn zum Client, und beide Seiten rechnen damit
+	// dasselbe. Das ist keine Feinheit - bewegt der Server anders, als der
+	// Client vorhersagt, ruckelt es bei jedem Sprung.
+	//
+	// autoHop: springt weiter, solange die Sprungtaste haelt, statt auf ihr
+	// Loslassen zu warten.
+	int			autoHop;
+	// Die beiden Waffenwechselzeiten in Millisekunden. Null heisst: Original
+	// (200 zum Wegstecken, 250 zum Hochnehmen). Quake Live nimmt 200/200.
+	int			weaponDropTime;
+	int			weaponRaiseTime;
 
 	// callbacks to test the world
 	// these will be different functions during game and cgame

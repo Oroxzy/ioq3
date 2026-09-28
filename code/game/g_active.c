@@ -926,6 +926,14 @@ void ClientThink_real( gentity_t *ent ) {
 	// Schiessen kaeme - und gemessen werden sollen die eigenen Schuesse.
 	pm.weaponRate = ( ent->r.svFlags & SVF_BOT ) ? 100 : g_weaponRate.integer;
 
+	// Quake-Live-Bewegung. Anders als die Nachladezeit gilt sie fuer alle
+	// gleich, Bots eingeschlossen: es ist die Physik der Welt und keine
+	// Messeinstellung fuer die eigenen Schuesse. Das cgame setzt dieselben
+	// drei Werte aus denselben Cvars, siehe CG_PredictPlayerState.
+	pm.autoHop = pmove_autoHop.integer;
+	pm.weaponDropTime = pmove_weaponDropTime.integer;
+	pm.weaponRaiseTime = pmove_weaponRaiseTime.integer;
+
 	VectorCopy( client->ps.origin, client->oldOrigin );
 
 #ifdef MISSIONPACK

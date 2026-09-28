@@ -160,6 +160,11 @@ public class MainForm : Form, IMessageFilter {
 	// heisst: nur erkennen und ins Protokoll schreiben, Zielpunkt unverändert.
 	readonly CheckBox aimEdge = new() { Text = "Sturz über die Kante anlegen (F26)", Checked = false, AutoSize = true };
 	readonly CheckBox aimLearn = new() { Text = "je Waffe und Entfernung nachmessen", Checked = true, AutoSize = true };
+	// Quake-Live-Bewegung, Stufe eins. Beide Schalter gehen als
+	// CVAR_SYSTEMINFO an Spielmodul UND cgame; deshalb müssen nach einer
+	// Änderung auch beide neu ausgeliefert werden.
+	readonly CheckBox qlAutoHop = new() { Text = "Auto-Hop: gehaltene Sprungtaste springt weiter", Checked = false, AutoSize = true };
+	readonly CheckBox qlWeaponSwitch = new() { Text = "Waffenwechsel wie Quake Live (400 statt 450 ms)", Checked = false, AutoSize = true };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
 	readonly Label statHits = Number();
@@ -1139,6 +1144,11 @@ public class MainForm : Form, IMessageFilter {
 		var tabs = new TabControl { Dock = DockStyle.Fill };
 		settingsTabs = tabs;
 		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox(), BuildSpawnBox() ) );
+		// Eigene Karte, obwohl erst zwei Haken darauf stehen: die Karte "Spiel"
+		// traegt schon zweiundzwanzig Zeilen, doppelt so viel wie jede andere,
+		// und diese Gruppe waechst von allen am staerksten - Luftsteuerung,
+		// Doppelsprung und Crouch-Slide kommen mit eigenen Reglern.
+		tabs.TabPages.Add( SettingsPage( "Quake Live", BuildQuakeLiveBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Trefferton", BuildSoundBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Zielen", BuildAimBox(), BuildLeadBox(), BuildSwitchBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Anzeige", BuildBotBox(), BuildItemBox() ) );
@@ -1316,6 +1326,21 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Waffenwechsel",
 			Row( Pad( autoSwitch ) ),
 			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ) );
+	}
+
+	// Bewegung und Spielgefühl von Quake Live. Beides geht über
+	// CVAR_SYSTEMINFO an beide Module, damit die Vorhersage des Clients mit
+	// dem Server rechnet - sonst ruckelte es bei jedem Sprung.
+	GroupBox BuildQuakeLiveBox() {
+		hintTip.SetToolTip( qlAutoHop, "Gehaltene Sprungtaste springt weiter, statt auf das Loslassen zu warten."
+ 			+ " So macht es Quake Live (in den Regelsätzen, die es anbieten) und CPMA. Betrifft alle"
+ 			+ " gleich, Bots eingeschlossen - es ist die Physik der Welt, keine Messeinstellung." );
+		hintTip.SetToolTip( qlWeaponSwitch, "Quake 3 steckt in 200 ms weg und nimmt in 250 ms hoch, zusammen 450."
+ 			+ " Quake Live nimmt in 200 hoch, also 400. Der Unterschied sitzt allein im Hochnehmen." );
+
+		return Group( "Quake Live",
+			Row( Pad( qlAutoHop ) ),
+			Row( Pad( qlWeaponSwitch ) ) );
 	}
 
 	// Wie weit vorgehalten wird
@@ -1890,6 +1915,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
 		s.AppendLine( "aimFreeze=" + aimFreeze.Checked );
 		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
+		s.AppendLine( "qlAutoHop=" + qlAutoHop.Checked );
+		s.AppendLine( "qlWeaponSwitch=" + qlWeaponSwitch.Checked );
 		s.AppendLine( "botEdgeCare=" + botEdgeCare.Checked );
 		s.AppendLine( "botJump=" + botJump.Checked );
 		s.AppendLine( "botNoChat=" + botNoChat.Checked );
@@ -1976,6 +2003,8 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( aimAttacker, v, "aimAttacker" );
 		SetBool( aimFreeze, v, "aimFreeze" );
 		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
+		SetBool( qlAutoHop, v, "qlAutoHop" );
+		SetBool( qlWeaponSwitch, v, "qlWeaponSwitch" );
 		SetBool( botEdgeCare, v, "botEdgeCare" );
 		SetBool( botJump, v, "botJump" );
 		SetBool( botNoChat, v, "botNoChat" );
@@ -2123,6 +2152,11 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistFreeze {( aimAssist.Checked && aimFreeze.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistEdge {( aimEdge.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
+		// Quake-Live-Bewegung. Null heisst bei den Zeiten ausdruecklich
+		// "Original", nicht "null Millisekunden" - so liest es bg_pmove.c.
+		cfg.AppendLine( $"seta pmove_autoHop {( qlAutoHop.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_weaponDropTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_weaponRaiseTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistSmooth {(int)aimSmooth.Value}" );
 		cfg.AppendLine( $"seta cl_aimAssistLead {Dec( aimLead.Value )}" );

@@ -92,6 +92,9 @@ vmCvar_t	g_filterBan;
 vmCvar_t	g_smoothClients;
 vmCvar_t	pmove_fixed;
 vmCvar_t	pmove_msec;
+vmCvar_t	pmove_autoHop;
+vmCvar_t	pmove_weaponDropTime;
+vmCvar_t	pmove_weaponRaiseTime;
 vmCvar_t	g_rankings;
 vmCvar_t	g_listEntity;
 vmCvar_t	g_localTeamPref;
@@ -231,6 +234,11 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_smoothClients, "g_smoothClients", "1", 0, 0, qfalse},
 	{ &pmove_fixed, "pmove_fixed", "0", CVAR_SYSTEMINFO, 0, qfalse},
 	{ &pmove_msec, "pmove_msec", "8", CVAR_SYSTEMINFO, 0, qfalse},
+	// Quake-Live-Bewegung. CVAR_SYSTEMINFO wie die beiden darueber, damit der
+	// Wert den Client erreicht und dessen Vorhersage mit dem Server rechnet.
+	{ &pmove_autoHop, "pmove_autoHop", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_weaponDropTime, "pmove_weaponDropTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_weaponRaiseTime, "pmove_weaponRaiseTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
 
 	{ &g_rankings, "g_rankings", "0", 0, 0, qfalse},
 	{ &g_localTeamPref, "g_localTeamPref", "", 0, 0, qfalse }
@@ -485,6 +493,15 @@ void G_InitGame( int levelTime, int randomSeed, int restart ) {
 	srand( randomSeed );
 
 	G_RegisterCvars();
+
+	// Dass DIESES Modul die Quake-Live-Bewegung kennt und anwendet. Dieselbe
+	// Sperre wie bei g_weaponRateActive, nur genuegt hier das Dasein: die drei
+	// Werte selbst liest ohnehin jede Seite aus derselben Systeminfo-Cvar. Was
+	// die Engine allein daraus nicht sehen koennte, ist ein altes Spielmodul,
+	// das pmove_autoHop gar nicht ausliest - dann stuende im Protokollkopf eine
+	// Bedingung, die nie galt. Ohne CVAR_ARCHIVE, damit sie nicht in die
+	// q3config wandert und dort ein spaeter geladenes altes Modul beluegt.
+	trap_Cvar_Set( "pmove_qlActive", "1" );
 
 	G_ProcessIPBans();
 

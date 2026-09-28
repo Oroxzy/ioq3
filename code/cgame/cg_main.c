@@ -169,6 +169,9 @@ vmCvar_t	pmove_fixed;
 //vmCvar_t	cg_pmove_fixed;
 vmCvar_t	pmove_msec;
 vmCvar_t	cg_pmove_msec;
+vmCvar_t	pmove_autoHop;
+vmCvar_t	pmove_weaponDropTime;
+vmCvar_t	pmove_weaponRaiseTime;
 vmCvar_t	cg_cameraMode;
 vmCvar_t	cg_cameraOrbit;
 vmCvar_t	cg_cameraOrbitDelay;
@@ -311,6 +314,11 @@ static cvarTable_t cvarTable[] = {
 
 	{ &pmove_fixed, "pmove_fixed", "0", CVAR_SYSTEMINFO},
 	{ &pmove_msec, "pmove_msec", "8", CVAR_SYSTEMINFO},
+	// Dieselben Namen und dieselben Vorgaben wie im Spielmodul - der Server
+	// besitzt den Wert, die Systeminfo traegt ihn hierher.
+	{ &pmove_autoHop, "pmove_autoHop", "0", CVAR_SYSTEMINFO},
+	{ &pmove_weaponDropTime, "pmove_weaponDropTime", "0", CVAR_SYSTEMINFO},
+	{ &pmove_weaponRaiseTime, "pmove_weaponRaiseTime", "0", CVAR_SYSTEMINFO},
 #ifdef MISSIONPACK
 	{ &cg_smallFont, "ui_smallFont", "0.25", CVAR_ARCHIVE},
 	{ &cg_bigFont, "ui_bigFont", "0.4", CVAR_ARCHIVE},

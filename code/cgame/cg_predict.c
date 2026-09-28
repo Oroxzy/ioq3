@@ -499,6 +499,14 @@ void CG_PredictPlayerState( void ) {
 	cg_pmove.pmove_fixed = pmove_fixed.integer;// | cg_pmove_fixed.integer;
 	cg_pmove.pmove_msec = pmove_msec.integer;
 
+	// Quake-Live-Bewegung, aus denselben CVAR_SYSTEMINFO-Cvars wie im
+	// Spielmodul. Das ist die Haelfte, auf die es ankommt: saehe die
+	// Vorhersage hier andere Zahlen als der Server, zoege es den Spieler bei
+	// jedem Sprung und jedem Waffenwechsel zurecht.
+	cg_pmove.autoHop = pmove_autoHop.integer;
+	cg_pmove.weaponDropTime = pmove_weaponDropTime.integer;
+	cg_pmove.weaponRaiseTime = pmove_weaponRaiseTime.integer;
+
 	// run cmds
 	moved = qfalse;
 	for ( cmdNum = current - CMD_BACKUP + 1 ; cmdNum <= current ; cmdNum++ ) {
