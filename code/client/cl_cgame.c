@@ -700,7 +700,14 @@ static sfxHandle_t CL_HitSoundHandle( void ) {
 	if ( Q_stricmp( file, customHitSoundFile ) ) {
 		Q_strncpyz( customHitSoundFile, file, sizeof( customHitSoundFile ) );
 
-		if ( FS_FOpenFileRead( file, NULL, qfalse ) >= 0 ) {
+		// Groesser als null, nicht groesser gleich: FS_FOpenFileRead gibt mit
+		// NULL als Griff die Laenge zurueck und ausdruecklich NULL, wenn die
+		// Datei nicht da ist ("If we've got here, it doesn't exist"). Mit >= 0
+		// galt "nicht vorhanden" als vorhanden, der Zweig darunter lief nie,
+		// und S_RegisterSound bekam einen Namen ohne Datei. Gehoert hat man
+		// dann nichts Bestimmtes - und weil auch noch "playing" im Protokoll
+		// stand, sah es von aussen aus, als laege es an der Einstellung.
+		if ( FS_FOpenFileRead( file, NULL, qfalse ) > 0 ) {
 			customHitSound = S_RegisterSound( file, qfalse );
 
 			if ( cl_hitSoundDebug->integer ) {
