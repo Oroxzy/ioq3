@@ -1316,6 +1316,17 @@ void ClientDisconnect( int clientNum ) {
 		level.intermissiontime = 0;
 	}
 
+	// Zielsuch-Raketen, die er noch in der Luft hat, zerfallen nicht mehr in
+	// Splitter: die gehoerten sonst dem, der dieses Feld als Naechster belegt -
+	// ein per addbot nachgeschobener Bot bekommt es im selben Bild. homingGen
+	// liest nur die Splitterpruefung.
+	for ( i = MAX_CLIENTS ; i < level.num_entities ; i++ ) {
+		tent = &g_entities[i];
+		if ( tent->inuse && tent->s.eType == ET_MISSILE && tent->r.ownerNum == clientNum ) {
+			tent->homingGen = 1;
+		}
+	}
+
 	trap_UnlinkEntity (ent);
 	ent->s.modelindex = 0;
 	ent->inuse = qfalse;

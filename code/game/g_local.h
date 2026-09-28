@@ -181,6 +181,14 @@ struct gentity_s {
 	// Raketen, die schon unterwegs sind, nicht ploetzlich abbiegen sehen.
 	qboolean	homing;
 	gentity_t	*homingTarget;	// das Ziel, das die Rakete gerade verfolgt
+	int			homingBorn;		// level.time beim Abschuss; Splitter erben ihn
+	int			homingFuelBorn;	// Beginn der Treibstoffuhr; Splitter tanken neu
+	float		homingSpeed;	// das Tempo jetzt, samt Verlust in Kurven
+	int			homingBeep;		// wann der naechste Warnton faellig ist
+	int			homingBeepTarget;	// wer zuletzt gepiept wurde, ENTITYNUM_NONE = keiner
+	int			homingGen;		// 0 abgeschossen, 1 Splitter oder Schuetze weg - zerfaellt nicht
+	vec3_t		homingFrom;		// Abschusspunkt: g_homingPick 1 misst bis zur ersten Wahl von hier
+	qboolean	homingLocked;	// hatte schon ein Ziel - und ist damit vielleicht gedreht
 };
 
 
@@ -296,6 +304,11 @@ struct gclient_s {
 	int			lastkilled_client;	// last client that this client killed
 	int			lasthurt_client;	// last client that damaged this client
 	int			lasthurt_mod;		// type of damage the client did
+	// Der letzte GEGNER, der ihn getroffen hat - fuer g_homingPick 3. Eigener
+	// Splash, Sturz und Mitspieler ueberschreiben lasthurt_client auch, das
+	// hier nicht. Zeit 0 heisst: seit dem Einstieg von keinem Gegner getroffen.
+	int			lastEnemyHurtClient;
+	int			lastEnemyHurtTime;
 
 	// timers
 	int			respawnTime;		// can respawn when time > this, force after g_forcerespwan
@@ -735,6 +748,19 @@ extern	vmCvar_t	g_homingTurn;
 extern	vmCvar_t	g_homingCone;
 extern	vmCvar_t	g_homingRetarget;
 extern	vmCvar_t	g_homingLifetime;
+extern	vmCvar_t	g_homingProximity;
+extern	vmCvar_t	g_homingLead;
+extern	vmCvar_t	g_homingArm;
+extern	vmCvar_t	g_homingFuel;
+extern	vmCvar_t	g_homingSpeedStart;
+extern	vmCvar_t	g_homingSpeedEnd;
+extern	vmCvar_t	g_homingSpeedRamp;
+extern	vmCvar_t	g_homingDrag;
+extern	vmCvar_t	g_homingPick;
+extern	vmCvar_t	g_homingAir;
+extern	vmCvar_t	g_homingWarn;
+extern	vmCvar_t	g_homingSplit;
+extern	vmCvar_t	g_homingMissiles;
 extern	vmCvar_t	g_infiniteAmmo;
 extern	vmCvar_t	g_botEdgeCare;
 extern	vmCvar_t	g_botJump;

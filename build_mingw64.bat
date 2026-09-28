@@ -74,6 +74,14 @@ set "PK3_ERROR=%ERRORLEVEL%"
 popd
 if not "%PK3_ERROR%"=="0" goto :error
 
+REM Der Warnton der Zielsuch-Raketen (g_homingWarn). Das Spielmodul spielt ihn als
+REM sound/homing/lock.wav, also gilt dieselbe Begruendung wie beim Trefferton.
+pushd "%PROJECT_DIR%assets\homing" || goto :error
+"%CMAKE_EXE%" -E tar cf "%GAME_DIR%\baseq3\zz-homing.pk3" --format=zip sound
+set "PK3_ERROR=%ERRORLEVEL%"
+popd
+if not "%PK3_ERROR%"=="0" goto :error
+
 REM Die Silhouetten-Shader fuer die Gegner-Markierung. Wie der Trefferton muessen
 REM sie in einem pk3 liegen, damit der lokale Server sie bei sv_pure findet.
 pushd "%PROJECT_DIR%assets\bot-silhouette" || goto :error

@@ -932,7 +932,11 @@ in seconds, and the learner tunes it from what the bots really do.
 // Raketenquote mit und eine ohne sind nicht dieselbe Messgroesse. Dazu
 // "hturn", "hcone", "hnear" und "hlife" - Drehrate, Blickkegel, Umschwenken
 // und Lebensdauer in Millisekunden.
-#define AIM_LOG_VERSION	18
+// Siebzehn: die uebrigen Zielsuch-Regler, alle nach "hlife" und in derselben
+// Reihenfolge wie aimLogHomingFields - Zuender, Vorhalt, Schaerfzeit,
+// Treibstoff, Tempoprofil, Kurvenverlust, Zielwahl, Luft/Boden, Warnton,
+// Splitter und Raketen als Ziel.
+#define AIM_LOG_VERSION	19
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -980,10 +984,58 @@ static int	aimLogRamp = -2;
 static int	aimLogRampSc = -2;
 static int	aimLogStep = -2;
 static int	aimLogHoming = -2;
-static int	aimLogHTurn = -2;
-static int	aimLogHCone = -2;
-static int	aimLogHNear = -2;
-static int	aimLogHLife = -2;
+
+// Die Regler der Zielsuch-Raketen fuer den Stempel, jeder genau so gelesen,
+// wie das Spielmodul ihn liest - sonst stuende im Kopf eine Einstellung, die
+// nie geflogen ist:
+// AHK_FLOAT  begrenzt wie im Modul, mal scale, abgeschnitten wie dort (int).
+//            Sekunden stehen damit als Millisekunden in der Zeile.
+// AHK_BOOL   das Modul fragt !x.integer - jede Zahl ausser 0 ist an.
+// AHK_PICK   switch auf .integer, alles ausser 1 bis 3 ist "das naechste".
+// AHK_AIR    .integer == 1 ist Luft, jede andere Zahl ausser 0 Boden.
+// AHK_MISS   .integer >= 2 nur Raketen, jede andere Zahl ausser 0 beides.
+// AHK_SPLIT  .integer > 0 schaltet ein, hoechstens 4.
+// Kennt das Modul einen Regler nicht, steht absent: das ist, was ein solches
+// Modul tatsaechlich tut, und das ist immer die Vorgabe.
+typedef enum {
+	AHK_FLOAT,
+	AHK_BOOL,
+	AHK_PICK,
+	AHK_AIR,
+	AHK_MISS,
+	AHK_SPLIT
+} aimLogHomingKind_t;
+
+typedef struct {
+	const char			*field;
+	const char			*cvar;
+	aimLogHomingKind_t	kind;
+	float				lo, hi, scale;
+	int					absent;
+} aimLogHoming_t;
+
+static const aimLogHoming_t aimLogHomingFields[] = {
+	{ "hturn",	"g_homingTurn",			AHK_FLOAT,	1.0f,	3600.0f,	1.0f,		180 },
+	{ "hcone",	"g_homingCone",			AHK_FLOAT,	1.0f,	180.0f,		1.0f,		45 },
+	{ "hnear",	"g_homingRetarget",		AHK_BOOL,	0.0f,	0.0f,		0.0f,		0 },
+	{ "hlife",	"g_homingLifetime",		AHK_FLOAT,	0.5f,	15.0f,		1000.0f,	15000 },
+	{ "hprox",	"g_homingProximity",	AHK_FLOAT,	0.0f,	1000.0f,	1.0f,		0 },
+	{ "hlead",	"g_homingLead",			AHK_FLOAT,	0.0f,	100.0f,		1.0f,		0 },
+	{ "harm",	"g_homingArm",			AHK_FLOAT,	0.0f,	2000.0f,	1.0f,		0 },
+	{ "hfuel",	"g_homingFuel",			AHK_FLOAT,	0.0f,	60.0f,		1000.0f,	0 },
+	{ "hv0",	"g_homingSpeedStart",	AHK_FLOAT,	100.0f,	3000.0f,	1.0f,		900 },
+	{ "hv1",	"g_homingSpeedEnd",		AHK_FLOAT,	100.0f,	3000.0f,	1.0f,		900 },
+	{ "hramp",	"g_homingSpeedRamp",	AHK_FLOAT,	0.05f,	10.0f,		1000.0f,	1000 },
+	{ "hdrag",	"g_homingDrag",			AHK_FLOAT,	0.0f,	100.0f,		1.0f,		0 },
+	{ "hpick",	"g_homingPick",			AHK_PICK,	0.0f,	0.0f,		0.0f,		0 },
+	{ "hair",	"g_homingAir",			AHK_AIR,	0.0f,	0.0f,		0.0f,		0 },
+	{ "hwarn",	"g_homingWarn",			AHK_BOOL,	0.0f,	0.0f,		0.0f,		0 },
+	{ "hsplit",	"g_homingSplit",		AHK_SPLIT,	0.0f,	0.0f,		0.0f,		0 },
+	{ "hmiss",	"g_homingMissiles",		AHK_MISS,	0.0f,	0.0f,		0.0f,		0 },
+};
+
+#define AIM_LOG_HOMING_FIELDS	ARRAY_LEN( aimLogHomingFields )
+static int	aimLogHomingVal[AIM_LOG_HOMING_FIELDS];
 
 /*
 =================
@@ -5212,7 +5264,9 @@ void CL_AimAssistSnapshot( void ) {
 	char				bots[1024];
 	vec3_t				far;
 	int					i, j, event, kind, present, rate, ammo, autoFire;
-	int					hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, hturn, hcone, hnear, hlife;
+	int					hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, value;
+	qboolean			homingChanged;
+	char				homingText[512];
 
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable, nothing else counts. Learning and the log both
@@ -5264,18 +5318,51 @@ void CL_AimAssistSnapshot( void ) {
 	homing = *Cvar_VariableString( "g_homingActive" )
 		? (int)Cvar_VariableValue( "g_homingActive" ) : -1;
 	// Wie sie lenkt, gehoert dazu: 90 Grad je Sekunde und 720 sind zwei
-	// verschiedene Waffen. Nur gelesen, wenn das Modul die Zielsuche kennt.
-	if ( homing >= 0 ) {
-		hturn = (int)Cvar_VariableValue( "g_homingTurn" );
-		hcone = (int)Cvar_VariableValue( "g_homingCone" );
-		hnear = (int)Cvar_VariableValue( "g_homingRetarget" ) ? 1 : 0;
-		// In Millisekunden und so begrenzt, wie fire_rocket sie nimmt. Ein
-		// Modul ohne die Cvar hat die festen 15 s jeder Rakete.
-		hlife = *Cvar_VariableString( "g_homingLifetime" )
-			? (int)( Com_Clamp( 0.5f, 15.0f, Cvar_VariableValue( "g_homingLifetime" ) ) * 1000.0f )
-			: 15000;
-	} else {
-		hturn = hcone = hnear = hlife = -1;
+	// verschiedene Waffen. Nur gelesen, wenn das Modul die Zielsuche kennt;
+	// sonst steht jedes Feld auf minus eins.
+	homingChanged = qfalse;
+	homingText[0] = '\0';
+	for ( i = 0; i < (int)AIM_LOG_HOMING_FIELDS; i++ ) {
+		const aimLogHoming_t	*f = &aimLogHomingFields[i];
+		int						flags = Cvar_Flags( f->cvar );
+		int						iv = Cvar_VariableIntegerValue( f->cvar );
+
+		if ( homing < 0 ) {
+			value = -1;
+		} else if ( flags == CVAR_NONEXISTENT || ( flags & CVAR_USER_CREATED ) ) {
+			// Nur per "set" angelegt, nie vom Modul registriert: das Werkzeug
+			// schreibt alle Regler vor jedem Start, ein aelteres Modul liest
+			// sie trotzdem nicht. Registriert das Modul die Cvar, loescht
+			// Cvar_Get das CVAR_USER_CREATED. g_homingActive selbst darf so
+			// nicht geprueft werden - das legt das Modul mit trap_Cvar_Set an.
+			value = f->absent;
+		} else {
+			switch ( f->kind ) {
+			case AHK_BOOL:
+				value = iv ? 1 : 0;
+				break;
+			case AHK_PICK:
+				value = ( iv >= 1 && iv <= 3 ) ? iv : 0;
+				break;
+			case AHK_AIR:
+				value = !iv ? 0 : ( iv == 1 ? 1 : 2 );
+				break;
+			case AHK_MISS:
+				value = !iv ? 0 : ( iv >= 2 ? 2 : 1 );
+				break;
+			case AHK_SPLIT:
+				value = iv <= 0 ? 0 : ( iv > 4 ? 4 : iv );
+				break;
+			default:
+				value = (int)( Com_Clamp( f->lo, f->hi, Cvar_VariableValue( f->cvar ) ) * f->scale );
+				break;
+			}
+		}
+		if ( value != aimLogHomingVal[i] ) {
+			homingChanged = qtrue;
+			aimLogHomingVal[i] = value;
+		}
+		Q_strcat( homingText, sizeof( homingText ), va( " %s %i", f->field, value ) );
 	}
 
 	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo
@@ -5283,8 +5370,7 @@ void CL_AimAssistSnapshot( void ) {
 		|| wdrop != aimLogDrop || wraise != aimLogRaise
 		|| air != aimLogAir || airacc != aimLogAirAcc || ramp != aimLogRamp
 		|| rampsc != aimLogRampSc || step != aimLogStep || homing != aimLogHoming
-		|| hturn != aimLogHTurn || hcone != aimLogHCone || hnear != aimLogHNear
-		|| hlife != aimLogHLife ) {
+		|| homingChanged ) {
 		aimLogStamped = qtrue;
 		aimLogRate = rate;
 		aimLogAmmo = ammo;
@@ -5298,16 +5384,12 @@ void CL_AimAssistSnapshot( void ) {
 		aimLogRampSc = rampsc;
 		aimLogStep = step;
 		aimLogHoming = homing;
-		aimLogHTurn = hturn;
-		aimLogHCone = hcone;
-		aimLogHNear = hnear;
-		aimLogHLife = hlife;
 		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i autofire %i"
 			" autohop %i wdrop %i wraise %i air %i airaccel %i ramp %i"
-			" rampscale %i step %i homing %i hturn %i hcone %i hnear %i hlife %i frame %i\n",
+			" rampscale %i step %i homing %i%s frame %i\n",
 			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, autoFire,
-			hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, hturn, hcone, hnear,
-			hlife, cl.snap.serverTime );
+			hop, wdrop, wraise, air, airacc, ramp, rampsc, step, homing, homingText,
+			cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();

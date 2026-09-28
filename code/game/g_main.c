@@ -67,6 +67,19 @@ vmCvar_t	g_homingTurn;
 vmCvar_t	g_homingCone;
 vmCvar_t	g_homingRetarget;
 vmCvar_t	g_homingLifetime;
+vmCvar_t	g_homingProximity;
+vmCvar_t	g_homingLead;
+vmCvar_t	g_homingArm;
+vmCvar_t	g_homingFuel;
+vmCvar_t	g_homingSpeedStart;
+vmCvar_t	g_homingSpeedEnd;
+vmCvar_t	g_homingSpeedRamp;
+vmCvar_t	g_homingDrag;
+vmCvar_t	g_homingPick;
+vmCvar_t	g_homingAir;
+vmCvar_t	g_homingWarn;
+vmCvar_t	g_homingSplit;
+vmCvar_t	g_homingMissiles;
 vmCvar_t	g_infiniteAmmo;
 vmCvar_t	g_botEdgeCare;
 vmCvar_t	g_botJump;
@@ -202,6 +215,28 @@ static cvarTable_t		gameCvarTable[] = {
 	// Selbstzuender, den jede Rakete schon immer hat; kuerzer heisst: wer lange
 	// genug ausweicht oder wegrennt, ueberlebt sie.
 	{ &g_homingLifetime, "g_homingLifetime", "15", 0, 0, qtrue },
+	// Die weiteren Zielsuch-Regler. Jede Vorgabe ist "wie bisher": 0 heisst
+	// aus, 900 ist das Tempo jeder Rakete. Einheiten im Namen des Reglers:
+	// Proximity in Einheiten, Lead und Drag in Prozent, Arm in Millisekunden,
+	// Fuel und SpeedRamp in Sekunden, die Tempi in Einheiten je Sekunde.
+	{ &g_homingProximity, "g_homingProximity", "0", 0, 0, qtrue },
+	{ &g_homingLead, "g_homingLead", "0", 0, 0, qtrue },
+	{ &g_homingArm, "g_homingArm", "0", 0, 0, qtrue },
+	{ &g_homingFuel, "g_homingFuel", "0", 0, 0, qtrue },
+	{ &g_homingSpeedStart, "g_homingSpeedStart", "900", 0, 0, qtrue },
+	{ &g_homingSpeedEnd, "g_homingSpeedEnd", "900", 0, 0, qtrue },
+	{ &g_homingSpeedRamp, "g_homingSpeedRamp", "1", 0, 0, qtrue },
+	{ &g_homingDrag, "g_homingDrag", "0", 0, 0, qtrue },
+	// 0 das naechste, 1 das mit dem kleinsten Winkel zur Flugrichtung, 2 das
+	// am leichtesten zu toetende, 3 wer den Schuetzen zuletzt getroffen hat.
+	{ &g_homingPick, "g_homingPick", "0", 0, 0, qtrue },
+	// 0 alle, 1 nur wer in der Luft ist, 2 nur wer am Boden steht.
+	{ &g_homingAir, "g_homingAir", "0", 0, 0, qtrue },
+	{ &g_homingWarn, "g_homingWarn", "0", 0, 0, qtrue },
+	// Wie viele Splitter nach Ablauf der Lebensdauer, 0 bis 4.
+	{ &g_homingSplit, "g_homingSplit", "0", 0, 0, qtrue },
+	// 0 nur Spieler, 1 auch Raketen der Gegner, 2 nur Raketen.
+	{ &g_homingMissiles, "g_homingMissiles", "0", 0, 0, qtrue },
 	// 0 aus, 1 nur die Menschen, 2 alle. Bots mitzuversorgen aendert ihre
 	// Wege - sie laufen dann keine Munitionskiste mehr an -, und genau diese
 	// Wege sind es, an denen die Vorhersage gemessen wird.

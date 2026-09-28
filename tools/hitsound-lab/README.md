@@ -638,7 +638,8 @@ trotzdem die bequemere Quelle, weil dort keine Verknüpfung nötig ist.
 
 ## Zielsuch-Raketen
 
-Karte *Spiel*, Gruppe *Zielsuch-Raketen*. Nachgebaut nach Anup Shindes Mod von
+Eigene Karte *Raketen*, zwei Gruppen: *Ziel und Lenkung* und *Flug und Zünder*.
+Nachgebaut nach Anup Shindes Mod von
 2007 ([Artikel](https://www.anupshinde.com/modifying-quake3/)), aber **nicht aus
 dessen Code**. Der Mod liefert vier ganze Dateien zum Überschreiben
 (`g_client.c`, `g_cmds.c`, `g_local.h`, `g_missile.c`) – das hätte alles gelöscht,
@@ -652,10 +653,12 @@ was hier in genau diesen Dateien steckt, und er hat Fehler, die mitgekommen wär
 | „Hysterese“ beim Zielwechsel | bevorzugt Ziele bis 100 Einheiten *weiter* weg, merkt sich nichts | Ziel wird gehalten, solange es gültig und sichtbar ist |
 | Sicht über `contents & CONTENTS_SOLID` zu den Füßen | Treppenstufen verdecken Ziele | Spur zur Körpermitte |
 
-Nicht mitgekommen: die *variable Geschwindigkeit* (sie verglich normierte
-Weltpositionen, also Winkel vom Kartenursprung aus – die schnellen Stufen
-griffen nie) und das *Feuerwerk* (schoss aus der Lenkung weitere Raketen ab,
-über eine globale Uhr für alle).
+Aus dem Mod nicht übernommen: die *variable Geschwindigkeit* (sie verglich
+normierte Weltpositionen, also Winkel vom Kartenursprung aus – die schnellen
+Stufen griffen nie) und das *Feuerwerk* (schoss aus der Lenkung weitere Raketen
+ab, über eine globale Uhr für alle, ohne Grenze). Beides gibt es hier neu und
+begrenzt: ein Tempoprofil über das Alter der Rakete und Splitter, die selbst
+nicht mehr zerfallen.
 
 | Regler | Cvar | Vorgabe | was er tut |
 | --- | --- | --- | --- |
@@ -663,17 +666,64 @@ griffen nie) und das *Feuerwerk* (schoss aus der Lenkung weitere Raketen ab,
 | Drehrate | `g_homingTurn` | 180 °/s | Wendekreis = 900 / (Rate in Bogenmaß): 180 °/s ≈ 290 Einheiten, 720 °/s ≈ 70 |
 | Lebensdauer | `g_homingLifetime` | 15 s | danach zerlegt sie sich in der Luft, mit vollem Splash |
 | Blickkegel | `g_homingCone` | 45° | halber Öffnungswinkel, in dem ein Ziel gesehen wird; 180° sieht nach hinten |
-| immer nächstes Ziel | `g_homingRetarget` | 0 | 1: jedes Bild neu das nächste nehmen, auch mitten im Anflug |
+| jedes Bild neu wählen | `g_homingRetarget` | 0 | 1: jedes Bild neu nach der Zielwahl unten, auch mitten im Anflug |
+| Ziel | `g_homingPick` | 0 | 0 das nächste, 1 der kleinste Winkel zur Flugrichtung – bis zur ersten Wahl vom Abschusspunkt aus gemessen, also wohin du gezielt hast –, 2 am leichtesten zu töten, 3 der Gegner, der dich zuletzt getroffen hat |
+| Wer | `g_homingAir` | 0 | 1 nur wer in der Luft ist (Luftabwehr), 2 nur wer am Boden steht – gilt beim Aussuchen; wer schon verfolgt wird, bleibt es beim Aufsetzen, auch mit „jedes Bild neu“ |
+| Jagt | `g_homingMissiles` | 0 | 1 auch gegnerische Raketen, 2 nur Raketen (Abfangjäger) |
+| Vorhalt | `g_homingLead` | 0 % | 100 %: auf den Treffpunkt statt hinter dem Ziel her; wer springt, fällt in der Rechnung mit – bis zum Boden unter ihm |
+| Schärfzeit | `g_homingArm` | 0 ms | so lange geradeaus, ohne Zielsuche und ohne Zünder |
+| Treibstoff | `g_homingFuel` | 0 s | die Lenkkraft nimmt gleichmäßig ab und ist danach weg; 0 = lenkt bis zum Ende; höchstens 60 s |
+| Tempo | `g_homingSpeedStart`, `…End`, `…Ramp` | 900, 900, 1 s | gleichmäßig von Start auf Ende über die Rampe |
+| Kurvenverlust | `g_homingDrag` | 0 % | enge Kurven kosten Tempo; 100 %: eine Vierteldrehung halbiert es ohne Nachschub, der Motor holt 900 u/s² gegenüber dem Tempoprofil auf |
+| Am Ende | `g_homingSplit` | 0 | 2–4: statt zu zerplatzen in so viele Splitter, 25° gefächert, halber Schaden, suchen selbst mit vollem Treibstoff, zerfallen nicht noch einmal |
+| Näherungszünder | `g_homingProximity` | 0 | zündet im Vorbeiflug so viele Einheiten vor der Körpermitte des Ziels; der Splash reicht 120 ab dem Körperrand |
+| Warnton | `g_homingWarn` | 0 | ein Piepen nur für den Verfolgten, alle 800 ms auf 2000 Einheiten bis alle 120 ms aus der Nähe (`zz-homing.pk3`) |
 
-Die Rakete wird beim Lenken **nicht schneller** – nur die Richtung wandert, 900
-u/s bleiben. Mitspieler, Unsichtbare, Tote, Zuschauer und der Schütze selbst
-sind nie Ziel. Die Lebensdauer gilt nur für Zielsuch-Raketen: eine gerade
-fliegende trifft lange vorher eine Wand, eine kreisende sonst erst nach einer
-Viertelminute.
+**Raketen gegen Raketen.** Raketen haben keinen Körper – die Spur, mit der
+`G_RunMissile` Einschläge findet, geht durch eine andere Rakete einfach durch.
+Abgeschossen wird deshalb über den Abstand: kommen sich Jäger und gejagte Rakete
+bis zum nächsten Bild näher als 40 Einheiten, platzen beide. Gerechnet mit der
+Relativbewegung, denn zwei Raketen, die sich entgegenfliegen, sind in einem Bild
+90 Einheiten weiter und würden sich zwischen zwei Prüfungen sonst verfehlen. Die
+eigenen Raketen und die der Mitspieler sind nie Ziel. Dieselbe Rechnung dient
+dem Näherungszünder gegen Spieler. Hätte die gejagte Rakete auf dem Weg zum
+Treffpunkt eine Wand oder einen Spieler getroffen, wird nicht abgefangen – sonst
+platzte sie auf der falschen Seite der Wand. Jeder Abschuss steht im games.log
+als `Intercept: <Jäger> <Gejagter>: X shot down a rocket of Y`, im Stil der
+`Kill:`-Zeilen.
 
-Das Protokoll stempelt alles davon (`homing hturn hcone hnear hlife`, Fassung
-18); `g_homingActive` legt nur ein Spielmodul an, das die Zielsuche auch
-fliegt – fehlt es, steht `homing -1`.
+**Der Vorhalt** löst |d + v·t| = Tempo·t exakt nach t auf. Eine schrittweise
+Näherung liefe bei zwei gleich schnellen Raketen, die sich entgegenkommen, im
+Kreis; die exakte Lösung trifft sich dort genau in der Mitte. Mit einem
+Tempoprofil wird ein zweites Mal gerechnet, mit dem mittleren Tempo über genau
+diese Flugzeit – eine Rakete, die von 300 auf 2000 beschleunigt, hielte sonst
+viel zu weit vor. Wer springt, fällt in der Rechnung nur bis zum Boden unter
+ihm; ohne das lag der Punkt bei einem Hasensprung Hunderte Einheiten unter dem
+Boden, und die Rakete schlug davor ein.
+
+Mit allen Reglern auf der Vorgabe wird die Rakete beim Lenken **nicht
+schneller** – nur die Richtung wandert, 900 u/s bleiben. Mitspieler,
+Unsichtbare, Tote, Zuschauer und der Schütze selbst sind nie Ziel. Die
+Lebensdauer gilt nur für Zielsuch-Raketen: eine gerade fliegende trifft lange
+vorher eine Wand, eine kreisende sonst erst nach einer Viertelminute. Geht ein
+Schütze vom Server, zerfallen seine Raketen nicht mehr in Splitter – die
+gehörten sonst dem, der seinen Platz als Nächster belegt.
+
+Das Protokoll stempelt alles davon (Fassung 19: `homing` und danach `hturn hcone
+hnear hlife hprox hlead harm hfuel hv0 hv1 hramp hdrag hpick hair hwarn hsplit
+hmiss`, Sekunden als Millisekunden, jeder Wert so gelesen, wie das Spielmodul
+ihn liest – auch die Schalter: `g_homingPick 4` ist im Modul „das nächste“ und
+steht deshalb als 0 da, nicht als 3). `g_homingActive` legt nur ein Spielmodul
+an, das die Zielsuche auch fliegt – fehlt es, steht `homing -1`. Ein Regler, den
+das Werkzeug per `set` angelegt, das geladene Modul aber nie registriert hat,
+steht mit seiner Vorgabe da: ein älteres Modul fliegt ihn nicht. Ist die
+Zielsuche an, gehört jeder dieser Regler zur Bedingung der Sitzung: eine Rakete
+mit Vorhalt und Zünder ist eine andere Waffe als eine ohne, und die Auswertung
+warnt, wenn beide in einer Datei stehen.
+
+Die Engine-Zielhilfe rechnet ihren Vorhalt weiter mit 900 u/s. Mit einem anderen
+Tempoprofil liegt ihr Vorhalt daneben – bei einer suchenden Rakete zählt er
+aber wenig.
 
 **Gemessen, fünf Bots auf q3dm17, je 4 Minuten** (`g_homingRockets 2`, sonst
 Vorgaben): ohne Zielsuche 67–75 Kills, davon 13–15 durch direkte Raketen; mit
@@ -687,6 +737,38 @@ Vorgaben): ohne Zielsuche 67–75 Kills, davon 13–15 durch direkte Raketen; mi
 
 Der Splash steigt, weil sich die Raketen jetzt neben den Zielen zerlegen. Kein
 Absturz, keine Entitäten-Warnung, auch nicht bei 3600 °/s und 180° Kegel.
+
+**Die weiteren Regler, je 150 s** (gleicher Aufbau, Zielsuche für alle). Die
+Streuung zwischen zwei gleichen Läufen ist groß – ohne jeden Regler lagen die
+direkten Raketen-Kills zwischen 39 und 50 –, also zählen nur deutliche
+Unterschiede:
+
+| Einstellung | Kills | direkt | Splash |
+| --- | --- | --- | --- |
+| Vorgabe (4 Läufe) | 77–86 | 39–50 | 5–12 |
+| Näherungszünder 64 | 88 | 1 | 70 |
+| Vorhalt 100 % (4 Läufe; drei davon 55–64 direkt, einer 34) | 68–84 | 34–64 | 1–3 |
+| Schärfzeit 500 ms | 67 | 29 | 10 |
+| Treibstoff 1 s | 68 | 25 | 10 |
+| Tempo 400 → 1600 in 1,5 s | 74 | 43 | 10 |
+| nur Raketen jagen | 42 | 9 | 9 |
+| alle Regler zugleich | 77 | 2 | 62 |
+
+Der Näherungszünder nimmt jedem Volltreffer den Platz – die Rakete platzt,
+bevor sie den Körper berührt, und der Schaden kommt als Splash. Abschüsse von
+Raketen in 120 s: „auch Raketen“ 5, „nur Raketen“ 11, „nur Raketen“ mit 180°
+Kegel und 720 °/s 54; ohne den Regler keiner. Ein Chaos-Lauf mit vierfacher
+Feuerrate, unbegrenzter Munition, vier Splittern alle 0,5 s und Raketenjagd lief
+ebenfalls ohne Entitäten-Warnung durch.
+
+Vor dem Commit haben vier unabhängige Durchsichten (Absturzsicherheit,
+Mathematik, Werkzeug und Stempel, Versprechen) den Code gelesen und jede
+Beanstandung von einem zweiten Leser widerlegen lassen; 24 blieben stehen und
+sind behoben. Die wichtigsten: Splitter erbten mit dem Alter auch den
+verbrauchten Treibstoff und konnten nie lenken; der Vorhalt ließ Springer durch
+den Boden fallen; „wer mich zuletzt traf“ vergaß den Gegner nach jedem eigenen
+Raketensprung, weil `lasthurt_client` auch eigenen Splash und Stürze zählt – es
+gibt dafür jetzt `lastEnemyHurtClient`.
 
 Zum Testaufbau selbst: `ioq3ded.exe` stürzte mit umgeleiteter Ausgabe bei gut der
 Hälfte der Läufe ab, mit und ohne Zielsuche. Das war `CON_Show` in

@@ -469,137 +469,692 @@ Fehler, die hier nicht mitkommen durften:
   Hier zur Koerpermitte, und sichtbar heisst: nichts dazwischen oder das Ziel
   selbst getroffen.
 
-Die "variable Geschwindigkeit" und das "Feuerwerk" sind nicht mitgekommen. Die
-erste normierte Weltpositionen und mass den Abstand zwischen den Einheits-
+Die "variable Geschwindigkeit" und das "Feuerwerk" kamen nicht aus dem Mod mit:
+die erste normierte Weltpositionen und mass den Abstand zwischen den Einheits-
 vektoren - also den Winkel zweier Orte, gesehen vom Kartenursprung aus; die
 schnellen Stufen konnten nie greifen. Das zweite schoss aus der Lenkung heraus
-weitere Raketen ab, ueber eine gemeinsame globale Uhr fuer alle.
+weitere Raketen ab, ueber eine gemeinsame globale Uhr fuer alle, ohne Grenze.
+Beides gibt es hier neu und begrenzt: ein Tempoprofil ueber das Alter der
+Rakete (g_homingSpeedStart/End/Ramp) und Splitter nach Ablauf der Lebensdauer
+(g_homingSplit), die selbst nicht mehr zerfallen.
+
+Was sonst dazukam, jeweils mit der Vorgabe "wie bisher":
+- g_homingProximity: Naeherungszuender, zuendet im Vorbeiflug.
+- g_homingLead: Vorhalt - auf den Treffpunkt statt auf das Ziel.
+- g_homingArm: die ersten Millisekunden geradeaus, ohne Zielsuche und Zuender.
+- g_homingFuel: die Lenkkraft nimmt ab und ist nach so vielen Sekunden weg.
+- g_homingDrag: enge Kurven kosten Tempo, der Motor holt es wieder auf.
+- g_homingPick, g_homingAir: welches Ziel, und nur in der Luft oder am Boden.
+- g_homingWarn: ein Warnton, den nur der Verfolgte hoert.
+- g_homingMissiles: Raketen jagen Raketen.
 ================
 */
-#define HOMING_RANGE	5000.0f
+#define HOMING_RANGE		5000.0f
+// Rakete gegen Rakete: so nah heisst getroffen. Raketen haben keinen Koerper,
+// die Spur in G_RunMissile bleibt an einer anderen Rakete nie haengen.
+#define HOMING_CONTACT		40.0f
+#define HOMING_MIN_SPEED	100.0f
+#define HOMING_MAX_SPEED	3000.0f
+#define HOMING_LEAD_MAX		2.0f	// hoechstens so viele Sekunden vorhalten
 
-// Ist dieser Spieler ein zulaessiges Ziel fuer diese Rakete? Die billigen
-// Pruefungen zuerst, die Spur zuletzt - sie ist das Teure.
-static qboolean G_HomingCandidate( gentity_t *missile, gentity_t *target,
-		const vec3_t forward, float coneCos, vec3_t aim, float *distOut ) {
-	vec3_t	dir;
-	float	dist;
-	trace_t	tr;
+// Wo das Ziel ist und wie schnell es sich bewegt - fuer Spieler die
+// Koerpermitte, fuer Raketen die Bahn zu genau diesem Zeitpunkt. Die Bahn und
+// nicht currentOrigin: eine Rakete, die in diesem Bild noch nicht bewegt
+// wurde, stuende sonst ein Bild zurueck.
+static void G_HomingTargetState( gentity_t *target, vec3_t pos, vec3_t vel ) {
+	if ( target->client ) {
+		VectorAdd( target->r.mins, target->r.maxs, pos );
+		VectorMA( target->r.currentOrigin, 0.5f, pos, pos );
+		VectorCopy( target->client->ps.velocity, vel );
+	} else {
+		BG_EvaluateTrajectory( &target->s.pos, level.time, pos );
+		BG_EvaluateTrajectoryDelta( &target->s.pos, level.time, vel );
+	}
+}
 
-	if ( !target || !target->inuse || !target->client ) {
+// Darf diese Rakete dieses Ziel verfolgen? Nur die Regeln, keine Geometrie.
+// fresh heisst: das Ziel wird gerade neu gewaehlt. Nur dann gilt der Filter
+// Luft oder Boden - wer schon verfolgt wird und kurz aufsetzt, bleibt verfolgt.
+static qboolean G_HomingAllowed( gentity_t *missile, gentity_t *target, qboolean fresh ) {
+	gentity_t	*owner, *other;
+	qboolean	airborne;
+
+	if ( !target || !target->inuse || target == missile ) {
 		return qfalse;
-	}
-	if ( target->s.number == missile->r.ownerNum ) {
-		return qfalse;			// nie den Schuetzen selbst
-	}
-	if ( target->health <= 0 || target->client->sess.sessionTeam == TEAM_SPECTATOR ) {
-		return qfalse;
-	}
-	if ( target->client->ps.powerups[PW_INVIS] ) {
-		return qfalse;			// wer unsichtbar ist, bleibt es auch fuer die Rakete
 	}
 	// Mitspieler nur, wenn der Schuetze noch da ist und eine Mannschaft hat.
 	// Ist er gegangen, zeigt parent auf ein freies oder neu belegtes Feld.
-	if ( missile->parent && missile->parent->inuse && missile->parent->client
-		&& OnSameTeam( target, missile->parent ) ) {
-		return qfalse;
+	owner = missile->parent;
+	if ( owner && ( !owner->inuse || !owner->client ) ) {
+		owner = NULL;
 	}
 
-	// Die Koerpermitte, nicht die Fuesse: dahin zielt auch ein Mensch.
-	VectorAdd( target->r.mins, target->r.maxs, aim );
-	VectorMA( target->r.currentOrigin, 0.5f, aim, aim );
+	if ( target->client ) {
+		if ( g_homingMissiles.integer >= 2 ) {
+			return qfalse;		// nur Raketen
+		}
+		if ( target->s.number == missile->r.ownerNum ) {
+			return qfalse;		// nie den Schuetzen selbst
+		}
+		if ( target->health <= 0 || target->client->sess.sessionTeam == TEAM_SPECTATOR ) {
+			return qfalse;
+		}
+		if ( target->client->ps.powerups[PW_INVIS] ) {
+			return qfalse;		// wer unsichtbar ist, bleibt es auch fuer die Rakete
+		}
+		if ( owner && OnSameTeam( target, owner ) ) {
+			return qfalse;
+		}
+		if ( fresh && g_homingAir.integer ) {
+			airborne = target->client->ps.groundEntityNum == ENTITYNUM_NONE;
+			if ( g_homingAir.integer == 1 ? !airborne : airborne ) {
+				return qfalse;
+			}
+		}
+		return qtrue;
+	}
 
-	VectorSubtract( aim, missile->r.currentOrigin, dir );
+	// Raketen als Ziel: nur fremde und nur echte Raketen - keine Granaten, kein
+	// Plasma, kein Enterhaken. Die eigenen nie, auch nicht die Splitter, die
+	// denselben Schuetzen haben.
+	if ( !g_homingMissiles.integer || target->s.eType != ET_MISSILE
+		|| target->s.weapon != WP_ROCKET_LAUNCHER ) {
+		return qfalse;
+	}
+	if ( target->r.ownerNum == missile->r.ownerNum ) {
+		return qfalse;
+	}
+	other = target->parent;
+	if ( owner && other && other->inuse && other->client && OnSameTeam( other, owner ) ) {
+		return qfalse;
+	}
+	return qtrue;
+}
+
+// Liegt pos in Reichweite und im Blickkegel der Rakete?
+static qboolean G_HomingInCone( gentity_t *missile, const vec3_t forward, float coneCos,
+		const vec3_t pos, float *distOut, float *dotOut ) {
+	vec3_t	dir;
+	float	dist, dot;
+
+	VectorSubtract( pos, missile->r.currentOrigin, dir );
 	dist = VectorNormalize( dir );
 	if ( dist > HOMING_RANGE ) {
 		return qfalse;
 	}
-	if ( DotProduct( forward, dir ) < coneCos ) {
+	dot = dist > 0.0f ? DotProduct( forward, dir ) : 1.0f;
+	if ( dot < coneCos ) {
 		return qfalse;			// nicht im Blickkegel der Rakete
 	}
-
-	trap_Trace( &tr, missile->r.currentOrigin, NULL, NULL, aim, missile->s.number, MASK_SHOT );
-	if ( tr.fraction < 1.0f && tr.entityNum != target->s.number ) {
-		return qfalse;			// etwas steht dazwischen
-	}
-
 	*distOut = dist;
+	*dotOut = dot;
 	return qtrue;
 }
 
-static void G_HomingSteer( gentity_t *ent ) {
-	vec3_t		forward, aim, want, dir, candAim, perp;
-	float		speed, dist, best, coneCos, maxTurn, cosAngle, s, a;
-	gentity_t	*target;
-	int			i;
+// Freie Sicht: nichts dazwischen, oder das Ziel selbst getroffen. Uebergangen
+// werden nur die Rakete und was ihr Schuetze besitzt (seine Leichen); sein
+// eigener Koerper verdeckt die Sicht wie vor den weiteren Reglern. Beim Start
+// in seiner Box schadet das nicht: eine Spur, die in einer Box beginnt, kommt
+// mit fraction 1 heraus.
+static qboolean G_HomingSees( gentity_t *missile, gentity_t *target, const vec3_t pos ) {
+	trace_t	tr;
 
-	speed = VectorLength( ent->s.pos.trDelta );
-	if ( speed < 1.0f ) {
-		return;
-	}
-	VectorScale( ent->s.pos.trDelta, 1.0f / speed, forward );
-	coneCos = cos( DEG2RAD( Com_Clamp( 1.0f, 180.0f, g_homingCone.value ) ) );
+	trap_Trace( &tr, missile->r.currentOrigin, NULL, NULL, pos, missile->s.number, MASK_SHOT );
+	return tr.fraction >= 1.0f || tr.entityNum == target->s.number;
+}
 
-	// Das bisherige Ziel behalten, solange es gueltig und sichtbar ist. Erst
-	// wenn es wegfaellt, wird neu gesucht - und dann das naechste. Mit
-	// g_homingRetarget wird jedes Bild neu gesucht: die Rakete schwenkt auf
-	// jeden um, der naeher kommt, auch mitten im Anflug auf einen anderen.
-	target = NULL;
-	if ( !g_homingRetarget.integer
-		&& G_HomingCandidate( ent, ent->homingTarget, forward, coneCos, aim, &dist ) ) {
-		target = ent->homingTarget;
-	} else {
-		best = 0.0f;
-		for ( i = 0; i < level.maxclients; i++ ) {
-			if ( G_HomingCandidate( ent, &g_entities[i], forward, coneCos, candAim, &dist )
-				&& ( !target || dist < best ) ) {
-				target = &g_entities[i];
-				best = dist;
-				VectorCopy( candAim, aim );
+// Kleiner ist besser. g_homingPick sagt, was "besser" heisst.
+static float G_HomingScore( gentity_t *missile, gentity_t *target, const vec3_t pos,
+		const vec3_t forward, float dist, float dot ) {
+	gentity_t	*owner;
+	float		health, effective;
+	vec3_t		d;
+
+	switch ( g_homingPick.integer ) {
+	case 1:
+		// Das im Fadenkreuz: der kleinste Winkel zur Flugrichtung. Bis zur
+		// ersten Wahl fliegt die Rakete noch auf der Blicklinie - dann vom
+		// Abschusspunkt aus messen, sonst blaeht die Parallaxe nahe Ziele auf:
+		// 3 Grad neben dem Fadenkreuz auf 200 Einheiten sind von der 90
+		// Einheiten weiter geflogenen Rakete aus 6 Grad.
+		if ( !missile->homingLocked ) {
+			VectorSubtract( pos, missile->homingFrom, d );
+			if ( VectorNormalize( d ) > 0.0f ) {
+				dot = DotProduct( forward, d );
 			}
 		}
-		ent->homingTarget = target;
+		return 1.0f - dot;
+	case 2:
+		// Am leichtesten zu toeten. Ruestung schluckt ARMOR_PROTECTION des
+		// Schadens, solange sie reicht - mehr als Leben / (1 - 0,66) braucht
+		// es also nie. Raketen haben kein Leben und kommen nach allen Spielern;
+		// der Abstand entscheidet nur bei Gleichstand.
+		if ( !target->client ) {
+			return 100000.0f + dist;
+		}
+		health = target->health;
+		effective = health + target->client->ps.stats[STAT_ARMOR];
+		if ( effective > health / ( 1.0f - ARMOR_PROTECTION ) ) {
+			effective = health / ( 1.0f - ARMOR_PROTECTION );
+		}
+		return effective * 10.0f + dist * 0.001f;
+	case 3:
+		// Wer den Schuetzen zuletzt getroffen hat, vor allen anderen - und nur
+		// ein Gegner. lasthurt_client taugt dafuer nicht: eigener Splash, ein
+		// Raketensprung oder ein Sturz ueberschreiben ihn, und danach waere
+		// die Rache vergessen. lastEnemyHurtTime 0 heisst: nie getroffen.
+		owner = missile->parent;
+		if ( target->client && owner && owner->inuse && owner->client
+			&& owner->client->lastEnemyHurtTime
+			&& owner->client->lastEnemyHurtClient == target->s.number ) {
+			return dist - 100000.0f;
+		}
+		return dist;
+	default:
+		return dist;
 	}
-	if ( !target ) {
+}
+
+// Das Tempoprofil aus g_homingSpeedStart/End/Ramp, so begrenzt, wie es gilt.
+static void G_HomingProfile( float *v0, float *v1, float *ramp ) {
+	*v0 = Com_Clamp( HOMING_MIN_SPEED, HOMING_MAX_SPEED, g_homingSpeedStart.value );
+	*v1 = Com_Clamp( HOMING_MIN_SPEED, HOMING_MAX_SPEED, g_homingSpeedEnd.value );
+	*ramp = Com_Clamp( 0.05f, 10.0f, g_homingSpeedRamp.value );
+}
+
+// Der Anteil des Profils an der Strecke bis zum Alter x, geteilt durch
+// (Ende - Start): auf der Rampe x²/(2·Rampe), danach x - Rampe/2.
+static float G_HomingRampDistance( float x, float ramp ) {
+	return x <= ramp ? 0.5f * x * x / ramp : x - 0.5f * ramp;
+}
+
+// Das mittlere Tempo der naechsten t Sekunden nach dem Profil. Ein Rueckstand
+// aus dem Kurvenverlust bleibt als fester Abzug. Ohne Profil - die Vorgabe
+// 900 auf 900 - ist es genau das jetzige Tempo.
+static float G_HomingMeanSpeed( float age, float t, float cur ) {
+	float	v0, v1, ramp, now, mean;
+
+	G_HomingProfile( &v0, &v1, &ramp );
+	if ( v0 == v1 || t <= 0.0f ) {
+		return cur;
+	}
+	now = v0 + ( v1 - v0 ) * Com_Clamp( 0.0f, 1.0f, age / ramp );
+	mean = v0 + ( v1 - v0 )
+		* ( G_HomingRampDistance( age + t, ramp ) - G_HomingRampDistance( age, ramp ) ) / t;
+	if ( cur < now ) {
+		mean -= now - cur;
+	}
+	return mean < HOMING_MIN_SPEED ? HOMING_MIN_SPEED : mean;
+}
+
+// Die Flugzeit bis zum Treffpunkt, wenn Rakete und Ziel geradeaus
+// weiterfliegen: |d + v·t| = Tempo·t, nach t aufgeloest. Exakt, auch fuer zwei
+// Raketen, die sich gleich schnell entgegenfliegen - dort liefe eine Naeherung
+// im Kreis. Nicht einholbar: so lange, wie der Flug zum jetzigen Ort dauert.
+// Hoechstens HOMING_LEAD_MAX.
+static float G_HomingInterceptTime( const vec3_t d, const vec3_t vel, float speed ) {
+	float	a, b, c, disc, root, t, t1, t2;
+
+	a = DotProduct( vel, vel ) - speed * speed;
+	b = 2.0f * DotProduct( d, vel );
+	c = DotProduct( d, d );
+	t = -1.0f;
+	if ( a > -0.001f && a < 0.001f ) {
+		if ( b < 0.0f ) {
+			t = -c / b;			// gleich schnell: einholbar nur, was entgegenkommt
+		}
+	} else {
+		disc = b * b - 4.0f * a * c;
+		if ( disc >= 0.0f ) {
+			root = sqrt( disc );
+			t1 = ( -b - root ) / ( 2.0f * a );
+			t2 = ( -b + root ) / ( 2.0f * a );
+			if ( t1 > 0.0f && ( t2 <= 0.0f || t1 < t2 ) ) {
+				t = t1;
+			} else if ( t2 > 0.0f ) {
+				t = t2;
+			}
+		}
+	}
+	if ( t <= 0.0f ) {
+		t = sqrt( c ) / speed;
+	}
+	if ( t > HOMING_LEAD_MAX ) {
+		t = HOMING_LEAD_MAX;
+	}
+	return t;
+}
+
+// Wohin lenken. Ohne Vorhalt auf das Ziel; mit g_homingLead auf den
+// Treffpunkt. Der Prozentsatz kuerzt die Vorhaltezeit.
+static void G_HomingAimPoint( gentity_t *missile, gentity_t *target, const vec3_t pos,
+		const vec3_t vel, float speed, vec3_t aim ) {
+	vec3_t	d, down;
+	float	lead, t, mean, age, gravity, fall, drop, land;
+	trace_t	tr;
+
+	VectorCopy( pos, aim );
+	lead = Com_Clamp( 0.0f, 100.0f, g_homingLead.value ) * 0.01f;
+	if ( lead <= 0.0f ) {
 		return;
 	}
 
-	VectorSubtract( aim, ent->r.currentOrigin, want );
-	VectorNormalize( want );
+	// Die Flugzeit einmal mit dem jetzigen Tempo und noch einmal mit dem
+	// mittleren Tempo des Profils ueber genau diese Zeit: eine Rakete, die von
+	// 300 auf 2000 beschleunigt, holt ein, was mit 300 "nicht einholbar" waere,
+	// und hielte sonst viel zu weit vor - das Ziel fiele dabei aus dem Kegel.
+	VectorSubtract( pos, missile->r.currentOrigin, d );
+	age = ( level.time - missile->homingBorn ) * 0.001f;
+	t = G_HomingInterceptTime( d, vel, speed );
+	mean = G_HomingMeanSpeed( age, t, speed );
+	if ( mean != speed ) {
+		t = G_HomingInterceptTime( d, vel, mean );
+	}
+	t *= lead;
 
-	// Hoechstens g_homingTurn Grad je Sekunde drehen, gerechnet auf die Zeit
-	// dieses Bildes. Das macht den Wendekreis: Radius = Tempo / Drehrate.
-	maxTurn = DEG2RAD( Com_Clamp( 1.0f, 3600.0f, g_homingTurn.value ) )
-		* ( level.time - level.previousTime ) * 0.001f;
-	cosAngle = Com_Clamp( -1.0f, 1.0f, DotProduct( forward, want ) );
-
-	if ( cosAngle >= cos( maxTurn ) ) {
-		VectorCopy( want, dir );			// in Reichweite: direkt drauf
-	} else {
-		// Um genau maxTurn drehen, in der Ebene aus forward und want. Die
-		// Senkrechte dazu ist want ohne seinen forward-Anteil; damit gilt
-		// dir = forward·cos + senkrecht·sin - exakt, ohne den Winkel selbst
-		// zu kennen. acos gibt es im QVM nicht, und linear gemischt und
-		// normiert drehte es bei grossen Winkeln zu schnell, bei kleinen zu
-		// langsam.
-		VectorMA( want, -cosAngle, forward, perp );
-		if ( VectorNormalize( perp ) < 0.0001f ) {
-			return;		// Ziel genau hinter der Rakete: dieses Bild geradeaus,
-						// im naechsten ist der Winkel schon ein anderer
+	VectorMA( pos, t, vel, aim );
+	if ( target->client ) {
+		// Fallen laesst nur, wer wirklich faellt - kein Flug-Powerup, nicht im
+		// Wasser - und nur bis zum Boden unter ihm; danach laeuft er dort
+		// weiter. Ohne das lag der Punkt bei einem Hasensprung auf 1200
+		// Einheiten Hunderte Einheiten unter dem Boden, und die Rakete schlug
+		// davor ein. Die Spur geht senkrecht nach unten, nicht entlang der
+		// Flugbahn - eine Naeherung, die fuer den Hasensprung reicht.
+		gravity = target->client->ps.gravity;
+		if ( target->client->ps.groundEntityNum == ENTITYNUM_NONE && gravity > 0.0f
+			&& !target->client->ps.powerups[PW_FLIGHT] && target->waterlevel <= 1 ) {
+			fall = t;
+			VectorCopy( target->r.currentOrigin, down );
+			down[2] -= 8192.0f;
+			trap_Trace( &tr, target->r.currentOrigin, target->r.mins, target->r.maxs,
+				down, target->s.number, MASK_PLAYERSOLID );
+			if ( !tr.startsolid && tr.fraction < 1.0f ) {
+				drop = target->r.currentOrigin[2] - tr.endpos[2];
+				if ( drop < 0.0f ) {
+					drop = 0.0f;
+				}
+				// z(t) = z0 + vz·t - g/2·t² = Boden: die positive Wurzel
+				land = ( vel[2] + sqrt( vel[2] * vel[2] + 2.0f * gravity * drop ) ) / gravity;
+				if ( land < fall ) {
+					fall = land;
+				}
+			}
+			// Kein Boden darunter (der Abgrund auf q3dm17): der volle Fall stimmt.
+			aim[2] = pos[2] + vel[2] * fall - 0.5f * gravity * fall * fall;
 		}
-		s = sin( maxTurn );
-		a = cos( maxTurn );
-		VectorScale( forward, a, dir );
-		VectorMA( dir, s, perp, dir );
-		VectorNormalize( dir );
+	} else if ( target->s.pos.trType == TR_GRAVITY ) {
+		aim[2] -= 0.5f * DEFAULT_GRAVITY * t * t;
+	}
+}
+
+// Kommen sich Rakete und Ziel bis zum naechsten Bild naeher als radius, wenn
+// beide geradeaus weiterfliegen? Mit der Relativbewegung gerechnet: zwei
+// Raketen, die sich mit 1800 u/s entgegenfliegen, legen in einem Bild 90
+// Einheiten zurueck und wuerden sich zwischen zwei Pruefungen glatt verfehlen.
+// *when ist der Zeitpunkt der groessten Naehe, in Sekunden ab jetzt.
+static qboolean G_HomingClose( const vec3_t rel, const vec3_t relVel, float dt,
+		float radius, float *when ) {
+	vec3_t	p;
+	float	vv, t;
+
+	vv = DotProduct( relVel, relVel );
+	t = vv > 0.001f ? -DotProduct( rel, relVel ) / vv : 0.0f;
+	t = Com_Clamp( 0.0f, dt, t );
+	VectorMA( rel, t, relVel, p );
+	*when = t;
+	return DotProduct( p, p ) < radius * radius;
+}
+
+// Zerlegen an einem gegebenen Punkt - wie G_ExplodeMissile, aber ohne dessen
+// Annahme, der Schuetze sei ein Spieler: eine abgefangene Rakete kann von
+// einem Kartenschuetzen stammen, und dort stuerzte accuracy_hits ab.
+static void G_HomingBurst( gentity_t *ent, const vec3_t at ) {
+	vec3_t		origin, dir;
+	gentity_t	*owner;
+
+	VectorCopy( at, origin );
+	SnapVector( origin );
+	G_SetOrigin( ent, origin );
+
+	dir[0] = dir[1] = 0;
+	dir[2] = 1;
+	ent->s.eType = ET_GENERAL;
+	G_AddEvent( ent, EV_MISSILE_MISS, DirToByte( dir ) );
+	ent->freeAfterEvent = qtrue;
+
+	owner = &g_entities[ent->r.ownerNum];
+	if ( ent->splashDamage && G_RadiusDamage( ent->r.currentOrigin, ent->parent,
+			ent->splashDamage, ent->splashRadius, ent, ent->splashMethodOfDeath )
+		&& owner->client ) {
+		owner->client->accuracy_hits++;
+	}
+	trap_LinkEntity( ent );
+}
+
+// Der Warnton fuer den Verfolgten: nur Menschen, nur er hoert ihn, und je
+// naeher die Rakete, desto dichter - 800 ms ab 2000 Einheiten, 120 ms aus
+// der Naehe, wie ein Abstandswarner. Sofort piept es nur fuer einen anderen
+// Menschen als zuletzt; derselbe bleibt im Takt seines Abstands, auch nach
+// einem Bild ohne Sicht oder einem Abstecher der Rakete zu einem Bot. Sonst
+// piepte ein Wechsel hin und her alle 100 ms, egal wie weit weg sie ist.
+static void G_HomingWarn( gentity_t *ent, gentity_t *target, float dist ) {
+	gentity_t	*te;
+
+	if ( !g_homingWarn.integer || !target->client || ( target->r.svFlags & SVF_BOT ) ) {
+		return;
+	}
+	if ( target->s.number == ent->homingBeepTarget && level.time < ent->homingBeep ) {
+		return;
+	}
+	te = G_TempEntity( target->r.currentOrigin, EV_GLOBAL_SOUND );
+	te->s.eventParm = G_SoundIndex( "sound/homing/lock.wav" );
+	te->r.svFlags |= SVF_SINGLECLIENT | SVF_BROADCAST;
+	te->r.singleClient = target->s.number;
+	ent->homingBeepTarget = target->s.number;
+	ent->homingBeep = level.time + (int)Com_Clamp( 120.0f, 800.0f, dist * 0.4f );
+}
+
+// Nach Ablauf der Lebensdauer: statt sich nur zu zerlegen, in g_homingSplit
+// Splitter zerfallen, die reihum 25 Grad aus der Flugrichtung weiterfliegen und
+// selbst suchen. Jeder traegt den halben Schaden, und Splitter zerfallen nicht
+// noch einmal - das Feuerwerk von 2007 hatte keine Grenze.
+static void G_HomingSplit( gentity_t *ent ) {
+	vec3_t		origin, forward, right, up, dir;
+	gentity_t	*owner, *bolt;
+	float		speed, angle, spread;
+	int			i, n, room, made;
+
+	BG_EvaluateTrajectory( &ent->s.pos, level.time, origin );
+	owner = ent->parent;
+	n = (int)Com_Clamp( 0.0f, 4.0f, g_homingSplit.value );
+	made = 0;
+
+	if ( n > 0 && ent->homingGen == 0 && owner && owner->inuse && owner->client ) {
+		// Nur mit Platz in der Entitaetentabelle: lieber keine Splitter als
+		// "G_Spawn: no free entities" und ein Absturz.
+		room = ENTITYNUM_MAX_NORMAL - level.num_entities;
+		for ( i = MAX_CLIENTS; i < level.num_entities; i++ ) {
+			if ( !g_entities[i].inuse ) {
+				room++;
+			}
+		}
+		if ( room < 64 ) {
+			n = 0;
+		}
+
+		speed = ent->homingSpeed > 0.0f ? ent->homingSpeed : VectorLength( ent->s.pos.trDelta );
+		VectorNormalize2( ent->s.pos.trDelta, forward );
+		PerpendicularVector( right, forward );
+		CrossProduct( forward, right, up );
+		spread = DEG2RAD( 25.0f );
+		for ( i = 0; i < n; i++ ) {
+			angle = 2.0f * M_PI * i / n;
+			VectorScale( forward, cos( spread ), dir );
+			VectorMA( dir, sin( spread ) * cos( angle ), right, dir );
+			VectorMA( dir, sin( spread ) * sin( angle ), up, dir );
+
+			bolt = fire_rocket( owner, origin, dir );
+			// Auch wenn nur die Menschen suchen und der Schuetze inzwischen als
+			// Bot gilt: der Splitter einer Zielsuch-Rakete sucht.
+			bolt->homing = qtrue;
+			bolt->homingGen = 1;
+			// Ihr Alter, also laengst scharf, und das Tempoprofil laeuft weiter.
+			// Die Treibstoffuhr dagegen hat fire_rocket eben neu gestellt: erbten
+			// sie auch die, koennten sie mit g_homingFuel nie lenken.
+			bolt->homingBorn = ent->homingBorn;
+			bolt->homingSpeed = speed;
+			bolt->s.pos.trTime = level.time;		// kein Vorlauf, sie entstehen im Flug
+			VectorScale( dir, speed, bolt->s.pos.trDelta );
+			SnapVector( bolt->s.pos.trDelta );
+			bolt->damage = ent->damage / 2;
+			bolt->splashDamage = ent->splashDamage / 2;
+			// Eigene Lebensdauer, dann zerlegen - fire_rocket hat sie nur
+			// gesetzt, wenn es den Schuetzen selbst fuer suchend hielt.
+			bolt->think = G_ExplodeMissile;
+			bolt->nextthink = level.time
+				+ (int)( Com_Clamp( 0.5f, 15.0f, g_homingLifetime.value ) * 1000.0f );
+			made++;
+		}
 	}
 
-	// Die Bahn dort neu ansetzen, wo die Rakete jetzt ist. Das Tempo bleibt,
-	// nur die Richtung wandert - eine Zielsuch-Rakete wird nicht schneller.
-	VectorCopy( ent->r.currentOrigin, ent->s.pos.trBase );
-	ent->s.pos.trTime = level.time;
-	VectorScale( dir, speed, ent->s.pos.trDelta );
-	SnapVector( ent->s.pos.trDelta );			// wie in fire_rocket, spart Bandbreite
+	// Die Huelle platzt sichtbar. Mit Splittern ohne Schaden - den tragen
+	// jetzt die; ohne (kein Platz, Schuetze weg) wie jede Rakete.
+	if ( made ) {
+		ent->splashDamage = 0;
+	}
+	G_HomingBurst( ent, origin );
+}
+
+// Lenken, Tempo und Zuender - einmal je Bild, nach der Bewegung. Gibt qtrue
+// zurueck, wenn die Rakete dabei gezuendet hat; dann darf G_RunMissile nicht
+// weitermachen, der think liefe sonst auf einer Explosion.
+static qboolean G_HomingSteer( gentity_t *ent ) {
+	vec3_t		forward, dir, pos, vel, bestPos, bestVel, aim, want, perp, cross;
+	vec3_t		mvel, rel, relVel, at;
+	float		speed, cur, dist, dot, score, best, coneCos, maxTurn, cosAngle;
+	float		s, a, dt, age, fuel, turned, profile, v0, v1, ramp, rate, drag;
+	float		radius, when, x;
+	gentity_t	*target, *cand;
+	trace_t		tr;
+	int			i, limit;
+
+	dt = ( level.time - level.previousTime ) * 0.001f;
+	speed = VectorLength( ent->s.pos.trDelta );
+	if ( dt <= 0.0f || speed < 1.0f ) {
+		return qfalse;
+	}
+	VectorScale( ent->s.pos.trDelta, 1.0f / speed, forward );
+	VectorCopy( forward, dir );
+	age = ( level.time - ent->homingBorn ) * 0.001f;
+	cur = ent->homingSpeed > 0.0f ? ent->homingSpeed : speed;
+	turned = 0.0f;
+	target = NULL;
+
+	// Die ersten g_homingArm Millisekunden fliegt sie geradeaus: keine
+	// Zielsuche, kein Zuender. Splitter haben das Alter ihrer Mutter und sind
+	// damit laengst scharf; ihr Treibstoff dagegen zaehlt ab dem Zerfall.
+	if ( level.time - ent->homingBorn >= (int)Com_Clamp( 0.0f, 2000.0f, g_homingArm.value ) ) {
+		coneCos = cos( DEG2RAD( Com_Clamp( 1.0f, 180.0f, g_homingCone.value ) ) );
+
+		// Das bisherige Ziel behalten, solange es gueltig und sichtbar ist.
+		// Erst wenn es wegfaellt, wird neu gesucht. Mit g_homingRetarget jedes
+		// Bild neu: die Rakete schwenkt um, sobald ein anderes besser passt.
+		if ( !g_homingRetarget.integer && G_HomingAllowed( ent, ent->homingTarget, qfalse ) ) {
+			G_HomingTargetState( ent->homingTarget, bestPos, bestVel );
+			if ( G_HomingInCone( ent, forward, coneCos, bestPos, &dist, &dot )
+				&& G_HomingSees( ent, ent->homingTarget, bestPos ) ) {
+				target = ent->homingTarget;
+			}
+		}
+		if ( !target ) {
+			// Spieler, und mit g_homingMissiles alles dahinter. Die Spur kommt
+			// zuletzt und nur fuer den, der besser waere als der bisher beste -
+			// sie ist das Teure, und mit Raketen als Ziel gibt es viele.
+			best = 0.0f;
+			limit = g_homingMissiles.integer ? level.num_entities : level.maxclients;
+			for ( i = 0; i < limit; i++ ) {
+				if ( i >= level.maxclients && i < MAX_CLIENTS ) {
+					continue;
+				}
+				cand = &g_entities[i];
+				// Wer schon verfolgt wird, faellt auch beim Umschwenken nicht
+				// durch den Filter Luft/Boden, nur weil er kurz aufsetzt. Im
+				// Haltemodus aendert das nichts: dort laeuft die Suche erst,
+				// wenn das gehaltene Ziel Kegel oder Sicht schon verloren hat.
+				if ( !G_HomingAllowed( ent, cand, cand != ent->homingTarget ) ) {
+					continue;
+				}
+				G_HomingTargetState( cand, pos, vel );
+				if ( !G_HomingInCone( ent, forward, coneCos, pos, &dist, &dot ) ) {
+					continue;
+				}
+				score = G_HomingScore( ent, cand, pos, forward, dist, dot );
+				if ( target && score >= best ) {
+					continue;
+				}
+				if ( !G_HomingSees( ent, cand, pos ) ) {
+					continue;
+				}
+				target = cand;
+				best = score;
+				VectorCopy( pos, bestPos );
+				VectorCopy( vel, bestVel );
+			}
+			ent->homingTarget = target;
+		}
+		if ( target ) {
+			ent->homingLocked = qtrue;		// ab jetzt misst g_homingPick 1 von der Rakete aus
+		}
+	}
+
+	if ( target ) {
+		G_HomingAimPoint( ent, target, bestPos, bestVel, cur, aim );
+		VectorSubtract( aim, ent->r.currentOrigin, want );
+
+		// Hoechstens g_homingTurn Grad je Sekunde drehen, gerechnet auf die
+		// Zeit dieses Bildes. Das macht den Wendekreis: Radius = Tempo / Rate.
+		maxTurn = DEG2RAD( Com_Clamp( 1.0f, 3600.0f, g_homingTurn.value ) ) * dt;
+		// Treibstoff: die Lenkkraft nimmt gleichmaessig ab und ist nach
+		// g_homingFuel Sekunden weg. Danach fliegt sie geradeaus weiter. Die
+		// Uhr ist die eigene, nicht das Alter - Splitter tanken neu.
+		fuel = Com_Clamp( 0.0f, 60.0f, g_homingFuel.value );
+		if ( fuel > 0.0f ) {
+			maxTurn *= Com_Clamp( 0.0f, 1.0f,
+				1.0f - ( level.time - ent->homingFuelBorn ) * 0.001f / fuel );
+		}
+		// Mehr als eine halbe Drehung je Bild gibt es nicht: ab pi ist jedes
+		// Ziel in Reichweite. Darueber liefe cos(maxTurn) wieder gegen 1, und
+		// die Drehung unten zeigte vom Ziel weg (sv_fps 10, g_homingTurn 3600).
+		if ( maxTurn > M_PI ) {
+			maxTurn = M_PI;
+		}
+
+		if ( VectorNormalize( want ) > 1.0f && maxTurn > 0.0f ) {
+			cosAngle = Com_Clamp( -1.0f, 1.0f, DotProduct( forward, want ) );
+			if ( cosAngle >= cos( maxTurn ) ) {
+				// In Reichweite: direkt drauf. Der Winkel dafuer ueber atan2 -
+				// acos gibt es im QVM nicht.
+				CrossProduct( forward, want, cross );
+				turned = atan2( VectorLength( cross ), cosAngle );
+				VectorCopy( want, dir );
+			} else {
+				// Um genau maxTurn drehen, in der Ebene aus forward und want. Die
+				// Senkrechte dazu ist want ohne seinen forward-Anteil; damit gilt
+				// dir = forward·cos + senkrecht·sin - exakt, ohne den Winkel
+				// selbst zu kennen.
+				VectorMA( want, -cosAngle, forward, perp );
+				if ( VectorNormalize( perp ) >= 0.0001f ) {
+					s = sin( maxTurn );
+					a = cos( maxTurn );
+					VectorScale( forward, a, dir );
+					VectorMA( dir, s, perp, dir );
+					VectorNormalize( dir );
+					turned = maxTurn;
+				}
+				// sonst: Ziel genau hinter der Rakete - dieses Bild geradeaus,
+				// im naechsten ist der Winkel schon ein anderer
+			}
+		}
+
+		G_HomingWarn( ent, target, Distance( bestPos, ent->r.currentOrigin ) );
+	}
+
+	// Tempo: ein Profil von g_homingSpeedStart nach g_homingSpeedEnd ueber
+	// g_homingSpeedRamp Sekunden. Enge Kurven kosten mit g_homingDrag Tempo,
+	// das der Motor danach wieder aufholt.
+	G_HomingProfile( &v0, &v1, &ramp );
+	profile = v0 + ( v1 - v0 ) * Com_Clamp( 0.0f, 1.0f, age / ramp );
+	drag = Com_Clamp( 0.0f, 100.0f, g_homingDrag.value ) * 0.01f;
+	if ( drag > 0.0f && turned > 0.0f ) {
+		// e^(-x) mit x = k·Winkel, k so, dass bei 100 % eine Vierteldrehung
+		// ohne Nachschub das Tempo halbiert: k = 2·ln 2 / pi. exp gibt es im
+		// QVM nicht; die Pade-Form (1 - x/2) / (1 + x/2) trifft es auch bei 36
+		// Grad je Bild (720 °/s) auf ein Promille und ist unter 2 positiv.
+		x = 0.4413f * drag * turned;
+		if ( x > 1.9f ) {
+			x = 1.9f;
+		}
+		cur *= ( 1.0f - 0.5f * x ) / ( 1.0f + 0.5f * x );
+	}
+	// Der Motor holt 900 u/s je Sekunde gegenueber dem Profil auf. Steigt das
+	// Profil gerade, kommt dessen Steigung obendrauf - sonst liefe es der
+	// gebremsten Rakete genau so schnell davon, wie sie aufholt. Ohne
+	// Kurvenverlust haelt sie damit genau das Profil.
+	rate = 900.0f;
+	if ( v1 > v0 && age < ramp ) {
+		rate += ( v1 - v0 ) / ramp;
+	}
+	if ( cur < profile ) {
+		cur += rate * dt;
+		if ( cur > profile ) {
+			cur = profile;
+		}
+	} else {
+		cur = profile;
+	}
+	if ( cur < HOMING_MIN_SPEED ) {
+		cur = HOMING_MIN_SPEED;
+	}
+	ent->homingSpeed = cur;
+
+	// Die Bahn nur neu ansetzen, wenn sich etwas geaendert hat: ein neuer
+	// Ursprung geht jedes Mal uebers Netz.
+	if ( turned > 0.0f || cur - speed > 2.0f || speed - cur > 2.0f ) {
+		VectorCopy( ent->r.currentOrigin, ent->s.pos.trBase );
+		ent->s.pos.trTime = level.time;
+		VectorScale( dir, cur, ent->s.pos.trDelta );
+		SnapVector( ent->s.pos.trDelta );			// wie in fire_rocket, spart Bandbreite
+	}
+
+	// Zuender. Gegen Spieler nur mit g_homingProximity; gegen Raketen immer -
+	// anders als ein Spieler hat eine Rakete keinen Koerper, an dem die Spur in
+	// G_RunMissile haengen bleiben koennte. Die gejagte Rakete platzt mit.
+	if ( target ) {
+		radius = Com_Clamp( 0.0f, 1000.0f, g_homingProximity.value );
+		if ( !target->client && radius < HOMING_CONTACT ) {
+			radius = HOMING_CONTACT;
+		}
+		if ( radius > 0.0f ) {
+			VectorScale( dir, cur, mvel );
+			VectorSubtract( bestPos, ent->r.currentOrigin, rel );
+			VectorSubtract( bestVel, mvel, relVel );
+			if ( G_HomingClose( rel, relVel, dt, radius, &when ) ) {
+				// Beide am Punkt der groessten Naehe zuenden. Die gejagte Rakete
+				// von ihrem letzten geprueften Ort aus: hat sie eine hoehere
+				// Nummer, lief sie in diesem Bild noch nicht, und ihre Bahn kann
+				// schon hinter einer Wand liegen. Trifft sie auf dem Weg dorthin
+				// eine Wand oder einen Spieler, macht das ihr eigenes
+				// G_RunMissile - hier dann kein Abfangen, sonst platzte sie auf
+				// der falschen Seite der Wand. Die Jaegerin sucht sich im
+				// naechsten Bild ein neues Ziel.
+				if ( !target->client ) {
+					VectorMA( bestPos, when, bestVel, at );
+					trap_Trace( &tr, target->r.currentOrigin, target->r.mins, target->r.maxs,
+						at, target->r.ownerNum, target->clipmask );
+					if ( tr.startsolid || tr.fraction < 1.0f ) {
+						return qfalse;
+					}
+					// Fuer die Auswertung, im Stil der Kill-Zeilen: wessen Rakete
+					// wessen abgeschossen hat. Ohne die Zeile saehe man es nur
+					// daran, dass weniger Raketen treffen.
+					G_LogPrintf( "Intercept: %i %i: %s shot down a rocket of %s\n",
+						ent->r.ownerNum, target->r.ownerNum,
+						g_entities[ent->r.ownerNum].client
+							? g_entities[ent->r.ownerNum].client->pers.netname : "<world>",
+						g_entities[target->r.ownerNum].client
+							? g_entities[target->r.ownerNum].client->pers.netname : "<world>" );
+					G_HomingBurst( target, at );
+				}
+				// Die Jaegerin ebenso nicht hinter einer Wand: die Spur haelt an
+				// der ersten festen Flaeche.
+				VectorMA( ent->r.currentOrigin, when, mvel, at );
+				trap_Trace( &tr, ent->r.currentOrigin, NULL, NULL, at, ent->r.ownerNum, MASK_SOLID );
+				G_HomingBurst( ent, tr.endpos );
+				return qtrue;
+			}
+		}
+	}
+	return qfalse;
 }
 
 /*
@@ -669,9 +1224,10 @@ void G_RunMissile( gentity_t *ent ) {
 	}
 #endif
 	// Zielsuch-Raketen lenken nach der Bewegung dieses Bildes und vor dem think
-	// - der think bleibt der Selbstzuender nach fuenfzehn Sekunden.
-	if ( ent->homing ) {
-		G_HomingSteer( ent );
+	// - der think bleibt der Selbstzuender. Hat der Naeherungszuender dabei
+	// ausgeloest, ist sie keine Rakete mehr und der think darf nicht laufen.
+	if ( ent->homing && G_HomingSteer( ent ) ) {
+		return;
 	}
 
 	// check think function after bouncing
@@ -845,13 +1401,31 @@ gentity_t *fire_rocket (gentity_t *self, vec3_t start, vec3_t dir) {
 	bolt->homing = g_homingRockets.integer && self->client
 		&& ( g_homingRockets.integer >= 2 || !( self->r.svFlags & SVF_BOT ) );
 	bolt->homingTarget = NULL;
-	// Die Lebensdauer ersetzt nur die 15 s von oben - G_ExplodeMissile bleibt,
-	// also zerlegt sie sich mit vollem Splash dort, wo sie gerade ist. Nur fuer
-	// Zielsuch-Raketen: eine gerade fliegende trifft lange vorher eine Wand,
-	// eine kreisende sonst erst nach einer Viertelminute.
+	bolt->homingBorn = level.time;
+	bolt->homingFuelBorn = level.time;
+	bolt->homingSpeed = 0.0f;
+	bolt->homingBeep = 0;
+	// Ausdruecklich: G_Spawn nullt das Feld, und 0 ist ein echter Spieler.
+	bolt->homingBeepTarget = ENTITYNUM_NONE;
+	bolt->homingGen = 0;
+	VectorCopy( start, bolt->homingFrom );
+	bolt->homingLocked = qfalse;
 	if ( bolt->homing ) {
+		// Die Lebensdauer ersetzt nur die 15 s von oben - G_ExplodeMissile
+		// bleibt, also zerlegt sie sich mit vollem Splash dort, wo sie gerade
+		// ist. Nur fuer Zielsuch-Raketen: eine gerade fliegende trifft lange
+		// vorher eine Wand, eine kreisende sonst erst nach einer Viertelminute.
+		// Mit Splittern zerfaellt sie stattdessen.
 		bolt->nextthink = level.time
 			+ (int)( Com_Clamp( 0.5f, 15.0f, g_homingLifetime.value ) * 1000.0f );
+		if ( g_homingSplit.integer > 0 ) {
+			bolt->think = G_HomingSplit;
+		}
+		// Das Starttempo des Profils statt der festen 900. Der Vorlauf oben
+		// (MISSILE_PRESTEP_TIME) rechnet mit diesem Tempo mit.
+		bolt->homingSpeed = Com_Clamp( HOMING_MIN_SPEED, HOMING_MAX_SPEED, g_homingSpeedStart.value );
+		VectorScale( dir, bolt->homingSpeed, bolt->s.pos.trDelta );
+		SnapVector( bolt->s.pos.trDelta );
 	}
 
 	return bolt;
