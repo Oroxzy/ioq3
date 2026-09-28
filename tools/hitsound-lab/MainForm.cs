@@ -185,6 +185,15 @@ public class MainForm : Form, IMessageFilter {
 
 	readonly CheckBox qlAutoHop = new() { Text = "Auto-Hop: gehaltene Sprungtaste springt weiter", Checked = false, AutoSize = true };
 	readonly CheckBox qlWeaponSwitch = new() { Text = "Waffenwechsel wie Quake Live (400 statt 450 ms)", Checked = false, AutoSize = true };
+	// Luftsteuerung, Rampensprung, Schritthöhe. Die Werte sind die aus id
+	// Softwares eigenen Factories: Race setzt AirControl 1 und RampJump 1,
+	// einzelne Spieltypen gehen bei der Schritthöhe auf 20 oder 28.
+	readonly CheckBox qlAirControl = new() { Text = "Luftsteuerung (nur geradeaus, wie Race/PQL)", Checked = false, AutoSize = true };
+	readonly NumericUpDown qlAirControlValue = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.25m, Maximum = 10.00m, Value = 1.00m, Width = 70 };
+	readonly NumericUpDown qlAirAccel = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.00m, Maximum = 10.00m, Value = 0.00m, Width = 70 };
+	readonly CheckBox qlRampJump = new() { Text = "Rampensprung: Aufwärtsschwung behalten", Checked = false, AutoSize = true };
+	readonly NumericUpDown qlRampScale = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0.50m, Maximum = 3.00m, Value = 1.00m, Width = 70 };
+	readonly NumericUpDown qlStepHeight = new() { DecimalPlaces = 0, Increment = 1m, Minimum = 0m, Maximum = 40m, Value = 0m, Width = 70 };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
 
 	readonly Label statHits = Number();
@@ -490,7 +499,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 16;
+	const int LogVersion = 17;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -1402,9 +1411,27 @@ public class MainForm : Form, IMessageFilter {
 		hintTip.SetToolTip( qlWeaponSwitch, "Quake 3 steckt in 200 ms weg und nimmt in 250 ms hoch, zusammen 450."
  			+ " Quake Live nimmt in 200 hoch, also 400. Der Unterschied sitzt allein im Hochnehmen." );
 
+		hintTip.SetToolTip( qlAirControl, "Dreht den Schwung im Sprung in die Blickrichtung, statt zu"
+ 			+ " beschleunigen - der Betrag bleibt, die Richtung wandert. Wirkt nur, solange du geradeaus"
+ 			+ " oder gerade rückwärts drückst; seitwärts bleibt Strafejump unverändert. In id Softwares"
+ 			+ " eigenen Factories setzt das NUR Race, kein Duell und kein Clan Arena." );
+		hintTip.SetToolTip( qlAirControlValue, "Die Stärke. 1,00 ist der Wert aus den Race-Factories." );
+		hintTip.SetToolTip( qlAirAccel, "Luftbeschleunigung. 0 heißt Originalwert (1,0); PQL geht auf 2." );
+		hintTip.SetToolTip( qlRampJump, "Quake 3 überschreibt beim Sprung die Aufwärtsgeschwindigkeit - ein"
+ 			+ " Sprung von einer Schräge frisst also genau den Schwung, den die Schräge gerade gegeben"
+ 			+ " hat. Damit wird er stattdessen behalten und der Sprung darauf gelegt, gedeckelt bei 700." );
+		hintTip.SetToolTip( qlRampScale, "Womit der vorhandene Aufwärtsschwung vorher multipliziert wird."
+ 			+ " Die Factories benutzen 1,25 und 1,75." );
+		hintTip.SetToolTip( qlStepHeight, "Wie hohe Stufen ohne Sprung genommen werden. 0 heißt Originalwert"
+ 			+ " (18). Quake Live geht in einzelnen Spieltypen auf 20 oder 28." );
+
 		return Group( "Quake Live",
 			Row( Pad( qlAutoHop ) ),
-			Row( Pad( qlWeaponSwitch ) ) );
+			Row( Pad( qlWeaponSwitch ) ),
+			Row( Pad( qlAirControl ) ),
+			Row( Labelled( "Stärke:", qlAirControlValue ), Labelled( "Luftbeschleunigung:", qlAirAccel ) ),
+			Row( Pad( qlRampJump ) ),
+			Row( Labelled( "Faktor:", qlRampScale ), Labelled( "Schritthöhe:", qlStepHeight ) ) );
 	}
 
 	// Wie weit vorgehalten wird
@@ -1982,6 +2009,12 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
 		s.AppendLine( "qlAutoHop=" + qlAutoHop.Checked );
 		s.AppendLine( "qlWeaponSwitch=" + qlWeaponSwitch.Checked );
+		s.AppendLine( "qlAirControl=" + qlAirControl.Checked );
+		s.AppendLine( "qlAirControlValue=" + Dec( qlAirControlValue.Value ) );
+		s.AppendLine( "qlAirAccel=" + Dec( qlAirAccel.Value ) );
+		s.AppendLine( "qlRampJump=" + qlRampJump.Checked );
+		s.AppendLine( "qlRampScale=" + Dec( qlRampScale.Value ) );
+		s.AppendLine( "qlStepHeight=" + Dec( qlStepHeight.Value ) );
 		s.AppendLine( "hudFovAspect=" + hudFovAspect.Checked );
 		s.AppendLine( "hudFovGun=" + hudFovGun.Checked );
 		s.AppendLine( "hudWeaponBar=" + hudWeaponBar.Checked );
@@ -2079,6 +2112,12 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
 		SetBool( qlAutoHop, v, "qlAutoHop" );
 		SetBool( qlWeaponSwitch, v, "qlWeaponSwitch" );
+		SetBool( qlAirControl, v, "qlAirControl" );
+		SetNum( qlAirControlValue, v, "qlAirControlValue" );
+		SetNum( qlAirAccel, v, "qlAirAccel" );
+		SetBool( qlRampJump, v, "qlRampJump" );
+		SetNum( qlRampScale, v, "qlRampScale" );
+		SetNum( qlStepHeight, v, "qlStepHeight" );
 		SetBool( hudFovAspect, v, "hudFovAspect" );
 		SetBool( hudFovGun, v, "hudFovGun" );
 		SetBool( hudWeaponBar, v, "hudWeaponBar" );
@@ -2240,9 +2279,17 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		// Quake-Live-Bewegung. Null heisst bei den Zeiten ausdruecklich
 		// "Original", nicht "null Millisekunden" - so liest es bg_pmove.c.
-		cfg.AppendLine( $"seta pmove_autoHop {( qlAutoHop.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"seta pmove_weaponDropTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
-		cfg.AppendLine( $"seta pmove_weaponRaiseTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_AutoHop {( qlAutoHop.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_WeaponDropTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_WeaponRaiseTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
+		// Die Stärke steht nur dann, wenn der Haken sie freigibt - sonst wäre
+		// eine Zahl gesetzt, die nichts tut, und im Protokollkopf stünde eine
+		// Bedingung, die nie galt.
+		cfg.AppendLine( $"seta pmove_AirControl {( qlAirControl.Checked ? Dec( qlAirControlValue.Value ) : "0" )}" );
+		cfg.AppendLine( $"seta pmove_AirAccel {Dec( qlAirAccel.Value )}" );
+		cfg.AppendLine( $"seta pmove_RampJump {( qlRampJump.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta pmove_RampJumpScale {Dec( qlRampScale.Value )}" );
+		cfg.AppendLine( $"seta pmove_StepHeight {Dec( qlStepHeight.Value )}" );
 		// ZTMs Flexible HUD. Alle acht sind CVAR_ARCHIVE, stehen also auch in
 		// der q3config - diese Zeilen laufen danach und gewinnen damit.
 		cfg.AppendLine( $"seta cg_fovAspectAdjust {( hudFovAspect.Checked ? 1 : 0 )}" );
@@ -2790,18 +2837,20 @@ public class MainForm : Form, IMessageFilter {
 	// abdrueckt - Schuesse mit und ohne ihn sind nicht dieselbe Stichprobe.
 	static string StampCondition( string line ) {
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
-		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "";
+		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "", air = "", step = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "rate" ) rate = f[i + 1];
 			else if ( f[i] == "ammo" ) ammo = f[i + 1];
 			else if ( f[i] == "autofire" ) autoFire = f[i + 1];
 			else if ( f[i] == "autohop" ) hop = f[i + 1];
 			else if ( f[i] == "wraise" ) wraise = f[i + 1];
+			else if ( f[i] == "air" ) air = f[i + 1];
+			else if ( f[i] == "step" ) step = f[i + 1];
 		}
 		// Die Wegsteckzeit bleibt aus dem Schlüssel heraus: sie ist in Quake 3
 		// und Quake Live dieselbe, und wer sie von Hand verstellt, sieht es an
 		// der Zeile darüber. Das Hochnehmen ist der Wert, der sich unterscheidet.
-		return rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise;
+		return rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise + "/" + air + "/" + step;
 	}
 
 	void ShowLogVersion( string line, int conditions = 1 ) {
@@ -2813,7 +2862,7 @@ public class MainForm : Form, IMessageFilter {
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 		int found = 0;
-		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "";
+		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "", air = "", ramp = "", step = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
 			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
@@ -2823,6 +2872,9 @@ public class MainForm : Form, IMessageFilter {
 			else if ( f[i] == "autohop" ) hop = f[i + 1];
 			else if ( f[i] == "wdrop" ) wdrop = f[i + 1];
 			else if ( f[i] == "wraise" ) wraise = f[i + 1];
+			else if ( f[i] == "air" ) air = f[i + 1];
+			else if ( f[i] == "ramp" ) ramp = f[i + 1];
+			else if ( f[i] == "step" ) step = f[i + 1];
 		}
 
 		// Unter welcher Bedingung gespielt wurde. Nur nennen, wenn sie vom
@@ -2846,6 +2898,12 @@ public class MainForm : Form, IMessageFilter {
 			if ( hop == "1" ) how += ", Auto-Hop";
 			if ( wraise.Length > 0 && wraise != "0" ) how += $", Waffe hoch in {wraise} ms";
 			if ( wdrop.Length > 0 && wdrop != "0" && wdrop != "200" ) how += $", Waffe weg in {wdrop} ms";
+			// Die Bruchzahlen stehen in Tausendsteln in der Zeile.
+			if ( int.TryParse( air, out var airMilli ) && airMilli > 0 )
+				how += $", Luftsteuerung {airMilli / 1000.0:0.##}";
+			if ( ramp == "1" ) how += ", Rampensprung";
+			if ( int.TryParse( step, out var stepUnits ) && stepUnits > 0 )
+				how += $", Schritthöhe {stepUnits}";
 		}
 
 		if ( conditions > 1 ) {

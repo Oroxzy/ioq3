@@ -922,7 +922,11 @@ in seconds, and the learner tunes it from what the bots really do.
 // die Waffenwechselzeit aendert, wie oft im Gefecht ueberhaupt geschossen wird.
 // Minus eins heisst: das Spielmodul kennt diese Physik nicht (pmove_qlActive
 // fehlt), die Cvars daneben sagen dann nichts ueber das, was wirklich lief.
-#define AIM_LOG_VERSION	16
+// Fuenfzehn: "air", "airaccel", "ramp", "rampscale" und "step" - Luftsteuerung,
+// Luftbeschleunigung, Rampensprung und Schritthoehe. Die drei Bruchzahlen
+// stehen in Tausendsteln, damit die Zeile ganzzahlig bleibt. Wer die Luft
+// steuern kann, laeuft andere Wege und bremst anders; das gehoert in den Kopf.
+#define AIM_LOG_VERSION	17
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -964,6 +968,11 @@ static int	aimLogAuto = -1;
 static int	aimLogHop = -2;			// -1 ist eine Aussage, also faengt es tiefer an
 static int	aimLogDrop = -2;
 static int	aimLogRaise = -2;
+static int	aimLogAir = -2;
+static int	aimLogAirAcc = -2;
+static int	aimLogRamp = -2;
+static int	aimLogRampSc = -2;
+static int	aimLogStep = -2;
 
 /*
 =================
@@ -5192,7 +5201,7 @@ void CL_AimAssistSnapshot( void ) {
 	char				bots[1024];
 	vec3_t				far;
 	int					i, j, event, kind, present, rate, ammo, autoFire;
-	int					hop, wdrop, wraise;
+	int					hop, wdrop, wraise, air, airacc, ramp, rampsc, step;
 
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable, nothing else counts. Learning and the log both
@@ -5223,16 +5232,25 @@ void CL_AimAssistSnapshot( void ) {
 	// geladene Spielmodul sie ueberhaupt ausliest. Fehlt der Beweis, steht
 	// hier minus eins statt einer Zahl, die nie gegolten hat.
 	if ( (int)Cvar_VariableValue( "pmove_qlActive" ) ) {
-		hop = (int)Cvar_VariableValue( "pmove_autoHop" ) ? 1 : 0;
-		wdrop = (int)Cvar_VariableValue( "pmove_weaponDropTime" );
-		wraise = (int)Cvar_VariableValue( "pmove_weaponRaiseTime" );
+		hop = (int)Cvar_VariableValue( "pmove_AutoHop" ) ? 1 : 0;
+		wdrop = (int)Cvar_VariableValue( "pmove_WeaponDropTime" );
+		wraise = (int)Cvar_VariableValue( "pmove_WeaponRaiseTime" );
+		// In Tausendstel, damit die Zeile ganzzahlig bleibt wie der Rest.
+		air = (int)( Cvar_VariableValue( "pmove_AirControl" ) * 1000.0f );
+		airacc = (int)( Cvar_VariableValue( "pmove_AirAccel" ) * 1000.0f );
+		ramp = (int)Cvar_VariableValue( "pmove_RampJump" ) ? 1 : 0;
+		rampsc = (int)( Cvar_VariableValue( "pmove_RampJumpScale" ) * 1000.0f );
+		step = (int)Cvar_VariableValue( "pmove_StepHeight" );
 	} else {
 		hop = wdrop = wraise = -1;
+		air = airacc = ramp = rampsc = step = -1;
 	}
 
 	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo
 		|| autoFire != aimLogAuto || hop != aimLogHop
-		|| wdrop != aimLogDrop || wraise != aimLogRaise ) {
+		|| wdrop != aimLogDrop || wraise != aimLogRaise
+		|| air != aimLogAir || airacc != aimLogAirAcc || ramp != aimLogRamp
+		|| rampsc != aimLogRampSc || step != aimLogStep ) {
 		aimLogStamped = qtrue;
 		aimLogRate = rate;
 		aimLogAmmo = ammo;
@@ -5240,10 +5258,17 @@ void CL_AimAssistSnapshot( void ) {
 		aimLogHop = hop;
 		aimLogDrop = wdrop;
 		aimLogRaise = wraise;
+		aimLogAir = air;
+		aimLogAirAcc = airacc;
+		aimLogRamp = ramp;
+		aimLogRampSc = rampsc;
+		aimLogStep = step;
 		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i autofire %i"
-			" autohop %i wdrop %i wraise %i frame %i\n",
+			" autohop %i wdrop %i wraise %i air %i airaccel %i ramp %i"
+			" rampscale %i step %i frame %i\n",
 			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, autoFire,
-			hop, wdrop, wraise, cl.snap.serverTime );
+			hop, wdrop, wraise, air, airacc, ramp, rampsc, step,
+			cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();

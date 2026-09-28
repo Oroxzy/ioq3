@@ -384,7 +384,28 @@ static qboolean PM_CheckJump( void ) {
 	pm->ps->pm_flags |= PMF_JUMP_HELD;
 
 	pm->ps->groundEntityNum = ENTITYNUM_NONE;
-	pm->ps->velocity[2] = JUMP_VELOCITY;
+
+	// Rampensprung: den vorhandenen Aufwaertsschwung behalten und den Sprung
+	// darauflegen, statt ihn zu ueberschreiben. Quake 3 setzt hier hart, und
+	// damit frisst jeder Sprung von einer Schraege genau den Schwung, den die
+	// Schraege gerade gegeben hat.
+	//
+	// Der Boden darunter: nie weniger als ein normaler Sprung, sonst waere ein
+	// Sprung im Fallen schlechter als gar keiner. Die Decke ist die, mit der
+	// Quake Live rechnet (pmove_JumpVelocityMax) - ohne sie traegt eine steile
+	// Rampe einen beliebig weit.
+	if ( pm->rampJump ) {
+		pm->ps->velocity[2] *= pm->rampJumpScale > 0.0f ? pm->rampJumpScale : 1.0f;
+		pm->ps->velocity[2] += JUMP_VELOCITY;
+		if ( pm->ps->velocity[2] < JUMP_VELOCITY ) {
+			pm->ps->velocity[2] = JUMP_VELOCITY;
+		}
+		if ( pm->ps->velocity[2] > PM_RAMPJUMP_MAX ) {
+			pm->ps->velocity[2] = PM_RAMPJUMP_MAX;
+		}
+	} else {
+		pm->ps->velocity[2] = JUMP_VELOCITY;
+	}
 	PM_AddEvent( EV_JUMP );
 
 	if ( pm->cmd.forwardmove >= 0 ) {
@@ -600,6 +621,57 @@ static void PM_FlyMove( void ) {
 
 /*
 ===================
+PM_AirControl
+
+Die Luftsteuerung von Quake Live und CPMA. Sie dreht den vorhandenen Schwung in
+die Blickrichtung, statt ihn zu beschleunigen: der Betrag bleibt, die Richtung
+wandert. Deshalb wird die Geschwindigkeit hier normiert, gedreht und wieder auf
+ihre alte Laenge gebracht.
+
+Zwei Einschraenkungen sind das Wesentliche daran, und beide stammen aus dem
+Original. Erstens wirkt sie nur, solange man geradeaus oder gerade rueckwaerts
+haelt (movementDir 0 und 4) - wer seitwaerts drueckt, strafejumpt, und das soll
+unveraendert bleiben. Zweitens geht das Quadrat des Skalarprodukts ein: je
+naeher die Blickrichtung schon am Schwung liegt, desto staerker zieht es, und
+ein Blick quer zur Bewegung tut gar nichts.
+
+Die Hoehe bleibt unberuehrt - gedreht wird nur in der Ebene.
+===================
+*/
+static void PM_AirControl( vec3_t wishdir, float wishspeed ) {
+	float	zspeed, speed, dot, k;
+	int		i;
+
+	if ( pm->airControl <= 0.0f ) {
+		return;
+	}
+	if ( ( pm->ps->movementDir != 0 && pm->ps->movementDir != 4 ) || wishspeed == 0.0f ) {
+		return;
+	}
+
+	zspeed = pm->ps->velocity[2];
+	pm->ps->velocity[2] = 0;
+	speed = VectorNormalize( pm->ps->velocity );
+
+	dot = DotProduct( pm->ps->velocity, wishdir );
+	k = 32.0f * pm->airControl * dot * dot * pml.frametime;
+
+	if ( dot > 0 ) {
+		for ( i = 0; i < 2; i++ ) {
+			pm->ps->velocity[i] = pm->ps->velocity[i] * speed + wishdir[i] * k;
+		}
+		VectorNormalize( pm->ps->velocity );
+	}
+
+	for ( i = 0; i < 2; i++ ) {
+		pm->ps->velocity[i] *= speed;
+	}
+	pm->ps->velocity[2] = zspeed;
+}
+
+
+/*
+===================
 PM_AirMove
 
 ===================
@@ -640,7 +712,13 @@ static void PM_AirMove( void ) {
 	wishspeed *= scale;
 
 	// not on ground, so little effect on velocity
-	PM_Accelerate (wishdir, wishspeed, pm_airaccelerate);
+	// Null heisst Originalwert - so wie bei den Waffenwechselzeiten auch.
+	PM_Accelerate (wishdir, wishspeed,
+		pm->airAccel > 0.0f ? pm->airAccel : pm_airaccelerate);
+
+	// Und danach die Luftsteuerung, die den Schwung dreht statt ihn zu
+	// vergroessern. Nach dem Beschleunigen, weil sie auf dem Ergebnis arbeitet.
+	PM_AirControl( wishdir, wishspeed );
 
 	// we may have a ground plane that is very steep, even
 	// though we don't have a groundentity

@@ -503,9 +503,14 @@ void CG_PredictPlayerState( void ) {
 	// Spielmodul. Das ist die Haelfte, auf die es ankommt: saehe die
 	// Vorhersage hier andere Zahlen als der Server, zoege es den Spieler bei
 	// jedem Sprung und jedem Waffenwechsel zurecht.
-	cg_pmove.autoHop = pmove_autoHop.integer;
-	cg_pmove.weaponDropTime = pmove_weaponDropTime.integer;
-	cg_pmove.weaponRaiseTime = pmove_weaponRaiseTime.integer;
+	cg_pmove.autoHop = pmove_AutoHop.integer;
+	cg_pmove.weaponDropTime = pmove_WeaponDropTime.integer;
+	cg_pmove.weaponRaiseTime = pmove_WeaponRaiseTime.integer;
+	cg_pmove.airControl = pmove_AirControl.value;
+	cg_pmove.airAccel = pmove_AirAccel.value;
+	cg_pmove.rampJump = pmove_RampJump.integer;
+	cg_pmove.rampJumpScale = pmove_RampJumpScale.value;
+	cg_pmove.stepHeight = pmove_StepHeight.value;
 
 	// run cmds
 	moved = qfalse;

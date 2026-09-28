@@ -427,7 +427,7 @@ statt stillschweigend Felder zu lesen, die es damals nicht gab.
 
 Im Stempel stehen auch die Bedingungen, unter denen gespielt wurde: `rate` die
 Nachladezeit in Prozent, `ammo` die unbegrenzte Munition, `autofire` der
-selbsttätige Abzug, und `autohop`/`wdrop`/`wraise` die Quake-Live-Bewegung.
+selbsttätige Abzug, und `autohop`, `wdrop`, `wraise`, `air`, `airaccel`, `ramp`, `rampscale` und `step` die Quake-Live-Bewegung (die Bruchzahlen in Tausendsteln).
 Ändert sich eine davon mitten in der Sitzung, wird neu gestempelt, und das
 Werkzeug warnt in Rot, wenn eine Datei mehrere Bedingungen enthält – sonst
 mischte die Auswertung unten Stichproben, die nicht dieselben sind.
@@ -445,29 +445,62 @@ wenn Engine und Spielmodul getrennt veralten.
 
 ## Quake-Live-Bewegung
 
-Eigene Karte im Werkzeug, Stufe eins von neun Punkten. Zwei Schalter:
+Eigene Karte im Werkzeug. Die Cvar-Namen sind die von Quake Live selbst, mit
+großem Anfangsbuchstaben – genau so stehen sie in den **Factories**, mit denen
+echte QL-Server ihre Spieltypen einstellen
+([quakelive-server-standards](https://github.com/quakelive-server-standards/quakelive-server-standards)).
+Damit lässt sich eine QL-Konfiguration hier unverändert übernehmen, statt sie zu
+übersetzen.
 
-| Haken | Cvar | was er tut |
+| Schalter | Cvar | was er tut |
 | --- | --- | --- |
-| Auto-Hop | `pmove_autoHop` | gehaltene Sprungtaste springt weiter, statt auf das Loslassen zu warten |
-| Waffenwechsel wie Quake Live | `pmove_weaponDropTime` / `pmove_weaponRaiseTime` | 200/200 statt 200/250 ms, zusammen 400 statt 450 |
+| Auto-Hop | `pmove_AutoHop` | gehaltene Sprungtaste springt weiter, statt auf das Loslassen zu warten |
+| Waffenwechsel | `pmove_WeaponDropTime` / `pmove_WeaponRaiseTime` | 200/200 statt 200/250 ms |
+| Luftsteuerung | `pmove_AirControl`, `pmove_AirAccel` | dreht den Schwung im Sprung in die Blickrichtung |
+| Rampensprung | `pmove_RampJump`, `pmove_RampJumpScale` | Aufwärtsschwung behalten statt überschreiben |
+| Schritthöhe | `pmove_StepHeight` | wie hohe Stufen ohne Sprung genommen werden |
 
-Beides sind `CVAR_SYSTEMINFO`-Cvars, genau wie `pmove_fixed` in ioquake3: der
+**Was id Software selbst wo einstellt** – aus den Factories abgelesen, nicht
+geraten: `pmove_AirControl 1` und `pmove_RampJump 1` setzt **nur Race**. Duell,
+Clan Arena, TDM und der Rest lassen beides aus. Die Waffenwechselzeiten ändert
+ebenfalls nur Race, und zwar auf **10/10** – also praktisch sofort, nicht auf die
+200/200, die hier als „wie Quake Live“ stehen. Die 200/200 sind die *Vorgabe* von
+Quake Live, nicht das, was du auf einem Race-Server erlebst.
+
+Alle sind `CVAR_SYSTEMINFO`-Cvars, genau wie `pmove_fixed` in ioquake3: der
 Server besitzt den Wert, die Systeminfo trägt ihn zum Client, und **beide**
 Module legen ihn in `pmove_t` – das Spielmodul in `ClientThink_real`, der cgame
 in `CG_PredictPlayerState`. Das ist nicht Kosmetik: `bg_pmove.c` steckt in
 beiden, und sagt der Client etwas anderes voraus, als der Server rechnet, zieht
 es den Spieler bei jedem Sprung zurecht. **Nach einer Änderung an der Bewegung
-müssen deshalb `zz-hitpitch.pk3` und die lose `baseq3/vm/cgame.qvm` zusammen
-ausgeliefert werden.**
+muss deshalb `zz-hitpitch.pk3` neu ausgeliefert werden** – seit der
+Zusammenführung mit dem Flexible HUD steckt das cgame mit darin.
 
-Bei den Zeiten heißt `0` ausdrücklich *Original* (200 weg, 250 hoch), nicht null
-Millisekunden. Der Unterschied zwischen Quake 3 und Quake Live sitzt allein im
-Hochnehmen.
+Bei allen Zahlen heißt `0` ausdrücklich *Original*, nicht null: 200/250 ms bei
+den Waffenzeiten, 1,0 bei der Luftbeschleunigung, 18 Einheiten bei der
+Schritthöhe. So muss keine Einstellung wissen, was Quake 3 vorgibt.
 
-Auto-Hop braucht keinen Takt und kein neues Feld: gesprungen wird ohnehin nur
+**Auto-Hop** braucht keinen Takt und kein neues Feld: gesprungen wird ohnehin nur
 vom Boden, der nächste Sprung kann also erst nach dem Aufsetzen kommen. Quake
 Live hat zusätzlich 100 ms Mindestabstand, die aber zu seinem Chain-Jump gehören.
+
+**Die Luftsteuerung** dreht den vorhandenen Schwung in die Blickrichtung, statt
+ihn zu beschleunigen – der Betrag bleibt, die Richtung wandert. Zwei
+Einschränkungen sind das Wesentliche daran: sie wirkt nur bei `movementDir` 0
+oder 4, also geradeaus oder gerade rückwärts, damit Strafejump unverändert
+bleibt; und das Quadrat des Skalarprodukts geht ein, sodass ein Blick quer zur
+Bewegung gar nichts tut.
+
+**Der Rampensprung**: Quake 3 überschreibt beim Sprung die
+Aufwärtsgeschwindigkeit (`velocity[2] = JUMP_VELOCITY`), ein Sprung von einer
+Schräge frisst also genau den Schwung, den die Schräge gerade gegeben hat. Mit
+`pmove_RampJump` wird er behalten, mit `pmove_RampJumpScale` multipliziert und
+der Sprung darauf gelegt – nie weniger als ein normaler Sprung, höchstens 700
+(`PM_RAMPJUMP_MAX`, in Quake Live `pmove_JumpVelocityMax`).
+
+**Die Schritthöhe** ersetzt `STEPSIZE` in `PM_StepSlideMove`. Beide Stellen dort
+nehmen dieselbe Zahl – die eine tastet nach unten, die andere hebt an; wären sie
+verschieden, stiege man Stufen hinauf, die man nicht gesehen hat.
 
 ### Der Abzug, der von selbst drückt
 

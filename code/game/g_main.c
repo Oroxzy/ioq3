@@ -92,9 +92,14 @@ vmCvar_t	g_filterBan;
 vmCvar_t	g_smoothClients;
 vmCvar_t	pmove_fixed;
 vmCvar_t	pmove_msec;
-vmCvar_t	pmove_autoHop;
-vmCvar_t	pmove_weaponDropTime;
-vmCvar_t	pmove_weaponRaiseTime;
+vmCvar_t	pmove_AutoHop;
+vmCvar_t	pmove_WeaponDropTime;
+vmCvar_t	pmove_WeaponRaiseTime;
+vmCvar_t	pmove_AirControl;
+vmCvar_t	pmove_AirAccel;
+vmCvar_t	pmove_RampJump;
+vmCvar_t	pmove_RampJumpScale;
+vmCvar_t	pmove_StepHeight;
 vmCvar_t	g_rankings;
 vmCvar_t	g_listEntity;
 vmCvar_t	g_localTeamPref;
@@ -236,9 +241,14 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &pmove_msec, "pmove_msec", "8", CVAR_SYSTEMINFO, 0, qfalse},
 	// Quake-Live-Bewegung. CVAR_SYSTEMINFO wie die beiden darueber, damit der
 	// Wert den Client erreicht und dessen Vorhersage mit dem Server rechnet.
-	{ &pmove_autoHop, "pmove_autoHop", "0", CVAR_SYSTEMINFO, 0, qfalse},
-	{ &pmove_weaponDropTime, "pmove_weaponDropTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
-	{ &pmove_weaponRaiseTime, "pmove_weaponRaiseTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_AutoHop, "pmove_AutoHop", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_WeaponDropTime, "pmove_WeaponDropTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_WeaponRaiseTime, "pmove_WeaponRaiseTime", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_AirControl, "pmove_AirControl", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_AirAccel, "pmove_AirAccel", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_RampJump, "pmove_RampJump", "0", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_RampJumpScale, "pmove_RampJumpScale", "1", CVAR_SYSTEMINFO, 0, qfalse},
+	{ &pmove_StepHeight, "pmove_StepHeight", "0", CVAR_SYSTEMINFO, 0, qfalse},
 
 	{ &g_rankings, "g_rankings", "0", 0, 0, qfalse},
 	{ &g_localTeamPref, "g_localTeamPref", "", 0, 0, qfalse }
@@ -498,7 +508,7 @@ void G_InitGame( int levelTime, int randomSeed, int restart ) {
 	// Sperre wie bei g_weaponRateActive, nur genuegt hier das Dasein: die drei
 	// Werte selbst liest ohnehin jede Seite aus derselben Systeminfo-Cvar. Was
 	// die Engine allein daraus nicht sehen koennte, ist ein altes Spielmodul,
-	// das pmove_autoHop gar nicht ausliest - dann stuende im Protokollkopf eine
+	// das pmove_AutoHop gar nicht ausliest - dann stuende im Protokollkopf eine
 	// Bedingung, die nie galt. Ohne CVAR_ARCHIVE, damit sie nicht in die
 	// q3config wandert und dort ein spaeter geladenes altes Modul beluegt.
 	trap_Cvar_Set( "pmove_qlActive", "1" );

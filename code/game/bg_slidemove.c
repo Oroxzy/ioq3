@@ -249,16 +249,22 @@ void PM_StepSlideMove( qboolean gravity ) {
 //	vec3_t		delta, delta2;
 	vec3_t		up, down;
 	float		stepSize;
+	// Die Stufe, ueber die dieser Zug klettern darf. Null heisst Originalwert,
+	// wie bei allen Werkbank-Feldern; Quake Live geht in einzelnen Spieltypen
+	// auf zwanzig oder achtundzwanzig. Beide Stellen unten muessen dieselbe
+	// Zahl nehmen - die eine tastet nach unten, die andere hebt an, und waeren
+	// sie verschieden, stiege man Stufen hinauf, die man nicht gesehen hat.
+	float		stepHeight = pm->stepHeight > 0.0f ? pm->stepHeight : STEPSIZE;
 
 	VectorCopy (pm->ps->origin, start_o);
 	VectorCopy (pm->ps->velocity, start_v);
 
 	if ( PM_SlideMove( gravity ) == 0 ) {
-		return;		// we got exactly where we wanted to go first try	
+		return;		// we got exactly where we wanted to go first try
 	}
 
 	VectorCopy(start_o, down);
-	down[2] -= STEPSIZE;
+	down[2] -= stepHeight;
 	pm->trace (&trace, start_o, pm->mins, pm->maxs, down, pm->ps->clientNum, pm->tracemask);
 	VectorSet(up, 0, 0, 1);
 	// never step up when you still have up velocity
@@ -271,7 +277,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 	//VectorCopy (pm->ps->velocity, down_v);
 
 	VectorCopy (start_o, up);
-	up[2] += STEPSIZE;
+	up[2] += stepHeight;
 
 	// test the player position if they were a stepheight higher
 	pm->trace (&trace, start_o, pm->mins, pm->maxs, up, pm->ps->clientNum, pm->tracemask);

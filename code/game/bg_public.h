@@ -215,13 +215,35 @@ typedef struct {
 	// dasselbe. Das ist keine Feinheit - bewegt der Server anders, als der
 	// Client vorhersagt, ruckelt es bei jedem Sprung.
 	//
+	// Die Cvar-Namen sind die von Quake Live selbst (pmove_AutoHop,
+	// pmove_AirControl und so weiter, mit grossem Anfangsbuchstaben). Sie
+	// stehen so in den Factories, mit denen echte QL-Server ihre Spieltypen
+	// einstellen - damit laesst sich eine QL-Konfiguration hier unverändert
+	// uebernehmen, statt sie zu uebersetzen.
+	//
 	// autoHop: springt weiter, solange die Sprungtaste haelt, statt auf ihr
 	// Loslassen zu warten.
 	int			autoHop;
 	// Die beiden Waffenwechselzeiten in Millisekunden. Null heisst: Original
-	// (200 zum Wegstecken, 250 zum Hochnehmen). Quake Live nimmt 200/200.
+	// (200 zum Wegstecken, 250 zum Hochnehmen). Quake Live laesst sie fuer die
+	// meisten Spieltypen auf 200/200 und setzt sie nur fuer Race auf 10/10.
 	int			weaponDropTime;
 	int			weaponRaiseTime;
+
+	// Luftsteuerung: wieviel die Blickrichtung einen Sprung noch krümmen darf,
+	// solange man geradeaus haelt. Null ist Quake 3, wo die Luft gar nichts
+	// zulaesst. In den Factories von id setzt nur Race das auf eins.
+	float		airControl;
+	// Die Luftbeschleunigung selbst. Null heisst: Originalwert (1.0).
+	float		airAccel;
+	// Rampensprung: den vorhandenen Aufwaertsschwung behalten und den Sprung
+	// darauflegen, statt ihn zu ueberschreiben. Sonst frisst jeder Sprung von
+	// einer Schraege den Schwung, den die Schraege gerade gegeben hat.
+	int			rampJump;
+	float		rampJumpScale;
+	// Schritthoehe in Einheiten. Null heisst: Original (18). Quake Live geht in
+	// einzelnen Spieltypen auf 20 oder 28.
+	float		stepHeight;
 
 	// callbacks to test the world
 	// these will be different functions during game and cgame

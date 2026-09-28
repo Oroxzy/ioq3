@@ -28,6 +28,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #define	JUMP_VELOCITY	270
 
+// Die Decke fuer den Rampensprung, wenn pmove_RampJump an ist. Quake Live
+// nennt sie pmove_JumpVelocityMax und laesst sie auf siebenhundert stehen;
+// ohne sie traegt eine steile Rampe einen beliebig weit.
+#define	PM_RAMPJUMP_MAX	700
+
 #define	TIMER_LAND		130
 #define	TIMER_GESTURE	(34*66+50)
 

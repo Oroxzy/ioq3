@@ -930,9 +930,14 @@ void ClientThink_real( gentity_t *ent ) {
 	// gleich, Bots eingeschlossen: es ist die Physik der Welt und keine
 	// Messeinstellung fuer die eigenen Schuesse. Das cgame setzt dieselben
 	// drei Werte aus denselben Cvars, siehe CG_PredictPlayerState.
-	pm.autoHop = pmove_autoHop.integer;
-	pm.weaponDropTime = pmove_weaponDropTime.integer;
-	pm.weaponRaiseTime = pmove_weaponRaiseTime.integer;
+	pm.autoHop = pmove_AutoHop.integer;
+	pm.weaponDropTime = pmove_WeaponDropTime.integer;
+	pm.weaponRaiseTime = pmove_WeaponRaiseTime.integer;
+	pm.airControl = pmove_AirControl.value;
+	pm.airAccel = pmove_AirAccel.value;
+	pm.rampJump = pmove_RampJump.integer;
+	pm.rampJumpScale = pmove_RampJumpScale.value;
+	pm.stepHeight = pmove_StepHeight.value;
 
 	VectorCopy( client->ps.origin, client->oldOrigin );
 

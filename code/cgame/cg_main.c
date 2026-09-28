@@ -177,9 +177,14 @@ vmCvar_t	pmove_fixed;
 //vmCvar_t	cg_pmove_fixed;
 vmCvar_t	pmove_msec;
 vmCvar_t	cg_pmove_msec;
-vmCvar_t	pmove_autoHop;
-vmCvar_t	pmove_weaponDropTime;
-vmCvar_t	pmove_weaponRaiseTime;
+vmCvar_t	pmove_AutoHop;
+vmCvar_t	pmove_WeaponDropTime;
+vmCvar_t	pmove_WeaponRaiseTime;
+vmCvar_t	pmove_AirControl;
+vmCvar_t	pmove_AirAccel;
+vmCvar_t	pmove_RampJump;
+vmCvar_t	pmove_RampJumpScale;
+vmCvar_t	pmove_StepHeight;
 vmCvar_t	cg_cameraMode;
 vmCvar_t	cg_cameraOrbit;
 vmCvar_t	cg_cameraOrbitDelay;
@@ -332,9 +337,14 @@ static cvarTable_t cvarTable[] = {
 	{ &pmove_msec, "pmove_msec", "8", CVAR_SYSTEMINFO},
 	// Dieselben Namen und dieselben Vorgaben wie im Spielmodul - der Server
 	// besitzt den Wert, die Systeminfo traegt ihn hierher.
-	{ &pmove_autoHop, "pmove_autoHop", "0", CVAR_SYSTEMINFO},
-	{ &pmove_weaponDropTime, "pmove_weaponDropTime", "0", CVAR_SYSTEMINFO},
-	{ &pmove_weaponRaiseTime, "pmove_weaponRaiseTime", "0", CVAR_SYSTEMINFO},
+	{ &pmove_AutoHop, "pmove_AutoHop", "0", CVAR_SYSTEMINFO},
+	{ &pmove_WeaponDropTime, "pmove_WeaponDropTime", "0", CVAR_SYSTEMINFO},
+	{ &pmove_WeaponRaiseTime, "pmove_WeaponRaiseTime", "0", CVAR_SYSTEMINFO},
+	{ &pmove_AirControl, "pmove_AirControl", "0", CVAR_SYSTEMINFO},
+	{ &pmove_AirAccel, "pmove_AirAccel", "0", CVAR_SYSTEMINFO},
+	{ &pmove_RampJump, "pmove_RampJump", "0", CVAR_SYSTEMINFO},
+	{ &pmove_RampJumpScale, "pmove_RampJumpScale", "1", CVAR_SYSTEMINFO},
+	{ &pmove_StepHeight, "pmove_StepHeight", "0", CVAR_SYSTEMINFO},
 #ifdef MISSIONPACK
 	{ &cg_smallFont, "ui_smallFont", "0.25", CVAR_ARCHIVE},
 	{ &cg_bigFont, "ui_bigFont", "0.4", CVAR_ARCHIVE},
