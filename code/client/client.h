@@ -436,6 +436,7 @@ extern	cvar_t	*cl_aimAssistHoldLottery;
 extern	cvar_t	*cl_autoSwitchEmpty;
 extern	cvar_t	*cl_autoSwitchEmptyOrder;
 extern	cvar_t	*cl_aimAssistHoldFire;
+extern	cvar_t	*cl_aimAssistAutoFire;
 
 void CL_AimAssistSnapshot( void );
 void CL_AimAssistFlush( void );		// cl_input.c, marks the learned lead for q3config.cfg

@@ -912,7 +912,17 @@ in seconds, and the learner tunes it from what the bots really do.
 // dem geworfenen Ziel hindurch; ohne diese Spalte waere nicht nachzusehen, ob
 // der neue Weg ueberhaupt je greift.
 // Zwoelf: "edge" auf der Schusszeile - eins, wenn das Ziel ueber eine Kante// lief und die Vorhersage es deshalb fallen laesst. Vorher blieb der Punkt auf// Plattformhoehe ueber der Leere stehen; ohne die Spalte waere nicht zu sehen,// wie oft der Fall ueberhaupt gerechnet wird.
-#define AIM_LOG_VERSION	14
+// Dreizehn: "autofire" auf der Stempelzeile - ob der Abzug in dieser Sitzung
+// von selbst gedrueckt hat. Das gehoert neben Nachladezeit und Munition in den
+// Kopf, weil es dieselbe Art von Bedingung ist: Schuesse mit und ohne
+// selbsttaetigen Abzug duerfen nicht stillschweigend in einen Topf.
+// Vierzehn: "autohop", "wdrop" und "wraise" - die Quake-Live-Bewegung. Auch das
+// sind Bedingungen und keine Vorlieben: Auto-Hop aendert, wie sich Bots und
+// Spieler bewegen, also Entfernungen, Flugzeiten und damit jede Trefferquote;
+// die Waffenwechselzeit aendert, wie oft im Gefecht ueberhaupt geschossen wird.
+// Minus eins heisst: das Spielmodul kennt diese Physik nicht (pmove_qlActive
+// fehlt), die Cvars daneben sagen dann nichts ueber das, was wirklich lief.
+#define AIM_LOG_VERSION	16
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -932,6 +942,17 @@ static qboolean	aimSteered;
 // Behauptung; mit ihr steht sie auf jeder Schusszeile.
 static float	aimOwnMove;
 
+// Wie weit die Sicht nach dem letzten Befehl noch neben dem Punkt stand, zu
+// wem sie gehoerte und wann. Der selbsttaetige Abzug liest das: er darf erst
+// druecken, wenn die Sicht wirklich schon auf dem Ziel liegt, und nicht,
+// waehrend sie noch dorthin schwenkt. Aus dem eigenen Befehl waere die Zahl
+// nicht zu haben - der Rest steht erst fest, nachdem gefuehrt wurde, und
+// gedrueckt werden muss davor, damit der Schussbefehl derselbe ist wie einer
+// von Hand.
+static float	aimRest = -1.0f;
+static int	aimRestTarget = -1;
+static int	aimRestFrame = -1;
+
 static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 // Womit zuletzt gestempelt wurde. Nachladezeit und Munition sind Cvars und
 // koennen mitten in einer Sitzung umgestellt werden; aendert sich eine, wird
@@ -939,6 +960,10 @@ static qboolean	aimLogStamped;			// ob diese Verbindung schon gestempelt ist
 // davor in einen Topf wirft.
 static int	aimLogRate = -1;
 static int	aimLogAmmo = -1;
+static int	aimLogAuto = -1;
+static int	aimLogHop = -2;			// -1 ist eine Aussage, also faengt es tiefer an
+static int	aimLogDrop = -2;
+static int	aimLogRaise = -2;
 
 /*
 =================
@@ -5166,7 +5191,8 @@ void CL_AimAssistSnapshot( void ) {
 	const char			*info;
 	char				bots[1024];
 	vec3_t				far;
-	int					i, j, event, kind, present, rate, ammo;
+	int					i, j, event, kind, present, rate, ammo, autoFire;
+	int					hop, wdrop, wraise;
 
 	// Only the game this process started itself: NA_LOOPBACK is the server
 	// in the same executable, nothing else counts. Learning and the log both
@@ -5185,12 +5211,39 @@ void CL_AimAssistSnapshot( void ) {
 	// diese Zeile zugleich die Probe, dass Engine und Modul zusammenpassen.
 	rate = (int)Cvar_VariableValue( "g_weaponRateActive" );
 	ammo = (int)Cvar_VariableValue( "g_infiniteAmmo" );
-	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo ) {
+	// Der selbsttaetige Abzug gehoert in dieselbe Zeile: er aendert, wann
+	// geschossen wird, also auch, welche Schuesse ueberhaupt im Protokoll
+	// landen. Ohne das Feld sieht eine Auswertung nur, dass die Trefferquote
+	// gestiegen ist, und weiss nicht, dass die schlechten Gelegenheiten gar
+	// nicht mehr abgedrueckt wurden.
+	autoFire = cl_aimAssistAutoFire->integer ? 1 : 0;
+
+	// Die Quake-Live-Bewegung. Gelesen werden die Cvars, die beide Module in
+	// ihr pmove_t legen - aber nur, wenn pmove_qlActive beweist, dass das
+	// geladene Spielmodul sie ueberhaupt ausliest. Fehlt der Beweis, steht
+	// hier minus eins statt einer Zahl, die nie gegolten hat.
+	if ( (int)Cvar_VariableValue( "pmove_qlActive" ) ) {
+		hop = (int)Cvar_VariableValue( "pmove_autoHop" ) ? 1 : 0;
+		wdrop = (int)Cvar_VariableValue( "pmove_weaponDropTime" );
+		wraise = (int)Cvar_VariableValue( "pmove_weaponRaiseTime" );
+	} else {
+		hop = wdrop = wraise = -1;
+	}
+
+	if ( !aimLogStamped || rate != aimLogRate || ammo != aimLogAmmo
+		|| autoFire != aimLogAuto || hop != aimLogHop
+		|| wdrop != aimLogDrop || wraise != aimLogRaise ) {
 		aimLogStamped = qtrue;
 		aimLogRate = rate;
 		aimLogAmmo = ammo;
-		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i frame %i\n",
-			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, cl.snap.serverTime );
+		aimLogAuto = autoFire;
+		aimLogHop = hop;
+		aimLogDrop = wdrop;
+		aimLogRaise = wraise;
+		Com_Printf( "aim log: version %i built %s %s rate %i ammo %i autofire %i"
+			" autohop %i wdrop %i wraise %i frame %i\n",
+			AIM_LOG_VERSION, __DATE__, __TIME__, rate, ammo, autoFire,
+			hop, wdrop, wraise, cl.snap.serverTime );
 	}
 
 	CL_AimAssistWatch();
@@ -5318,7 +5371,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// 0 gefuehrt, 1 auf den nackten Koerper zurueckgefallen, 2 Vorhalt gekuerzt
 	int				fallKind = 0;
 	float			holdRange = 0.0f;
-	int				i, key, localTeam, weapon, hold;
+	int				i, key, localTeam, weapon, hold, reason;
 	qboolean		aimKeyHasAttack, otherAttackKey, firing, steering, exact, plain, clear;
 
 	// Cleared here rather than at each way out. There are six of them, and two
@@ -5449,8 +5502,53 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// Only worth asking while the trigger is actually down. There is nothing
 	// to take away otherwise, and the question costs a prediction and a
 	// handful of traces on every command that is built.
-	hold = ( cl_aimAssistHoldFire->integer && ( cmd->buttons & BUTTON_ATTACK ) )
+	//
+	// Der selbsttaetige Abzug stellt dieselbe Frage, nur andersherum: der eine
+	// nimmt den Schuss weg, wenn etwas dagegen spricht, der andere gibt ihn,
+	// wenn nichts dagegen spricht. Also einmal fragen und von beiden lesen,
+	// statt dieselben Traces zweimal zu ziehen.
+	reason = ( entity && ( cl_aimAssistHoldFire->integer || cl_aimAssistAutoFire->integer ) )
 		? CL_AimAssistHoldReason( entity, weapon, viewOrigin, &holdRange ) : -1;
+
+	// Der Abzug, der von selbst drueckt. Er verlangt dreierlei, und jedes davon
+	// ist noetig:
+	//
+	// Erstens, dass nichts gegen den Schuss spricht - dieselbe Pruefung, die
+	// sonst den Abzug festhaelt. Zweitens, dass die Sicht schon auf dem Ziel
+	// liegt: der Rest des letzten Befehls muss kleiner sein als der Winkel, den
+	// der Koerper auf dieser Entfernung ueberhaupt einnimmt. Sonst drueckte er
+	// mitten im Schwenk ab, und das waere kein sicheres Ziel, sondern nur ein
+	// frueher Schuss. Drittens, dass dieser Rest auch wirklich zu diesem Ziel
+	// und zum eben gebauten Befehl gehoert - nach einem Zielwechsel sagt die
+	// alte Zahl nichts mehr.
+	//
+	// Warum der Rest vom vorigen Befehl und nicht von diesem: gedrueckt werden
+	// muss, bevor CL_AimAssistFiring laeuft, sonst zaehlt der Waffentakt den
+	// Schuss nicht mit und die Schusszeile bliebe leer. Gefuehrt wird aber erst
+	// danach. Ein Befehl Verzug bei sechzig bis hundertzwanzig Befehlen je
+	// Sekunde ist weniger, als die Hand je treffen koennte.
+	// Eine vierte Bedingung stand hier einmal: die gemessene Streuung auf dieser
+	// Flugzeit musste in den Wirkradius passen. Gemessen war sie richtig - ab
+	// 1600 Einheiten trafen nur acht Prozent der Raketen - und im Spiel war sie
+	// trotzdem falsch: mit Streuung <= 120 kam von fuenfundfuenfzig Raketen nur
+	// noch die Klasse unter vierhundert Einheiten durch, also sechs. Eine Waffe,
+	// die fast nie mehr schiesst, ist keine Verbesserung, auch wenn ihre Quote
+	// steigt.
+	//
+	// Wer die aussichtslosen doch abschneiden will, hat dafuer schon einen
+	// Regler: cl_aimAssistHoldLottery. Der erzeugt einen Grund, und ein Grund
+	// verbietet diesem Abzug den Schuss ohnehin - es braucht hier also nichts
+	// Eigenes.
+	if ( cl_aimAssistAutoFire->integer && entity && reason < 0
+		&& holdRange > 1.0f && aimRest >= 0.0f
+		&& aimRestTarget == entity->clientNum
+		&& aimRestFrame >= cls.framecount - 2
+		&& aimRest <= RAD2DEG( atan2( CL_AimAssistHitRadius( weapon ), holdRange ) ) ) {
+		cmd->buttons |= BUTTON_ATTACK;
+	}
+
+	hold = ( cl_aimAssistHoldFire->integer && ( cmd->buttons & BUTTON_ATTACK ) )
+		? reason : -1;
 
 	// A target crossing the edge of a pillar answers blocked, clear, blocked
 	// at the rate commands are built, and a trigger that follows that stutters.
@@ -5476,6 +5574,10 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		CL_AimAssistSkip( 0, weapon );
 		aimAssistTarget = -1;
 		aimSmoothTarget = -1;
+		// Auf diesem Befehl wurde nicht gefuehrt, also gibt es keinen Rest, dem
+		// der selbsttaetige Abzug glauben duerfte. Ohne diese Zeile stuende die
+		// Zahl vom vorigen Befehl noch zwei Bilder lang gueltig da.
+		aimRestTarget = -1;
 		return;
 	}
 	if ( entity->clientNum != aimAssistTarget ) {
@@ -5562,6 +5664,7 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		if ( trace.fraction < 1.0f ) {
 			CL_AimAssistSkip( 1, weapon );
 			aimSmoothTarget = -1;
+			aimRestTarget = -1;		// nicht gefuehrt, also kein Rest zum Glauben
 			return;
 		}
 
@@ -5606,6 +5709,10 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 		&& VectorLength( direction ) < CL_AimAssistHitRadius( weapon ) + 40.0f ) {
 		CL_AimAssistSkip( 2, weapon );
 		aimSmoothTarget = -1;
+		// Und hier erst recht: das Ziel steht so nah, dass die eigene Explosion
+		// mitginge. Ein Abzug, der sich auf den Rest von vorhin beruft, jagte
+		// die Rakete in den eigenen Schoss.
+		aimRestTarget = -1;
 		return;
 	}
 	CL_AimAssistSkip( -1, weapon );			// steering again
@@ -5660,6 +5767,19 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	cl.viewangles[PITCH] += pitchStep;
 	cl.viewangles[YAW] += yawDelta * blend;
 	aimSteered = qtrue;				// gefuehrt, also darf die Maus schweigen
+
+	// Was nach dem Fuehren noch zwischen Sicht und Punkt steht. Gemessen an der
+	// Sicht, wie sie jetzt ist, und nicht aus Mischfaktor mal Abweichung
+	// gerechnet: der Nickschritt ist vorher gedeckelt worden, und die gedeckelte
+	// Zahl waere eine andere. Der selbsttaetige Abzug liest das auf dem
+	// naechsten Befehl.
+	aimRest = sqrt(
+		AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] )
+			* AngleNormalize180( desired[PITCH] - cl.viewangles[PITCH] )
+		+ AngleNormalize180( desired[YAW] - cl.viewangles[YAW] )
+			* AngleNormalize180( desired[YAW] - cl.viewangles[YAW] ) );
+	aimRestTarget = entity->clientNum;
+	aimRestFrame = cls.framecount;
 
 	if ( firing ) {
 		// who this shot went at, for the damage report that arrives later

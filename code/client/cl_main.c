@@ -84,6 +84,7 @@ cvar_t	*cl_aimAssistHoldLottery;
 cvar_t	*cl_autoSwitchEmpty;
 cvar_t	*cl_autoSwitchEmptyOrder;
 cvar_t	*cl_aimAssistHoldFire;
+cvar_t	*cl_aimAssistAutoFire;
 cvar_t	*cl_aimAssistSmooth;
 cvar_t	*cl_aimAssistExact;
 cvar_t	*cl_aimAssistFreeze;
@@ -3676,6 +3677,9 @@ void CL_Init( void ) {
 	cl_aimAssistHoldFire = Cvar_Get( "cl_aimAssistHoldFire", "0", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_aimAssistHoldFire, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistHoldFire, "While the aim key is held: keep the trigger shut when the shot cannot reach the point being aimed at - the led one, not the target - or would go off inside our own splash. Traced from the muzzle against the world and its movers. It delays a shot rather than cancelling it, because a command without the trigger zeroes the weapon timer" );
+	cl_aimAssistAutoFire = Cvar_Get( "cl_aimAssistAutoFire", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_aimAssistAutoFire, 0, 1, qtrue );
+	Cvar_SetDescription( cl_aimAssistAutoFire, "While the aim key is held: press the trigger by itself once the shot is a sure one - nothing between the muzzle and the point being aimed at, and the view already inside the angle the target's body covers at that range. It only adds the trigger; cl_aimAssistHoldFire can still take it away" );
 	cl_aimAssistDebug = Cvar_Get( "cl_aimAssistDebug", "0", 0 );
 	Cvar_CheckRange( cl_aimAssistDebug, 0, 1, qtrue );
 	Cvar_SetDescription( cl_aimAssistDebug, "Print a line for every shot fired with aim assistance, to check where the prediction misses" );

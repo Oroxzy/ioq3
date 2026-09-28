@@ -156,6 +156,12 @@ public class MainForm : Form, IMessageFilter {
 	// noch ihren Anteil am Zielen - gemessen sind das bei MG, Plasma und Blitz
 	// im Mittel vier bis fuenf Einheiten neben dem Punkt, den die Hilfe wollte.
 	readonly CheckBox aimFreeze = new() { Text = "Maus sperren, solange die Hilfe führt", Checked = false, AutoSize = true };
+	// Der Abzug drückt selbst, sobald das Ziel sicher ist: nichts steht im Weg,
+	// und die Sicht liegt schon innerhalb des Winkels, den der Körper auf dieser
+	// Entfernung einnimmt. Das ist eine Bedingung der Sitzung wie Nachladezeit
+	// und Munition, nicht nur eine Bequemlichkeit - deshalb steht es auch im
+	// Protokollkopf.
+	readonly CheckBox aimAutoFire = new() { Text = "mit der Zieltaste selbst abdrücken, wenn das Ziel sicher ist", Checked = false, AutoSize = true };
 	// Ob der Sturz über eine Plattformkante auch wirklich angelegt wird. Aus
 	// heisst: nur erkennen und ins Protokoll schreiben, Zielpunkt unverändert.
 	readonly CheckBox aimEdge = new() { Text = "Sturz über die Kante anlegen (F26)", Checked = false, AutoSize = true };
@@ -470,7 +476,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 14;
+	const int LogVersion = 16;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -966,6 +972,7 @@ public class MainForm : Form, IMessageFilter {
 		aimKey.Enabled = on;
 		aimAttacker.Enabled = on;
 		aimFreeze.Enabled = on;
+		aimAutoFire.Enabled = on;
 		aimSmooth.Enabled = on;
 		aimExact.Enabled = on;
 		aimLearn.Enabled = on;
@@ -1303,6 +1310,18 @@ public class MainForm : Form, IMessageFilter {
  			+ " anderen Befehlen weg. Preis: man kann während des Haltens weder umsehen noch ein"
  			+ " anderes Ziel anvisieren - das Ziel wählt dann allein die Vorrangliste." );
 		hintTip.SetToolTip( holdLottery, "Gilt, solange die Zieltaste hält, und zählt im Tab „Trefferton“ mit." );
+		hintTip.SetToolTip( aimAutoFire, "Solange die Zieltaste hält, drückt der Abzug von selbst ab, sobald zweierlei"
+ 			+ " stimmt: es steht nichts zwischen Mündung und Zielpunkt, und die Sicht liegt bereits innerhalb"
+ 			+ " des Winkels, den der Körper auf dieser Entfernung einnimmt - sie schwenkt also nicht mehr"
+ 			+ " dorthin, sie ist da. Auf 500 Einheiten sind das 1,7 Grad für Hitscan, für Rakete und Granate"
+ 			+ " entsprechend mehr, weil der Splash zählt. Die Entfernung begrenzt er NICHT - gemessen trafen"
+ 			+ " jenseits von 1600 Einheiten zwar nur 8 % der Raketen, aber eine Grenze darauf ließ nur noch"
+ 			+ " 6 von 55 Gelegenheiten übrig, und das war spürbar schlechter. Wer sie doch will, nimmt den"
+ 			+ " Regler „auch aussichtslose“ darunter: 3,0 schneidet ab etwa 1600 Einheiten ab, 2,0 ab 1200."
+ 			+ " „Nicht ins Leere schießen“ darf den Schuss weiter"
+ 			+ " wegnehmen; dieser Haken gibt ihn nur. Achtung für die Messung: damit werden schlechte"
+ 			+ " Gelegenheiten gar nicht erst abgedrückt, die Trefferquote steigt also schon deshalb."
+ 			+ " Das Protokoll vermerkt es im Kopf." );
 
 		return Group( "Zielhilfe",
 			Row( Pad( aimAssist ) ),
@@ -1310,6 +1329,7 @@ public class MainForm : Form, IMessageFilter {
 			Row( Labelled( "Schussmoment exakt:", aimExact ) ),
 			Row( Pad( aimFreeze ) ),
 			Row( Pad( aimAttacker ) ),
+			Row( Pad( aimAutoFire ) ),
 			Row( Pad( aimHoldFire ) ),
 			Row( Labelled( "auch aussichtslose:", holdLottery ) ),
 			Row( Pad( holdLotteryValue ) ) );
@@ -1914,6 +1934,7 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "aimKey=" + aimKey.Text );
 		s.AppendLine( "aimAttacker=" + aimAttacker.Checked );
 		s.AppendLine( "aimFreeze=" + aimFreeze.Checked );
+		s.AppendLine( "aimAutoFire=" + aimAutoFire.Checked );
 		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
 		s.AppendLine( "qlAutoHop=" + qlAutoHop.Checked );
 		s.AppendLine( "qlWeaponSwitch=" + qlWeaponSwitch.Checked );
@@ -2002,6 +2023,7 @@ public class MainForm : Form, IMessageFilter {
 		if ( v.TryGetValue( "aimKey", out var ak ) && ak.Length > 0 ) aimKey.Text = ak;
 		SetBool( aimAttacker, v, "aimAttacker" );
 		SetBool( aimFreeze, v, "aimFreeze" );
+		SetBool( aimAutoFire, v, "aimAutoFire" );
 		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
 		SetBool( qlAutoHop, v, "qlAutoHop" );
 		SetBool( qlWeaponSwitch, v, "qlWeaponSwitch" );
@@ -2150,6 +2172,10 @@ public class MainForm : Form, IMessageFilter {
 		}
 		cfg.AppendLine( $"seta cl_aimAssistAttacker {( aimAssist.Checked && aimAttacker.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistFreeze {( aimAssist.Checked && aimFreeze.Checked ? 1 : 0 )}" );
+		// An die Zielhilfe gebunden wie die anderen: ohne sie gibt es kein
+		// gefuehrtes Ziel, und ohne gefuehrtes Ziel darf nichts von selbst
+		// abdruecken.
+		cfg.AppendLine( $"seta cl_aimAssistAutoFire {( aimAssist.Checked && aimAutoFire.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistEdge {( aimEdge.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		// Quake-Live-Bewegung. Null heisst bei den Zeiten ausdruecklich
@@ -2687,16 +2713,25 @@ public class MainForm : Form, IMessageFilter {
 
 	// Ob das Protokoll von einem Spiel stammt, dessen Zeilen dieses Werkzeug
 	// kennt. Ohne Stempel ist es aelter als diese Pruefung.
-	// Die Bedingung, unter der eine Sitzung lief: Nachladezeit und Munition.
-	// Fehlen sie, ist das Protokoll aelter als diese Felder.
+	// Die Bedingung, unter der eine Sitzung lief: Nachladezeit, Munition und ob
+	// der Abzug von selbst gedrueckt hat. Fehlen sie, ist das Protokoll aelter
+	// als diese Felder. Der selbsttaetige Abzug gehoert dazu, weil er nicht nur
+	// besser zielt, sondern die schlechten Gelegenheiten gar nicht erst
+	// abdrueckt - Schuesse mit und ohne ihn sind nicht dieselbe Stichprobe.
 	static string StampCondition( string line ) {
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
-		string rate = "", ammo = "";
+		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "rate" ) rate = f[i + 1];
 			else if ( f[i] == "ammo" ) ammo = f[i + 1];
+			else if ( f[i] == "autofire" ) autoFire = f[i + 1];
+			else if ( f[i] == "autohop" ) hop = f[i + 1];
+			else if ( f[i] == "wraise" ) wraise = f[i + 1];
 		}
-		return rate + "/" + ammo;
+		// Die Wegsteckzeit bleibt aus dem Schlüssel heraus: sie ist in Quake 3
+		// und Quake Live dieselbe, und wer sie von Hand verstellt, sieht es an
+		// der Zeile darüber. Das Hochnehmen ist der Wert, der sich unterscheidet.
+		return rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise;
 	}
 
 	void ShowLogVersion( string line, int conditions = 1 ) {
@@ -2708,12 +2743,16 @@ public class MainForm : Form, IMessageFilter {
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 		int found = 0;
-		string built = "", rate = "", ammo = "";
+		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
 			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
 			else if ( f[i] == "rate" ) rate = f[i + 1];
 			else if ( f[i] == "ammo" ) ammo = f[i + 1];
+			else if ( f[i] == "autofire" ) autoFire = f[i + 1];
+			else if ( f[i] == "autohop" ) hop = f[i + 1];
+			else if ( f[i] == "wdrop" ) wdrop = f[i + 1];
+			else if ( f[i] == "wraise" ) wraise = f[i + 1];
 		}
 
 		// Unter welcher Bedingung gespielt wurde. Nur nennen, wenn sie vom
@@ -2722,6 +2761,22 @@ public class MainForm : Form, IMessageFilter {
 		if ( rate.Length > 0 && rate != "100" && rate != "0" ) how += $", Nachladezeit {rate} %";
 		if ( ammo == "1" ) how += ", Munition unbegrenzt (nur ich)";
 		else if ( ammo == "2" ) how += ", Munition unbegrenzt (alle)";
+		// Der Hinweis gehoert auch dann hin, wenn sonst nichts abweicht: eine
+		// Trefferquote aus selbst abgedrueckten Schuessen ist mit einer aus
+		// handgedrueckten nicht vergleichbar, und das soll man sehen, ohne es
+		// wissen zu muessen.
+		if ( autoFire == "1" ) how += ", Abzug selbsttätig (nur sichere Ziele)";
+
+		// Die Bewegung. "-1" heißt: das Spielmodul kannte diese Physik nicht,
+		// die Zahlen daneben hätten also nie gegolten - das ist eine eigene
+		// Meldung wert, keine stille Null.
+		if ( hop == "-1" ) {
+			how += ", Bewegung unbekannt (altes Spielmodul)";
+		} else {
+			if ( hop == "1" ) how += ", Auto-Hop";
+			if ( wraise.Length > 0 && wraise != "0" ) how += $", Waffe hoch in {wraise} ms";
+			if ( wdrop.Length > 0 && wdrop != "0" && wdrop != "200" ) how += $", Waffe weg in {wdrop} ms";
+		}
 
 		if ( conditions > 1 ) {
 			logVersion.Text = $"Protokoll Fassung {found}, Spiel vom {built}{how} – ACHTUNG: {conditions}"

@@ -425,6 +425,109 @@ Jede Sitzung stempelt sich mit der Fassung ihrer Zeilen (`aim log: version …`)
 Passt sie nicht zu der, die dieses Werkzeug kennt, sagt es das oben im Fenster,
 statt stillschweigend Felder zu lesen, die es damals nicht gab.
 
+Im Stempel stehen auch die Bedingungen, unter denen gespielt wurde: `rate` die
+Nachladezeit in Prozent, `ammo` die unbegrenzte Munition, `autofire` der
+selbsttätige Abzug, und `autohop`/`wdrop`/`wraise` die Quake-Live-Bewegung.
+Ändert sich eine davon mitten in der Sitzung, wird neu gestempelt, und das
+Werkzeug warnt in Rot, wenn eine Datei mehrere Bedingungen enthält – sonst
+mischte die Auswertung unten Stichproben, die nicht dieselben sind.
+
+Die Bewegung gehört in diese Reihe, weil sie die Messung genauso verändert wie
+die Nachladezeit: Auto-Hop ändert, wie sich Bots und Spieler bewegen, also
+Entfernungen, Flugzeiten und damit jede Trefferquote; die Waffenwechselzeit
+ändert, wie oft im Gefecht überhaupt geschossen wird.
+
+Steht bei den drei Bewegungsfeldern **`-1`**, hat das geladene Spielmodul diese
+Physik gar nicht gekannt. Die Engine prüft das an `pmove_qlActive`, einer Cvar,
+die nur ein Modul anlegt, das die Werte auch ausliest – dieselbe Sperre wie
+`g_weaponRateActive`. Ohne sie stünde im Kopf eine Bedingung, die nie galt,
+wenn Engine und Spielmodul getrennt veralten.
+
+## Quake-Live-Bewegung
+
+Eigene Karte im Werkzeug, Stufe eins von neun Punkten. Zwei Schalter:
+
+| Haken | Cvar | was er tut |
+| --- | --- | --- |
+| Auto-Hop | `pmove_autoHop` | gehaltene Sprungtaste springt weiter, statt auf das Loslassen zu warten |
+| Waffenwechsel wie Quake Live | `pmove_weaponDropTime` / `pmove_weaponRaiseTime` | 200/200 statt 200/250 ms, zusammen 400 statt 450 |
+
+Beides sind `CVAR_SYSTEMINFO`-Cvars, genau wie `pmove_fixed` in ioquake3: der
+Server besitzt den Wert, die Systeminfo trägt ihn zum Client, und **beide**
+Module legen ihn in `pmove_t` – das Spielmodul in `ClientThink_real`, der cgame
+in `CG_PredictPlayerState`. Das ist nicht Kosmetik: `bg_pmove.c` steckt in
+beiden, und sagt der Client etwas anderes voraus, als der Server rechnet, zieht
+es den Spieler bei jedem Sprung zurecht. **Nach einer Änderung an der Bewegung
+müssen deshalb `zz-hitpitch.pk3` und die lose `baseq3/vm/cgame.qvm` zusammen
+ausgeliefert werden.**
+
+Bei den Zeiten heißt `0` ausdrücklich *Original* (200 weg, 250 hoch), nicht null
+Millisekunden. Der Unterschied zwischen Quake 3 und Quake Live sitzt allein im
+Hochnehmen.
+
+Auto-Hop braucht keinen Takt und kein neues Feld: gesprungen wird ohnehin nur
+vom Boden, der nächste Sprung kann also erst nach dem Aufsetzen kommen. Quake
+Live hat zusätzlich 100 ms Mindestabstand, die aber zu seinem Chain-Jump gehören.
+
+### Der Abzug, der von selbst drückt
+
+`cl_aimAssistAutoFire` (Haken: *mit der Zieltaste selbst abdrücken, wenn das Ziel
+sicher ist*) drückt den Abzug, solange die Zieltaste hält und zweierlei stimmt:
+
+1. **Nichts spricht gegen den Schuss.** Das ist genau dieselbe Prüfung, die
+   *Nicht ins Leere schießen* benutzt, um den Abzug festzuhalten – gefragt wird
+   einmal, gelesen von beiden. Der eine nimmt den Schuss weg, wenn etwas
+   dagegen spricht, der andere gibt ihn, wenn nichts dagegen spricht. Bei
+   Widerspruch gewinnt das Festhalten: der Haken hier fügt den Abzug nur hinzu.
+2. **Die Sicht liegt schon auf dem Ziel.** Der Restfehler des vorigen Befehls
+   muss kleiner sein als der Winkel, den der Körper auf dieser Entfernung
+   überhaupt einnimmt – `atan(Trefferradius / Entfernung)`, also 1,7° für
+   Hitscan auf 500 Einheiten und entsprechend mehr für Rakete und Granate, wo
+   der Splash zählt. Ohne diese zweite Bedingung drückte er mitten im Schwenk
+   ab, und das wäre kein sicheres Ziel, sondern nur ein früher Schuss.
+Mehr verlangt er **nicht**, und das ist eine Entscheidung mit Vorgeschichte.
+
+### Die Entfernung, und warum sie trotzdem nicht begrenzt wird
+
+Die erste gemessene Sitzung mit dem selbsttätigen Abzug, 55 Raketen:
+
+| Entfernung | Schüsse | Treffer | Flugzeit | gemessene Streuung |
+| --- | --- | --- | --- | --- |
+| 0–400 u | 6 | 50 % | 250 ms | 60 u |
+| 400–800 u | 13 | 31 % | 600 ms | 139 u |
+| 800–1200 u | 12 | 17 % | 1050 ms | 222 u |
+| 1200–1600 u | 12 | 33 % | 1500 ms | 381 u |
+| ab 1600 u | 12 | **8 %** | 2250 ms | 381 u |
+
+Daraufhin stand hier eine vierte Bedingung: die gemessene Streuung musste in den
+Wirkradius passen (120 Einheiten für die Rakete). Gemessen war das richtig, im
+Spiel war es trotzdem falsch – durch kam nur noch die Klasse unter 400 Einheiten,
+also **6 von 55** Gelegenheiten. Eine Waffe, die fast nie mehr schießt, ist keine
+Verbesserung, auch wenn ihre Quote steigt. Die Bedingung ist wieder draußen.
+
+Wer die aussichtslosen doch abschneiden will, hat dafür schon einen Regler:
+*auch aussichtslose* (`cl_aimAssistHoldLottery`) als Vielfaches des Wirkradius.
+Der erzeugt einen Grund, und ein Grund verbietet dem selbsttätigen Abzug den
+Schuss ohnehin – es braucht dafür nichts Eigenes. Nach der Tabelle oben: **3,0**
+schneidet ungefähr ab 1600 Einheiten ab, **2,0** ab etwa 1200, **1,0** lässt nur
+noch die kurzen Raketen zu.
+
+Warum der Rest vom *vorigen* Befehl: gedrückt werden muss, bevor der Waffentakt
+den Schuss einbucht, geführt wird aber erst danach. Ein Befehl Verzug bei 60 bis
+120 Befehlen je Sekunde ist weniger, als eine Hand je treffen könnte.
+
+Drei Ausstiege setzen den Rest ausdrücklich zurück: kein Ziel, gar kein
+Durchkommen, und Ziel so nah, dass die eigene Explosion mitginge. Ohne das
+berief sich der Abzug noch zwei Bilder lang auf eine Zahl, die nicht mehr gilt –
+im letzten Fall mit einer Rakete vor den eigenen Füßen. Die Gauntlet ist außen
+vor: sie hat keine Linie, über die sich etwas entscheiden ließe.
+
+**Für die Messung wichtig:** damit werden schlechte Gelegenheiten gar nicht erst
+abgedrückt. Die Trefferquote steigt schon deshalb, ohne dass ein einziger Schuss
+besser gezielt wäre. Wer mit und ohne vergleichen will, muss die Zahl der
+abgegebenen Schüsse danebenlegen – der Stempel `autofire` im Protokollkopf ist
+genau dafür da.
+
 | Zeile | wofür |
 | --- | --- |
 | `aim shot:` | jeder Schuss: Ziel, Entfernung, Vorhalt, Zielpunkt, Restfehler, der gemessene Faktor und die erwartete Streuung, ob der Ersatzpunkt griff |
