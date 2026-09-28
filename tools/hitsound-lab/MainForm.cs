@@ -169,6 +169,20 @@ public class MainForm : Form, IMessageFilter {
 	// Quake-Live-Bewegung, Stufe eins. Beide Schalter gehen als
 	// CVAR_SYSTEMINFO an Spielmodul UND cgame; deshalb müssen nach einer
 	// Änderung auch beide neu ausgeliefert werden.
+	// ZTMs Flexible HUD, seit der Zusammenführung in unserem eigenen cgame.
+	// Die Vorgaben stehen bewusst dort, wo deine Konfiguration sie schon
+	// hatte - der Haken für das Seitenverhältnis kam auf 1, nicht auf die
+	// Mod-Vorgabe 0, sonst schaltete das Werkzeug beim ersten Start die
+	// Breitbild-Sicht ab, die du benutzt.
+	readonly CheckBox hudFovAspect = new() { Text = "FOV aufs Seitenverhältnis umrechnen (Breitbild)", Checked = true, AutoSize = true };
+	readonly CheckBox hudFovGun = new() { Text = "Waffe mit dem FOV mitführen", Checked = true, AutoSize = true };
+	readonly CheckBox hudWeaponBar = new() { Text = "Waffenleiste", Checked = true, AutoSize = true };
+	readonly CheckBox hudStatusHead = new() { Text = "Gesicht in der Statuszeile", Checked = true, AutoSize = true };
+	readonly CheckBox hudPickups = new() { Text = "Aufgesammeltes einblenden", Checked = true, AutoSize = true };
+	readonly CheckBox hudScores = new() { Text = "Punktestand einblenden", Checked = true, AutoSize = true };
+	readonly CheckBox hudStretch = new() { Text = "HUD über die ganze Breite ziehen", Checked = false, AutoSize = true };
+	readonly NumericUpDown hudStatusScale = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0.30m, Maximum = 2.00m, Value = 1.00m, Width = 70 };
+
 	readonly CheckBox qlAutoHop = new() { Text = "Auto-Hop: gehaltene Sprungtaste springt weiter", Checked = false, AutoSize = true };
 	readonly CheckBox qlWeaponSwitch = new() { Text = "Waffenwechsel wie Quake Live (400 statt 450 ms)", Checked = false, AutoSize = true };
 	readonly Label aimLearned = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding( 6, 4, 0, 0 ) };
@@ -1156,6 +1170,7 @@ public class MainForm : Form, IMessageFilter {
 		// und diese Gruppe waechst von allen am staerksten - Luftsteuerung,
 		// Doppelsprung und Crouch-Slide kommen mit eigenen Reglern.
 		tabs.TabPages.Add( SettingsPage( "Quake Live", BuildQuakeLiveBox() ) );
+		tabs.TabPages.Add( SettingsPage( "HUD", BuildHudBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Trefferton", BuildSoundBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Zielen", BuildAimBox(), BuildLeadBox(), BuildSwitchBox() ) );
 		tabs.TabPages.Add( SettingsPage( "Anzeige", BuildBotBox(), BuildItemBox() ) );
@@ -1346,6 +1361,35 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Waffenwechsel",
 			Row( Pad( autoSwitch ) ),
 			Row( Labelled( "Reihenfolge:", autoSwitchOrder ) ) );
+	}
+
+	// ZTMs Flexible HUD. Seit der Zusammenführung steckt er in unserem eigenen
+	// cgame, das aus zz-hitpitch.pk3 geladen wird - vorher gewann das cgame aus
+	// ztm-flexible-hud-r8-baseq3.pk3 und diese Karte hätte Cvars angeboten, die
+	// unser Modul gar nicht kennt.
+	GroupBox BuildHudBox() {
+		hintTip.SetToolTip( hudFovAspect, "Rechnet das Sichtfeld aufs Seitenverhältnis um, statt es zu strecken."
+ 			+ " Auf einem Breitbildschirm siehst du damit links und rechts mehr, statt oben und unten"
+ 			+ " beschnitten zu werden - die eigentliche Hauptsache des Mods. Deine Konfiguration hat das"
+ 			+ " bereits an; aus heißt Quake-3-Original." );
+		hintTip.SetToolTip( hudFovGun, "Bei hohem Sichtfeld rutscht die Waffe tiefer, bei niedrigem weiter nach"
+ 			+ " vorn. Ohne das wandert sie beim Zoomen aus dem Bild." );
+		hintTip.SetToolTip( hudStretch, "Zieht die Anzeige über die volle Breite statt sie im 4:3-Bereich zu"
+ 			+ " verankern. Meist unerwünscht auf Breitbild - deshalb aus." );
+		hintTip.SetToolTip( hudStatusScale, "Größe der Zahlen für Leben, Rüstung und Munition. 1,00 ist das"
+ 			+ " Original; kleiner macht Platz, größer liest sich auf Abstand besser." );
+		hintTip.SetToolTip( hudWeaponBar, "Die Leiste mit den besessenen Waffen unten in der Mitte." );
+		hintTip.SetToolTip( hudStatusHead, "Der Kopf des eigenen Modells zwischen Leben und Rüstung." );
+
+		return Group( "HUD (ZTM Flexible HUD r8)",
+			Row( Pad( hudFovAspect ) ),
+			Row( Pad( hudFovGun ) ),
+			Row( Pad( hudWeaponBar ) ),
+			Row( Pad( hudStatusHead ) ),
+			Row( Pad( hudPickups ) ),
+			Row( Pad( hudScores ) ),
+			Row( Pad( hudStretch ) ),
+			Row( Labelled( "Größe der Statuszahlen:", hudStatusScale ) ) );
 	}
 
 	// Bewegung und Spielgefühl von Quake Live. Beides geht über
@@ -1938,6 +1982,14 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "infiniteAmmo=" + infiniteAmmo.SelectedIndex );
 		s.AppendLine( "qlAutoHop=" + qlAutoHop.Checked );
 		s.AppendLine( "qlWeaponSwitch=" + qlWeaponSwitch.Checked );
+		s.AppendLine( "hudFovAspect=" + hudFovAspect.Checked );
+		s.AppendLine( "hudFovGun=" + hudFovGun.Checked );
+		s.AppendLine( "hudWeaponBar=" + hudWeaponBar.Checked );
+		s.AppendLine( "hudStatusHead=" + hudStatusHead.Checked );
+		s.AppendLine( "hudPickups=" + hudPickups.Checked );
+		s.AppendLine( "hudScores=" + hudScores.Checked );
+		s.AppendLine( "hudStretch=" + hudStretch.Checked );
+		s.AppendLine( "hudStatusScale=" + Dec( hudStatusScale.Value ) );
 		s.AppendLine( "botEdgeCare=" + botEdgeCare.Checked );
 		s.AppendLine( "botJump=" + botJump.Checked );
 		s.AppendLine( "botNoChat=" + botNoChat.Checked );
@@ -2027,6 +2079,14 @@ public class MainForm : Form, IMessageFilter {
 		SetIndex( infiniteAmmo, v, "infiniteAmmo" );
 		SetBool( qlAutoHop, v, "qlAutoHop" );
 		SetBool( qlWeaponSwitch, v, "qlWeaponSwitch" );
+		SetBool( hudFovAspect, v, "hudFovAspect" );
+		SetBool( hudFovGun, v, "hudFovGun" );
+		SetBool( hudWeaponBar, v, "hudWeaponBar" );
+		SetBool( hudStatusHead, v, "hudStatusHead" );
+		SetBool( hudPickups, v, "hudPickups" );
+		SetBool( hudScores, v, "hudScores" );
+		SetBool( hudStretch, v, "hudStretch" );
+		SetNum( hudStatusScale, v, "hudStatusScale" );
 		SetBool( botEdgeCare, v, "botEdgeCare" );
 		SetBool( botJump, v, "botJump" );
 		SetBool( botNoChat, v, "botNoChat" );
@@ -2183,6 +2243,16 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta pmove_autoHop {( qlAutoHop.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"seta pmove_weaponDropTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
 		cfg.AppendLine( $"seta pmove_weaponRaiseTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
+		// ZTMs Flexible HUD. Alle acht sind CVAR_ARCHIVE, stehen also auch in
+		// der q3config - diese Zeilen laufen danach und gewinnen damit.
+		cfg.AppendLine( $"seta cg_fovAspectAdjust {( hudFovAspect.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_fovGunAdjust {( hudFovGun.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_drawWeaponBar {( hudWeaponBar.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_drawStatusHead {( hudStatusHead.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_drawPickups {( hudPickups.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_drawScores {( hudScores.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_stretch {( hudStretch.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"seta cg_statusScale {Dec( hudStatusScale.Value )}" );
 		cfg.AppendLine( $"seta cl_aimAssistKey \"{aimKey.Text.Replace( "\"", "" )}\"" );
 		cfg.AppendLine( $"seta cl_aimAssistSmooth {(int)aimSmooth.Value}" );
 		cfg.AppendLine( $"seta cl_aimAssistLead {Dec( aimLead.Value )}" );
