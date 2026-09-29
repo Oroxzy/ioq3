@@ -2257,6 +2257,16 @@ static void CL_ItemOutlineColour( const gitem_t *item, qboolean taken, byte *col
 		{ 235, 90, 60 },		// regeneration
 		{ 90, 230, 230 },		// flight
 	};
+	// Named and static, not compound literals: a literal inside the switch
+	// lives only until the switch ends, and the loop below read it after that.
+	static const byte	armorShard[3] = { 110, 230, 110 };
+	static const byte	armorRed[3] = { 235, 80, 60 };
+	static const byte	armorYellow[3] = { 245, 210, 60 };
+	static const byte	healthMega[3] = { 90, 160, 255 };
+	static const byte	healthSmall[3] = { 235, 190, 80 };
+	static const byte	holdMedkit[3] = { 235, 120, 120 };
+	static const byte	holdOther[3] = { 200, 200, 235 };
+	static const byte	other[3] = { 200, 200, 200 };
 	const byte	*base;
 	int			i;
 
@@ -2271,20 +2281,18 @@ static void CL_ItemOutlineColour( const gitem_t *item, qboolean taken, byte *col
 		break;
 	case IT_ARMOR:
 		// shard, yellow and red, as they look on the floor
-		base = item->quantity <= 5 ? (const byte[]){ 110, 230, 110 }
-			: item->quantity >= 100 ? (const byte[]){ 235, 80, 60 }
-			: (const byte[]){ 245, 210, 60 };
+		base = item->quantity <= 5 ? armorShard
+			: item->quantity >= 100 ? armorRed
+			: armorYellow;
 		break;
 	case IT_HEALTH:
-		base = item->quantity >= 100 ? (const byte[]){ 90, 160, 255 }
-			: (const byte[]){ 235, 190, 80 };
+		base = item->quantity >= 100 ? healthMega : healthSmall;
 		break;
 	case IT_HOLDABLE:
-		base = item->giTag == HI_MEDKIT ? (const byte[]){ 235, 120, 120 }
-			: (const byte[]){ 200, 200, 235 };
+		base = item->giTag == HI_MEDKIT ? holdMedkit : holdOther;
 		break;
 	default:
-		base = (const byte[]){ 200, 200, 200 };
+		base = other;
 		break;
 	}
 
