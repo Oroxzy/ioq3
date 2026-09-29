@@ -3001,6 +3001,7 @@ void Item_Text_Wrapped_Paint(itemDef_t *item) {
 	char text[1024];
 	const char *p, *start, *textPtr;
 	char buff[1024];
+	int length;
 	int width, height;
 	float x, y;
 	vec4_t color;
@@ -3032,11 +3033,14 @@ void Item_Text_Wrapped_Paint(itemDef_t *item) {
 	start = textPtr;
 	p = strchr(textPtr, '\r');
 	while (p && *p) {
-		strncpy(buff, start, p-start+1);
-		buff[p-start] = '\0';
+		length = p-start+1;
+		if (length > sizeof(buff)) {
+			length = sizeof(buff);
+		}
+		Q_strncpyz(buff, start, length);
 		DC->drawText(x, y, item->textscale, color, buff, 0, 0, item->textStyle);
 		y += height + 5;
-		start += p - start + 1;
+		start += length;
 		p = strchr(p+1, '\r');
 	}
 	DC->drawText(x, y, item->textscale, color, start, 0, 0, item->textStyle);
@@ -5814,10 +5818,13 @@ qboolean MenuParse_screenPlacement( itemDef_t *item, int handle ) {
 	if (!trap_PC_ReadToken(handle, &token))
 		return qfalse;
 
+	// Senkrecht die senkrechten Werte: r8 setzte hier PLACE_RIGHT und
+	// PLACE_LEFT, und CG_AdjustFrom640 kennt senkrecht nur CENTER und BOTTOM -
+	// ein unten verankertes HUD-Menue stand auf hohen Bildschirmen oben.
 	if (Q_stricmp(token.string, "PLACE_TOP") == 0) {
-		vpos = PLACE_RIGHT;
+		vpos = PLACE_TOP;
 	} else if (Q_stricmp(token.string, "PLACE_BOTTOM") == 0) {
-		vpos = PLACE_LEFT;
+		vpos = PLACE_BOTTOM;
 	} else if (Q_stricmp(token.string, "PLACE_CENTER") == 0) {
 		vpos = PLACE_CENTER;
 	} else if (Q_stricmp(token.string, "PLACE_STRETCH") == 0) {
