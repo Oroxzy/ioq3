@@ -556,6 +556,28 @@ static float CL_AimAssistProjectileSpeed( int weapon ) {
 
 /*
 =================
+CL_AimAssistStepHeight
+
+The height PM_StepSlideMove really lifts a walker over. With pmove_StepHeight
+the game climbs up to that instead of STEPSIZE, bots included, and a
+prediction still stepping 18 cut the lead short at the foot of every 20 to 28
+unit rise the bot then walked straight up. Only a module that proves with
+pmove_qlActive that it reads the cvar is believed; 0 or less is the stock 18,
+the same rule as bg_slidemove.c.
+=================
+*/
+static float CL_AimAssistStepHeight( void ) {
+	float	step;
+
+	if ( !(int)Cvar_VariableValue( "pmove_qlActive" ) ) {
+		return STEPSIZE;
+	}
+	step = Cvar_VariableValue( "pmove_StepHeight" );
+	return step > 0.0f ? step : STEPSIZE;
+}
+
+/*
+=================
 CL_AimAssistWeaponName
 
 Short names for the shot log, in the order of weapon_t.
@@ -936,7 +958,12 @@ in seconds, and the learner tunes it from what the bots really do.
 // Reihenfolge wie aimLogHomingFields - Zuender, Vorhalt, Schaerfzeit,
 // Treibstoff, Tempoprofil, Kurvenverlust, Zielwahl, Luft/Boden, Warnton,
 // Splitter und Raketen als Ziel.
-#define AIM_LOG_VERSION	19
+// Achtzehn: "air" bedeutet etwas anderes - die Luftsteuerung rechnet mit der
+// Staerke von CPM (150), vorher drehte "air 1000" kaum zwei Grad je Sekunde.
+// Ausserdem steht jeder Bewegungswert so da, wie Pmove ihn nimmt: was dort
+// dem Original gleicht (0 oder weniger, 250 ms, 18 Einheiten, Faktor 1),
+// steht als Original da, und "homing" ist 0, 1 oder 2 wie in fire_rocket.
+#define AIM_LOG_VERSION	20
 
 // Ob der zuletzt vorhergesagte Punkt von einem Sprungfeld kommt. Ohne das
 // waere nicht nachzusehen, ob der Pfad ueberhaupt je greift - und eine
@@ -1936,6 +1963,7 @@ static void CL_AimAssistRateForget( void ) {
 static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, float flight,
 		const vec3_t viewOrigin, qboolean landing ) {
 	static qboolean		saidRate;
+	static qboolean		saidHoming;
 	aimRatePending_t	*p = NULL;
 	vec3_t				offset;
 	int					arrive, open, shut, i;
@@ -1967,6 +1995,21 @@ static void CL_AimAssistRateWatch( const entityState_t *entity, int weapon, floa
 		return;
 	}
 	saidRate = qfalse;
+
+	// Zielsuch-Raketen fliegen keine Gerade: das Fenster um die Ankunft der
+	// 900-u/s-Rakete trifft ihren Schaden nicht, und was sie trifft, haette
+	// eine gerade verfehlt. Dieselbe Regel wie bei der Nachladezeit - nach
+	// einer Sitzung mit ein paar hundert suchenden Raketen stuenden sonst
+	// fast nur noch deren Zahlen in den Raketenfaechern von aimrate.cfg.
+	// Jede Zahl ausser 0 schaltet sie ein, wie in fire_rocket.
+	if ( weapon == WP_ROCKET_LAUNCHER && (int)Cvar_VariableValue( "g_homingActive" ) != 0 ) {
+		if ( !saidHoming && cl_aimAssistDebug->integer ) {
+			saidHoming = qtrue;
+			Com_Printf( "aim rateskip: homing rockets, the rocket rows stay out of this session\n" );
+		}
+		return;
+	}
+	saidHoming = qfalse;
 
 	// Eine Waffe feuert hoechstens einmal je Server-Bild - der schnellste
 	// Zyklus im Spiel ist der des Blitzwerfers mit genau einem. Der Klient
@@ -2308,7 +2351,8 @@ der Zeitpunkt, ab dem gefallen wird, und ein Achtel einer Laufstrecke ist
 gegenueber der Flugzeit einer Rakete ohnehin unter der Messbarkeit.
 =================
 */
-static float CL_AimAssistEdge( const vec3_t start, const vec3_t end, vec3_t mins, vec3_t maxs ) {
+static float CL_AimAssistEdge( const vec3_t start, const vec3_t end, vec3_t mins, vec3_t maxs,
+		float step ) {
 	vec3_t	above, below, point;
 	trace_t	trace;
 	float	share;
@@ -2320,8 +2364,11 @@ static float CL_AimAssistEdge( const vec3_t start, const vec3_t end, vec3_t mins
 		point[1] = start[1] + ( end[1] - start[1] ) * share;
 		point[2] = start[2];
 
+		// Von so hoch, wie der Bot steigen kann: ein Lauf eine hohe Stufe
+		// hinauf ist keine Kante. Nach unten bleibt es bei STEPSIZE - Pmove
+		// setzt niemanden eine Stufe hinab, tiefer ist immer ein Fall.
 		VectorCopy( point, above );
-		above[2] += STEPSIZE;
+		above[2] += step;
 		VectorCopy( point, below );
 		below[2] -= 8192.0f;
 		CM_BoxTrace( &trace, above, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
@@ -2339,11 +2386,12 @@ static float CL_AimAssistEdge( const vec3_t start, const vec3_t end, vec3_t mins
 static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float time, vec3_t predicted,
 		qboolean *blocked, qboolean *pinned ) {
 	vec3_t		mins, maxs, stepMins, start, end, remaining, motion, above, below;
-	float		gravity, sideways, floor, pace, fall, rest, landing, scale;
+	float		gravity, sideways, floor, pace, fall, rest, landing, scale, step;
 	trace_t		trace;
 	qboolean	grounded, floats, stopped, snapped, walks;
 	int			i;
 
+	step = CL_AimAssistStepHeight();
 	aimPadLaunch = qfalse;
 	aimEdgeFall = 0;
 	grounded = entity->groundEntityNum != ENTITYNUM_NONE;
@@ -2471,12 +2519,13 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		end[2] -= 0.5f * gravity * time * time;
 	}
 
-	// The game lifts a walking player over anything up to STEPSIZE, so the box
-	// that clips the guess starts above that height: a curb, a stair riser or a
-	// ramp is no obstacle to the target and must not cut its lead short. Only
-	// what would stop the target itself may stop the prediction.
+	// The game lifts a walking player over anything up to its step height
+	// (STEPSIZE, or pmove_StepHeight), so the box that clips the guess starts
+	// above that height: a curb, a stair riser or a ramp is no obstacle to the
+	// target and must not cut its lead short. Only what would stop the target
+	// itself may stop the prediction.
 	VectorCopy( mins, stepMins );
-	stepMins[2] += STEPSIZE;
+	stepMins[2] += step;
 	VectorCopy( entity->pos.trBase, start );
 	VectorSubtract( end, start, remaining );
 	VectorCopy( end, predicted );
@@ -2514,9 +2563,9 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 		// a player up a flight of stairs one step at a time. Ground no higher
 		// than before means a wall or a crate, and the target stops here.
 		VectorCopy( trace.endpos, above );
-		above[2] += STEPSIZE;
+		above[2] += step;
 		VectorCopy( trace.endpos, below );
-		below[2] -= STEPSIZE;
+		below[2] -= step;
 		CM_BoxTrace( &trace, above, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
 		if ( trace.startsolid || trace.allsolid || trace.fraction >= 1.0f ) {
 			break;
@@ -2535,8 +2584,11 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 	// Put the guess back on the ground it would be standing on: a target that
 	// runs up stairs rises with them, one that lands does not sink into the
 	// floor, and one high in the air finds nothing here and keeps its arc.
+	// From the full step height: a box carried over a tall rise ends inside
+	// the platform, and a snap from lower down would start solid and leave it
+	// buried there.
 	VectorCopy( predicted, above );
-	above[2] += STEPSIZE;
+	above[2] += step;
 	VectorCopy( predicted, below );
 	below[2] -= 8192.0f;
 	CM_BoxTrace( &trace, above, below, mins, maxs, 0, MASK_PLAYERSOLID, qfalse );
@@ -2569,7 +2621,7 @@ static void CL_AimAssistPredict( const entityState_t *entity, int weapon, float 
 			// im Fall zum Landepunkt hin, sodass die gedaempfte Waagerechte in
 			// diesen Faellen schon auf 17 bis 37 Einheiten stimmte; sie noch
 			// weiterzuschieben machte es schlechter statt besser.
-			float	share = CL_AimAssistEdge( entity->pos.trBase, predicted, mins, maxs );
+			float	share = CL_AimAssistEdge( entity->pos.trBase, predicted, mins, maxs, step );
 
 			if ( share >= 0.0f && share < 1.0f ) {
 				float	afterEdge = time - share * sideways;		// Flug nach der Kante
@@ -3281,12 +3333,20 @@ rocket "own splash" skip in nearly every session of an evening played with
 g_selfDamage 0. The knockback stays - that is the rocket jump - and is the
 player's to take.
 
-A cvar the game module never registered reads empty; that is the stock 1.
+Only a game module that registers g_selfDamage also honours it. The bench
+creates the cvar with "set" before every start, so a module that does not know
+it - stock, or an old zz-hitpitch.pk3 beside a new exe - leaves it
+CVAR_USER_CREATED and still deals the stock half damage. That counts as stock,
+exactly like a missing cvar, the same test the log stamp makes.
 =================
 */
 static qboolean CL_AimAssistSelfSplash( void ) {
-	return !*Cvar_VariableString( "g_selfDamage" )
-		|| Cvar_VariableIntegerValue( "g_selfDamage" ) != 0;
+	int		flags = Cvar_Flags( "g_selfDamage" );
+
+	if ( flags == CVAR_NONEXISTENT || ( flags & CVAR_USER_CREATED ) ) {
+		return qtrue;
+	}
+	return Cvar_VariableIntegerValue( "g_selfDamage" ) != 0;
 }
 
 // which weapons take the frame-quantised point, decided beside the weapon
@@ -5320,15 +5380,36 @@ void CL_AimAssistSnapshot( void ) {
 	// geladene Spielmodul sie ueberhaupt ausliest. Fehlt der Beweis, steht
 	// hier minus eins statt einer Zahl, die nie gegolten hat.
 	if ( (int)Cvar_VariableValue( "pmove_qlActive" ) ) {
+		// Jeder Wert so, wie Pmove ihn nimmt: was dort das Original ergibt,
+		// steht als Original da. Sonst hiesse "pmove_StepHeight 18" im Kopf
+		// eine andere Bedingung als 0, und -1 sahe aus wie "Modul unbekannt".
 		hop = (int)Cvar_VariableValue( "pmove_AutoHop" ) ? 1 : 0;
 		wdrop = (int)Cvar_VariableValue( "pmove_WeaponDropTime" );
+		if ( wdrop <= 0 || wdrop == 200 ) {
+			wdrop = 0;
+		}
 		wraise = (int)Cvar_VariableValue( "pmove_WeaponRaiseTime" );
+		if ( wraise <= 0 || wraise == 250 ) {
+			wraise = 0;
+		}
 		// In Tausendstel, damit die Zeile ganzzahlig bleibt wie der Rest.
 		air = (int)( Cvar_VariableValue( "pmove_AirControl" ) * 1000.0f );
+		if ( air < 0 ) {
+			air = 0;
+		}
 		airacc = (int)( Cvar_VariableValue( "pmove_AirAccel" ) * 1000.0f );
+		if ( airacc <= 0 || airacc == 1000 ) {
+			airacc = 0;
+		}
 		ramp = (int)Cvar_VariableValue( "pmove_RampJump" ) ? 1 : 0;
 		rampsc = (int)( Cvar_VariableValue( "pmove_RampJumpScale" ) * 1000.0f );
+		if ( rampsc <= 0 || !ramp ) {
+			rampsc = 1000;		// ohne Rampensprung wirkt der Faktor nicht
+		}
 		step = (int)Cvar_VariableValue( "pmove_StepHeight" );
+		if ( step <= 0 || step == STEPSIZE ) {
+			step = 0;
+		}
 	} else {
 		hop = wdrop = wraise = -1;
 		air = airacc = ramp = rampsc = step = -1;
@@ -5337,9 +5418,15 @@ void CL_AimAssistSnapshot( void ) {
 	// Zielsuch-Raketen: g_homingActive legt nur ein Spielmodul an, das sie auch
 	// fliegt. Fehlt die Cvar ganz, steht minus eins - eine leere Zeichenkette
 	// hiesse sonst "null" und damit "aus", was bei einem alten Modul stimmt,
-	// aber nicht dasselbe ist wie "abgeschaltet".
-	homing = *Cvar_VariableString( "g_homingActive" )
-		? (int)Cvar_VariableValue( "g_homingActive" ) : -1;
+	// aber nicht dasselbe ist wie "abgeschaltet". Wie fire_rocket gelesen:
+	// jede Zahl ausser 0 ist an, ab 2 fuer alle - ein aelteres Modul meldete
+	// den rohen Wert.
+	if ( *Cvar_VariableString( "g_homingActive" ) ) {
+		value = (int)Cvar_VariableValue( "g_homingActive" );
+		homing = !value ? 0 : ( value >= 2 ? 2 : 1 );
+	} else {
+		homing = -1;
+	}
 	// Wie sie lenkt, gehoert dazu: 90 Grad je Sekunde und 720 sind zwei
 	// verschiedene Waffen. Nur gelesen, wenn das Modul die Zielsuche kennt;
 	// sonst steht jedes Feld auf minus eins.
@@ -5676,7 +5763,10 @@ static void CL_AimAssistSteer( usercmd_t *cmd, const vec3_t oldAngles ) {
 	// nimmt den Schuss weg, wenn etwas dagegen spricht, der andere gibt ihn,
 	// wenn nichts dagegen spricht. Also einmal fragen und von beiden lesen,
 	// statt dieselben Traces zweimal zu ziehen.
-	reason = ( entity && ( cl_aimAssistHoldFire->integer || cl_aimAssistAutoFire->integer ) )
+	// Gefragt wird nur, wenn jemand die Antwort liest: das Halten nur bei
+	// gedruecktem Abzug, der selbsttaetige Abzug immer.
+	reason = ( entity && ( cl_aimAssistAutoFire->integer
+			|| ( cl_aimAssistHoldFire->integer && ( cmd->buttons & BUTTON_ATTACK ) ) ) )
 		? CL_AimAssistHoldReason( entity, weapon, viewOrigin, &holdRange ) : -1;
 
 	// Der Abzug, der von selbst drueckt. Er verlangt dreierlei, und jedes davon

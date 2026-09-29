@@ -33,6 +33,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // ohne sie traegt eine steile Rampe einen beliebig weit.
 #define	PM_RAMPJUMP_MAX	700
 
+// Die Staerke der Luftsteuerung, wie CPM sie setzt (cpm_pm_aircontrol, 150 im
+// Promode-Code; Xonotics CPMA-Profil nimmt dieselbe Zahl). pmove_AirControl
+// multipliziert sie nur - so wie Quake Live den Wert in den Factories als
+// Schalter auf 1 setzt. Bei 400 u/s dreht 1 damit bis gut 260 Grad je Sekunde.
+#define	PM_AIRCONTROL_STRENGTH	150.0f
+
 #define	TIMER_LAND		130
 #define	TIMER_GESTURE	(34*66+50)
 

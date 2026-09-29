@@ -654,7 +654,10 @@ static void PM_AirControl( vec3_t wishdir, float wishspeed ) {
 	speed = VectorNormalize( pm->ps->velocity );
 
 	dot = DotProduct( pm->ps->velocity, wishdir );
-	k = 32.0f * pm->airControl * dot * dot * pml.frametime;
+	// Die Staerke ist die von CPM (cpm_pm_aircontrol 150); pmove_AirControl ist
+	// wie in Quake Live der Schalter und Faktor darauf, 1 heisst Race. Ohne die
+	// 150 drehte 1 bei 400 u/s knapp zwei Grad je Sekunde - nicht zu merken.
+	k = 32.0f * PM_AIRCONTROL_STRENGTH * pm->airControl * dot * dot * pml.frametime;
 
 	if ( dot > 0 ) {
 		for ( i = 0; i < 2; i++ ) {

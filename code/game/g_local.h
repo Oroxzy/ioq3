@@ -307,6 +307,7 @@ struct gclient_s {
 	// Der letzte GEGNER, der ihn getroffen hat - fuer g_homingPick 3. Eigener
 	// Splash, Sturz und Mitspieler ueberschreiben lasthurt_client auch, das
 	// hier nicht. Zeit 0 heisst: seit dem Einstieg von keinem Gegner getroffen.
+	// ClientSpawn behaelt beide ueber den Tod hinaus.
 	int			lastEnemyHurtClient;
 	int			lastEnemyHurtTime;
 

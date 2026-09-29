@@ -499,18 +499,19 @@ void CG_PredictPlayerState( void ) {
 	cg_pmove.pmove_fixed = pmove_fixed.integer;// | cg_pmove_fixed.integer;
 	cg_pmove.pmove_msec = pmove_msec.integer;
 
-	// Quake-Live-Bewegung, aus denselben CVAR_SYSTEMINFO-Cvars wie im
-	// Spielmodul. Das ist die Haelfte, auf die es ankommt: saehe die
+	// Quake-Live-Bewegung, so wie der Server sie in CS_SYSTEMINFO schickt
+	// (CG_ParseSysteminfo). Das ist die Haelfte, auf die es ankommt: saehe die
 	// Vorhersage hier andere Zahlen als der Server, zoege es den Spieler bei
-	// jedem Sprung und jedem Waffenwechsel zurecht.
-	cg_pmove.autoHop = pmove_AutoHop.integer;
-	cg_pmove.weaponDropTime = pmove_WeaponDropTime.integer;
-	cg_pmove.weaponRaiseTime = pmove_WeaponRaiseTime.integer;
-	cg_pmove.airControl = pmove_AirControl.value;
-	cg_pmove.airAccel = pmove_AirAccel.value;
-	cg_pmove.rampJump = pmove_RampJump.integer;
-	cg_pmove.rampJumpScale = pmove_RampJumpScale.value;
-	cg_pmove.stepHeight = pmove_StepHeight.value;
+	// jedem Sprung und jedem Waffenwechsel zurecht - und die eigenen Cvars
+	// koennen von einem anderen Server stehengeblieben sein.
+	cg_pmove.autoHop = cgs.qlAutoHop;
+	cg_pmove.weaponDropTime = cgs.qlWeaponDropTime;
+	cg_pmove.weaponRaiseTime = cgs.qlWeaponRaiseTime;
+	cg_pmove.airControl = cgs.qlAirControl;
+	cg_pmove.airAccel = cgs.qlAirAccel;
+	cg_pmove.rampJump = cgs.qlRampJump;
+	cg_pmove.rampJumpScale = cgs.qlRampJumpScale;
+	cg_pmove.stepHeight = cgs.qlStepHeight;
 
 	// run cmds
 	moved = qfalse;

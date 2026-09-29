@@ -253,7 +253,10 @@ public class MainForm : Form, IMessageFilter {
 	// Softwares eigenen Factories: Race setzt AirControl 1 und RampJump 1,
 	// einzelne Spieltypen gehen bei der Schritthöhe auf 20 oder 28.
 	readonly CheckBox qlAirControl = new() { Text = "Luftsteuerung (nur geradeaus, wie Race/PQL)", Checked = false, AutoSize = true };
-	readonly NumericUpDown qlAirControlValue = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.25m, Maximum = 10.00m, Value = 1.00m, Width = 70 };
+	// Faktor auf die CPM-Stärke 150, die das Spiel seit Protokollfassung 20
+	// selbst einrechnet: 1,00 ist Race. Mehr als 3 dreht den Schwung fast
+	// sofort herum und ist keine Luftsteuerung mehr, sondern ein Lenkrad.
+	readonly NumericUpDown qlAirControlValue = new() { DecimalPlaces = 2, Increment = 0.25m, Minimum = 0.25m, Maximum = 3.00m, Value = 1.00m, Width = 70 };
 	// Das Feld zeigt den echten Wert, nicht "0 = Original": vorher stand es auf
 	// 0, und ein Klick nach oben ergab 0,25 - eine SCHWÄCHERE Luftbeschleunigung
 	// als Quake 3, obwohl man mehr wollte. Geschrieben wird trotzdem 0, solange
@@ -574,7 +577,7 @@ public class MainForm : Form, IMessageFilter {
 	// Die Protokollfassung, die dieses Werkzeug versteht. Schreibt das Spiel
 	// eine andere, passen Zeilen und Auswertung nicht mehr sicher zusammen -
 	// und dann soll das dastehen statt still falsch gerechnet zu werden.
-	const int LogVersion = 19;
+	const int LogVersion = 20;
 	readonly Label logVersion = new() { AutoSize = true, ForeColor = Color.DimGray };
 
 	readonly Button start = new() { Text = "Spiel starten", Width = 140, Height = 34 };
@@ -1499,7 +1502,8 @@ public class MainForm : Form, IMessageFilter {
  			+ " Raketenspringer. Gilt beim Aussuchen; wer schon verfolgt wird und kurz aufsetzt,"
  			+ " bleibt verfolgt." );
 		hintTip.SetToolTip( homingMissiles, "Raketen jagen Raketen. Zwei, die sich näher als 40 Einheiten"
- 			+ " kommen, platzen beide – das ist die einzige Art, eine Rakete abzuschießen, denn Raketen"
+ 			+ " kommen, platzen beide – mit Näherungszünder auch weiter, aber höchstens 120, so weit die"
+ 			+ " eigene Explosion reicht. Das ist die einzige Art, eine Rakete abzuschießen, denn Raketen"
  			+ " haben keinen Körper. Die eigenen und die der Mitspieler sind nie Ziel." );
 		hintTip.SetToolTip( homingRetarget, "Ohne Haken hält die Rakete ihr Ziel, solange sie es sieht. Mit"
  			+ " Haken sucht sie jedes Bild neu und schwenkt auf ein besseres um." );
@@ -1701,8 +1705,10 @@ public class MainForm : Form, IMessageFilter {
  			+ " beschleunigen - der Betrag bleibt, die Richtung wandert. Wirkt nur, solange du geradeaus"
  			+ " oder gerade rückwärts drückst; seitwärts bleibt Strafejump unverändert. In id Softwares"
  			+ " eigenen Factories setzt das NUR Race, kein Duell und kein Clan Arena." );
-		hintTip.SetToolTip( qlAirControlValue, "Die Stärke. 1,00 ist der Wert aus den Race-Factories." );
-		hintTip.SetToolTip( qlAirAccel, "Luftbeschleunigung. 1,00 ist Quake 3; PQL geht auf 2." );
+		hintTip.SetToolTip( qlAirControlValue, "Die Stärke als Faktor auf die von CPMA. 1,00 ist der Wert aus"
+ 			+ " den Race-Factories: bei 400 u/s dreht der Schwung bis gut 260 Grad je Sekunde." );
+		hintTip.SetToolTip( qlAirAccel, "Luftbeschleunigung. 1,00 ist Quake 3; PQL geht auf 2. Gilt auch ohne"
+ 			+ " den Haken Luftsteuerung - sie beschleunigt, die Luftsteuerung dreht." );
 		hintTip.SetToolTip( qlRampJump, "Quake 3 überschreibt beim Sprung die Aufwärtsgeschwindigkeit - ein"
  			+ " Sprung von einer Schräge frisst also genau den Schwung, den die Schräge gerade gegeben"
  			+ " hat. Damit wird er stattdessen behalten und der Sprung darauf gelegt, gedeckelt bei 700." );
@@ -2602,20 +2608,34 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"seta cl_aimAssistDebug {( aimAssist.Checked ? 1 : 0 )}" );
 		// Quake-Live-Bewegung. Null heisst bei den Zeiten ausdruecklich
 		// "Original", nicht "null Millisekunden" - so liest es bg_pmove.c.
-		cfg.AppendLine( $"seta pmove_AutoHop {( qlAutoHop.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"seta pmove_WeaponDropTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
-		cfg.AppendLine( $"seta pmove_WeaponRaiseTime {( qlWeaponSwitch.Checked ? 200 : 0 )}" );
-		// Die Stärke steht nur dann, wenn der Haken sie freigibt - sonst wäre
-		// eine Zahl gesetzt, die nichts tut, und im Protokollkopf stünde eine
-		// Bedingung, die nie galt.
-		cfg.AppendLine( $"seta pmove_AirControl {( qlAirControl.Checked ? Dec( qlAirControlValue.Value ) : "0" )}" );
-		// Beim Originalwert wird 0 geschrieben, nicht die Zahl: die Engine liest
-		// 0 als "Original", und der Protokollkopf zeigt dann keine Bedingung an,
-		// wo keine ist.
-		cfg.AppendLine( $"seta pmove_AirAccel {( qlAirAccel.Value == 1.00m ? "0" : Dec( qlAirAccel.Value ) )}" );
-		cfg.AppendLine( $"seta pmove_RampJump {( qlRampJump.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"seta pmove_RampJumpScale {Dec( qlRampScale.Value )}" );
-		cfg.AppendLine( $"seta pmove_StepHeight {( qlStepHeight.Value == 18m ? "0" : Dec( qlStepHeight.Value ) )}" );
+		//
+		// Kein seta: die Bewegung ist eine Laboreinstellung wie g_selfDamage und
+		// gehoert nicht in die q3config. Mit seta blieb sie dort stehen, und ein
+		// Spiel ohne das Labor hatte trotzdem Auto-Hop und Luftsteuerung - und
+		// auf einem fremden Server sagte das cgame Bewegungen voraus, die der
+		// Server nie machte. Das unset davor raeumt ein Archiv-Flag weg, das ein
+		// aelteres Labor dort hinterlassen hat: vor "map" hat noch kein Modul die
+		// Cvar registriert, sie ist also noch vom Benutzer angelegt und darf
+		// geloescht werden; ein set allein behielte das Flag.
+		foreach ( var (name, val) in new[] {
+			( "pmove_AutoHop", qlAutoHop.Checked ? "1" : "0" ),
+			( "pmove_WeaponDropTime", qlWeaponSwitch.Checked ? "200" : "0" ),
+			( "pmove_WeaponRaiseTime", qlWeaponSwitch.Checked ? "200" : "0" ),
+			// Die Stärke steht nur dann, wenn der Haken sie freigibt - sonst
+			// wäre eine Zahl gesetzt, die nichts tut, und im Protokollkopf
+			// stünde eine Bedingung, die nie galt.
+			( "pmove_AirControl", qlAirControl.Checked ? Dec( qlAirControlValue.Value ) : "0" ),
+			// Beim Originalwert wird 0 geschrieben, nicht die Zahl: die Engine
+			// liest 0 als "Original", und der Protokollkopf zeigt dann keine
+			// Bedingung an, wo keine ist.
+			( "pmove_AirAccel", qlAirAccel.Value == 1.00m ? "0" : Dec( qlAirAccel.Value ) ),
+			( "pmove_RampJump", qlRampJump.Checked ? "1" : "0" ),
+			( "pmove_RampJumpScale", Dec( qlRampScale.Value ) ),
+			( "pmove_StepHeight", qlStepHeight.Value == 18m ? "0" : Dec( qlStepHeight.Value ) ),
+		} ) {
+			cfg.AppendLine( $"unset {name}" );
+			cfg.AppendLine( $"set {name} {val}" );
+		}
 		// ZTMs Flexible HUD. Alle acht sind CVAR_ARCHIVE, stehen also auch in
 		// der q3config - diese Zeilen laufen danach und gewinnen damit.
 		cfg.AppendLine( $"seta cg_fovAspectAdjust {( hudFovAspect.Checked ? 1 : 0 )}" );
@@ -3181,7 +3201,7 @@ public class MainForm : Form, IMessageFilter {
 	// abdrueckt - Schuesse mit und ohne ihn sind nicht dieselbe Stichprobe.
 	static string StampCondition( string line ) {
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
-		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "", air = "", step = "", homing = "";
+		string rate = "", ammo = "", autoFire = "", hop = "", wraise = "", air = "", airAcc = "", ramp = "", rampSc = "", step = "", homing = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "rate" ) rate = f[i + 1];
 			else if ( f[i] == "ammo" ) ammo = f[i + 1];
@@ -3189,9 +3209,24 @@ public class MainForm : Form, IMessageFilter {
 			else if ( f[i] == "autohop" ) hop = f[i + 1];
 			else if ( f[i] == "wraise" ) wraise = f[i + 1];
 			else if ( f[i] == "air" ) air = f[i + 1];
+			else if ( f[i] == "airaccel" ) airAcc = f[i + 1];
+			else if ( f[i] == "ramp" ) ramp = f[i + 1];
+			else if ( f[i] == "rampscale" ) rampSc = f[i + 1];
 			else if ( f[i] == "step" ) step = f[i + 1];
 			else if ( f[i] == "homing" ) homing = f[i + 1];
 		}
+		// Was Pmove wie das Original nimmt, zählt als Original - ab Fassung 20
+		// schreibt das Spiel es schon so, ältere Protokolle stempelten roh: eine
+		// Luftbeschleunigung von 0 oder 1000, Schritthöhe 18, Hochnehmen in 250.
+		// Der Rampenfaktor wirkt nur mit dem Rampensprung.
+		if ( hop != "-1" ) {
+			if ( int.TryParse( airAcc, out int aa ) && ( aa <= 0 || aa == 1000 ) ) airAcc = "";
+			if ( step == "18" ) step = "0";
+			if ( wraise == "250" ) wraise = "0";
+		}
+		string rampKey = ramp == "1"
+			? "1:" + ( int.TryParse( rampSc, out int rs ) && rs > 0 ? rs : 1000 )
+			: ramp;
 		// Die Wegsteckzeit bleibt aus dem Schlüssel heraus: sie ist in Quake 3
 		// und Quake Live dieselbe, und wer sie von Hand verstellt, sieht es an
 		// der Zeile darüber. Das Hochnehmen ist der Wert, der sich unterscheidet.
@@ -3199,7 +3234,8 @@ public class MainForm : Form, IMessageFilter {
 		// mit Vorhalt und Zünder ist eine andere Waffe als eine ohne. Ist sie aus,
 		// zählen sie nicht - sonst trennte ein verschobener Regler zwei
 		// Sitzungen, in denen er gar nicht gewirkt hat.
-		string key = rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise + "/" + air + "/" + step + "/" + homing;
+		string key = rate + "/" + ammo + "/" + autoFire + "/" + hop + "/" + wraise + "/" + air
+			+ "/" + airAcc + "/" + rampKey + "/" + step + "/" + homing;
 		if ( homing == "1" || homing == "2" ) {
 			var h = HomingStamp( f );
 			// Die Rampe wirkt nur, wenn Start und Ende verschieden sind; sonst
@@ -3238,7 +3274,7 @@ public class MainForm : Form, IMessageFilter {
 
 		var f = line.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
 		int found = 0;
-		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "", air = "", ramp = "", step = "", homing = "";
+		string built = "", rate = "", ammo = "", autoFire = "", hop = "", wdrop = "", wraise = "", air = "", airAcc = "", ramp = "", rampSc = "", step = "", homing = "";
 		for ( int i = 0; i < f.Length - 1; i++ ) {
 			if ( f[i] == "version" ) int.TryParse( f[i + 1], out found );
 			else if ( f[i] == "built" && i + 3 < f.Length ) built = $"{f[i + 1]} {f[i + 2]} {f[i + 3]}";
@@ -3249,7 +3285,9 @@ public class MainForm : Form, IMessageFilter {
 			else if ( f[i] == "wdrop" ) wdrop = f[i + 1];
 			else if ( f[i] == "wraise" ) wraise = f[i + 1];
 			else if ( f[i] == "air" ) air = f[i + 1];
+			else if ( f[i] == "airaccel" ) airAcc = f[i + 1];
 			else if ( f[i] == "ramp" ) ramp = f[i + 1];
+			else if ( f[i] == "rampscale" ) rampSc = f[i + 1];
 			else if ( f[i] == "step" ) step = f[i + 1];
 			else if ( f[i] == "homing" ) homing = f[i + 1];
 		}
@@ -3273,13 +3311,21 @@ public class MainForm : Form, IMessageFilter {
 			how += ", Bewegung unbekannt (altes Spielmodul)";
 		} else {
 			if ( hop == "1" ) how += ", Auto-Hop";
-			if ( wraise.Length > 0 && wraise != "0" ) how += $", Waffe hoch in {wraise} ms";
+			if ( wraise.Length > 0 && wraise != "0" && wraise != "250" ) how += $", Waffe hoch in {wraise} ms";
 			if ( wdrop.Length > 0 && wdrop != "0" && wdrop != "200" ) how += $", Waffe weg in {wdrop} ms";
-			// Die Bruchzahlen stehen in Tausendsteln in der Zeile.
+			// Die Bruchzahlen stehen in Tausendsteln in der Zeile. Vor Fassung 20
+			// rechnete das Spiel die Luftsteuerung ohne die CPM-Stärke - dort
+			// drehte sie so gut wie nichts, und das soll hier auch stehen.
 			if ( int.TryParse( air, out var airMilli ) && airMilli > 0 )
-				how += $", Luftsteuerung {airMilli / 1000.0:0.##}";
-			if ( ramp == "1" ) how += ", Rampensprung";
-			if ( int.TryParse( step, out var stepUnits ) && stepUnits > 0 )
+				how += found > 0 && found < 20
+					? $", Luftsteuerung {airMilli / 1000.0:0.##} (vor Fassung 20: wirkungslos schwach)"
+					: $", Luftsteuerung {airMilli / 1000.0:0.##}";
+			if ( int.TryParse( airAcc, out var accMilli ) && accMilli > 0 && accMilli != 1000 )
+				how += $", Luftbeschleunigung {accMilli / 1000.0:0.##}";
+			if ( ramp == "1" )
+				how += int.TryParse( rampSc, out var scMilli ) && scMilli > 0 && scMilli != 1000
+					? $", Rampensprung ×{scMilli / 1000.0:0.##}" : ", Rampensprung";
+			if ( int.TryParse( step, out var stepUnits ) && stepUnits > 0 && stepUnits != 18 )
 				how += $", Schritthöhe {stepUnits}";
 		}
 		// Zielsuch-Raketen stehen außerhalb der Bewegung: sie hängen an einer

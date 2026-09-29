@@ -63,6 +63,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define STAT_MINUS			10	// num frame for '-' stats digit
 
 #define	ICON_SIZE			48
+#undef	CHAR_WIDTH				// ignore define from libc
 #define	CHAR_WIDTH			32
 #define	CHAR_HEIGHT			48
 #define	TEXT_ICON_SPACE		4
@@ -1032,6 +1033,18 @@ typedef struct {
 
 	int				levelStartTime;
 
+	// Quake-Live-Bewegung, wie der Server sie in CS_SYSTEMINFO schickt. Ein
+	// Server, dessen Spielmodul sie nicht kennt, schickt die Schluessel nicht -
+	// dann gilt das Original, nicht der Wert, der hier zuletzt stand.
+	int				qlAutoHop;
+	int				qlWeaponDropTime;
+	int				qlWeaponRaiseTime;
+	float			qlAirControl;
+	float			qlAirAccel;
+	int				qlRampJump;
+	float			qlRampJumpScale;
+	float			qlStepHeight;
+
 	int				scores1, scores2;		// from configstrings
 	int				redflag, blueflag;		// flag status from configstrings
 	int				flagStatus;
@@ -1501,6 +1514,7 @@ void CG_InitConsoleCommands( void );
 //
 void CG_ExecuteNewServerCommands( int latestSequence );
 void CG_ParseServerinfo( void );
+void CG_ParseSysteminfo( void );
 void CG_SetConfigValues( void );
 void CG_ShaderStateChanged(void);
 #ifdef MISSIONPACK

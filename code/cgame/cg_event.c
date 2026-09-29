@@ -623,6 +623,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		DEBUGNAME("EV_STEP");
 	{
 		float	oldStep;
+		float	maxChange;
 		int		delta;
 		int		step;
 
@@ -644,9 +645,20 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 		// add this amount
 		step = 4 * (event - EV_STEP_4 + 1 );
+		// Eine hoehere pmove_StepHeight schickt die wahre Stufe mit, sonst
+		// wuerden von einer 28er Stufe nur 16 geglaettet und 12 sprangen.
+		if ( event == EV_STEP_16 && es->eventParm > step ) {
+			step = es->eventParm;
+		}
 		cg.stepChange = oldStep + step;
-		if ( cg.stepChange > MAX_STEP_CHANGE ) {
-			cg.stepChange = MAX_STEP_CHANGE;
+		// Die Decke bleibt fuer Treppen aus normalen Stufen bei
+		// MAX_STEP_CHANGE; nur eine einzelne hohe Stufe darf sie heben.
+		maxChange = 2 * step;
+		if ( maxChange < MAX_STEP_CHANGE ) {
+			maxChange = MAX_STEP_CHANGE;
+		}
+		if ( cg.stepChange > maxChange ) {
+			cg.stepChange = maxChange;
 		}
 		cg.stepTime = cg.time;
 		break;

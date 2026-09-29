@@ -936,7 +936,7 @@ static qboolean G_HomingSteer( gentity_t *ent ) {
 	float		radius, when, x;
 	gentity_t	*target, *cand;
 	trace_t		tr;
-	int			i, limit;
+	int			i, limit, hunter, hunted;
 
 	dt = ( level.time - level.previousTime ) * 0.001f;
 	speed = VectorLength( ent->s.pos.trDelta );
@@ -1111,8 +1111,18 @@ static qboolean G_HomingSteer( gentity_t *ent ) {
 	// G_RunMissile haengen bleiben koennte. Die gejagte Rakete platzt mit.
 	if ( target ) {
 		radius = Com_Clamp( 0.0f, 1000.0f, g_homingProximity.value );
-		if ( !target->client && radius < HOMING_CONTACT ) {
-			radius = HOMING_CONTACT;
+		if ( !target->client ) {
+			// Eine Rakete hat keinen Koerper und nimmt keinen Schaden: sie
+			// gilt nur dort als abgeschossen, wo die eigene Explosion sie
+			// erreicht - nie weiter als splashRadius, nie weniger als die
+			// Beruehrung. Sonst "schoss" ein Zuender von 300 Raketen ab, an
+			// die keine Explosion herankam.
+			if ( radius > ent->splashRadius ) {
+				radius = ent->splashRadius;
+			}
+			if ( radius < HOMING_CONTACT ) {
+				radius = HOMING_CONTACT;
+			}
 		}
 		if ( radius > 0.0f ) {
 			VectorScale( dir, cur, mvel );
@@ -1137,12 +1147,15 @@ static qboolean G_HomingSteer( gentity_t *ent ) {
 					// Fuer die Auswertung, im Stil der Kill-Zeilen: wessen Rakete
 					// wessen abgeschossen hat. Ohne die Zeile saehe man es nur
 					// daran, dass weniger Raketen treffen.
-					G_LogPrintf( "Intercept: %i %i: %s shot down a rocket of %s\n",
-						ent->r.ownerNum, target->r.ownerNum,
-						g_entities[ent->r.ownerNum].client
-							? g_entities[ent->r.ownerNum].client->pers.netname : "<world>",
-						g_entities[target->r.ownerNum].client
-							? g_entities[target->r.ownerNum].client->pers.netname : "<world>" );
+					// Wie player_die: was kein Spielerplatz ist (ein
+					// Kartenschuetze), steht als <world> mit 1022 da.
+					hunter = ent->r.ownerNum >= 0 && ent->r.ownerNum < MAX_CLIENTS
+						&& g_entities[ent->r.ownerNum].client ? ent->r.ownerNum : ENTITYNUM_WORLD;
+					hunted = target->r.ownerNum >= 0 && target->r.ownerNum < MAX_CLIENTS
+						&& g_entities[target->r.ownerNum].client ? target->r.ownerNum : ENTITYNUM_WORLD;
+					G_LogPrintf( "Intercept: %i %i: %s shot down a rocket of %s\n", hunter, hunted,
+						hunter != ENTITYNUM_WORLD ? g_entities[hunter].client->pers.netname : "<world>",
+						hunted != ENTITYNUM_WORLD ? g_entities[hunted].client->pers.netname : "<world>" );
 					G_HomingBurst( target, at );
 				}
 				// Die Jaegerin ebenso nicht hinter einer Wand: die Spur haelt an

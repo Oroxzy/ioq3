@@ -311,6 +311,28 @@ void	G_TouchTriggers( gentity_t *ent ) {
 
 /*
 =================
+G_SetPmoveQL
+
+Die Quake-Live-Bewegung in ein pmove_t. Jeder Pmove-Aufruf des Servers muss
+hier durch: CG_PredictPlayerState setzt dieselben Felder fuer jede
+vorhergesagte Bewegungsart, auch fuer freie Zuschauer. Fehlte die
+Schritthoehe beim Zuschauer, stiege das cgame auf eine 28er Kante, die der
+Server mit 18 verweigert - und die Sicht sprang bei jeder zurueck.
+=================
+*/
+static void G_SetPmoveQL( pmove_t *pm ) {
+	pm->autoHop = pmove_AutoHop.integer;
+	pm->weaponDropTime = pmove_WeaponDropTime.integer;
+	pm->weaponRaiseTime = pmove_WeaponRaiseTime.integer;
+	pm->airControl = pmove_AirControl.value;
+	pm->airAccel = pmove_AirAccel.value;
+	pm->rampJump = pmove_RampJump.integer;
+	pm->rampJumpScale = pmove_RampJumpScale.value;
+	pm->stepHeight = pmove_StepHeight.value;
+}
+
+/*
+=================
 SpectatorThink
 =================
 */
@@ -340,6 +362,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd ) {
 		pm.tracemask = MASK_PLAYERSOLID & ~CONTENTS_BODY;	// spectators can fly through bodies
 		pm.trace = trap_Trace;
 		pm.pointcontents = trap_PointContents;
+		G_SetPmoveQL( &pm );
 
 		// perform a pmove
 		Pmove (&pm);
@@ -928,16 +951,8 @@ void ClientThink_real( gentity_t *ent ) {
 
 	// Quake-Live-Bewegung. Anders als die Nachladezeit gilt sie fuer alle
 	// gleich, Bots eingeschlossen: es ist die Physik der Welt und keine
-	// Messeinstellung fuer die eigenen Schuesse. Das cgame setzt dieselben
-	// drei Werte aus denselben Cvars, siehe CG_PredictPlayerState.
-	pm.autoHop = pmove_AutoHop.integer;
-	pm.weaponDropTime = pmove_WeaponDropTime.integer;
-	pm.weaponRaiseTime = pmove_WeaponRaiseTime.integer;
-	pm.airControl = pmove_AirControl.value;
-	pm.airAccel = pmove_AirAccel.value;
-	pm.rampJump = pmove_RampJump.integer;
-	pm.rampJumpScale = pmove_RampJumpScale.value;
-	pm.stepHeight = pmove_StepHeight.value;
+	// Messeinstellung fuer die eigenen Schuesse.
+	G_SetPmoveQL( &pm );
 
 	VectorCopy( client->ps.origin, client->oldOrigin );
 

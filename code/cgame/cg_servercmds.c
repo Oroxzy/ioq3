@@ -174,6 +174,34 @@ void CG_ParseServerinfo( void ) {
 }
 
 /*
+================
+CG_ParseSysteminfo
+
+Die Quake-Live-Bewegung so, wie der Server sie laufen laesst. Die eigenen Cvars
+taugen dafuer nicht: die Engine setzt nur die Schluessel, die der Server
+schickt, und laesst alle anderen stehen. Ein Server ohne unser Spielmodul
+schickt keinen davon, und die Vorhersage rechnete mit dem, was hier zuletzt
+stand - Auto-Hop oder Luftsteuerung, die der Server nie macht, und jeder
+Sprung wuerde zurechtgezogen. Fehlt ein Schluessel, gilt das Original.
+================
+*/
+void CG_ParseSysteminfo( void ) {
+	const char	*info;
+	const char	*scale;
+
+	info = CG_ConfigString( CS_SYSTEMINFO );
+	cgs.qlAutoHop = atoi( Info_ValueForKey( info, "pmove_AutoHop" ) );
+	cgs.qlWeaponDropTime = atoi( Info_ValueForKey( info, "pmove_WeaponDropTime" ) );
+	cgs.qlWeaponRaiseTime = atoi( Info_ValueForKey( info, "pmove_WeaponRaiseTime" ) );
+	cgs.qlAirControl = atof( Info_ValueForKey( info, "pmove_AirControl" ) );
+	cgs.qlAirAccel = atof( Info_ValueForKey( info, "pmove_AirAccel" ) );
+	cgs.qlRampJump = atoi( Info_ValueForKey( info, "pmove_RampJump" ) );
+	scale = Info_ValueForKey( info, "pmove_RampJumpScale" );
+	cgs.qlRampJumpScale = *scale ? atof( scale ) : 1.0f;
+	cgs.qlStepHeight = atof( Info_ValueForKey( info, "pmove_StepHeight" ) );
+}
+
+/*
 ==================
 CG_ParseWarmup
 ==================
@@ -241,26 +269,36 @@ void CG_ShaderStateChanged(void) {
 	char timeOffset[16];
 	const char *o;
 	char *n,*t;
+	int length;
 
 	o = CG_ConfigString( CS_SHADERSTATE );
 	while (o && *o) {
 		n = strstr(o, "=");
 		if (n && *n) {
-			strncpy(originalShader, o, n-o);
-			originalShader[n-o] = 0;
+			length = n-o+1;
+			if (length > sizeof(originalShader)) {
+				length = sizeof(originalShader);
+			}
+			Q_strncpyz(originalShader, o, length);
 			n++;
 			t = strstr(n, ":");
 			if (t && *t) {
-				strncpy(newShader, n, t-n);
-				newShader[t-n] = 0;
+				length = t-n+1;
+				if (length > sizeof(newShader)) {
+					length = sizeof(newShader);
+				}
+				Q_strncpyz(newShader, n, length);
 			} else {
 				break;
 			}
 			t++;
 			o = strstr(t, "@");
 			if (o) {
-				strncpy(timeOffset, t, o-t);
-				timeOffset[o-t] = 0;
+				length = o-t+1;
+				if (length > sizeof(timeOffset)) {
+					length = sizeof(timeOffset);
+				}
+				Q_strncpyz(timeOffset, t, length);
 				o++;
 				trap_R_RemapShader( originalShader, newShader, timeOffset );
 			}
@@ -294,6 +332,8 @@ static void CG_ConfigStringModified( void ) {
 		CG_StartMusic();
 	} else if ( num == CS_SERVERINFO ) {
 		CG_ParseServerinfo();
+	} else if ( num == CS_SYSTEMINFO ) {
+		CG_ParseSysteminfo();
 	} else if ( num == CS_WARMUP ) {
 		CG_ParseWarmup();
 	} else if ( num == CS_SCORES1 ) {

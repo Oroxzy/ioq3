@@ -321,6 +321,7 @@ void PM_StepSlideMove( qboolean gravity ) {
 	{
 		// use the step move
 		float	delta;
+		int		height;
 
 		delta = pm->ps->origin[2] - start_o[2];
 		if ( delta > 2 ) {
@@ -330,6 +331,17 @@ void PM_StepSlideMove( qboolean gravity ) {
 				PM_AddEvent( EV_STEP_8 );
 			} else if ( delta < 15 ) {
 				PM_AddEvent( EV_STEP_12 );
+			} else if ( pm->stepHeight > STEPSIZE && delta > 16 ) {
+				// Mit einer hoeheren pmove_StepHeight steigt man mehr als 16 auf
+				// einmal. Die wahre Hoehe faehrt im eventParm mit (8 Bit auf der
+				// Leitung), damit das cgame alles glaettet und nicht nur 16 -
+				// der Rest waere ein Sprung der Kamera. Ohne die Cvar bleibt der
+				// Parameter 0 wie immer.
+				height = (int)( delta + 0.5f );
+				if ( height > 255 ) {
+					height = 255;
+				}
+				BG_AddPredictableEventToPlayerstate( EV_STEP_16, height, pm->ps );
 			} else {
 				PM_AddEvent( EV_STEP_16 );
 			}

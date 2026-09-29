@@ -1055,6 +1055,7 @@ void ClientSpawn(gentity_t *ent) {
 	int		savedPing;
 //	char	*savedAreaBits;
 	int		accuracy_hits, accuracy_shots;
+	int		lastEnemyHurtClient, lastEnemyHurtTime;
 	int		eventSequence;
 	char	userinfo[MAX_INFO_STRING];
 
@@ -1112,6 +1113,10 @@ void ClientSpawn(gentity_t *ent) {
 //	savedAreaBits = client->areabits;
 	accuracy_hits = client->accuracy_hits;
 	accuracy_shots = client->accuracy_shots;
+	// Wer uns zuletzt getroffen hat, ueberlebt den Tod: der naheliegende
+	// Rachefall fuer g_homingPick 3 ist genau der, der uns eben getoetet hat.
+	lastEnemyHurtClient = client->lastEnemyHurtClient;
+	lastEnemyHurtTime = client->lastEnemyHurtTime;
 	for ( i = 0 ; i < MAX_PERSISTANT ; i++ ) {
 		persistant[i] = client->ps.persistant[i];
 	}
@@ -1125,6 +1130,8 @@ void ClientSpawn(gentity_t *ent) {
 //	client->areabits = savedAreaBits;
 	client->accuracy_hits = accuracy_hits;
 	client->accuracy_shots = accuracy_shots;
+	client->lastEnemyHurtClient = lastEnemyHurtClient;
+	client->lastEnemyHurtTime = lastEnemyHurtTime;
 	client->lastkilled_client = -1;
 
 	for ( i = 0 ; i < MAX_PERSISTANT ; i++ ) {
@@ -1324,6 +1331,15 @@ void ClientDisconnect( int clientNum ) {
 		tent = &g_entities[i];
 		if ( tent->inuse && tent->s.eType == ET_MISSILE && tent->r.ownerNum == clientNum ) {
 			tent->homingGen = 1;
+		}
+	}
+	// Und niemand erbt einen Groll gegen diesen Platz: seit lastEnemyHurtClient
+	// den Tod ueberdauert, zeigte er sonst auf den, der das Feld als Naechster
+	// belegt.
+	for ( i = 0 ; i < level.maxclients ; i++ ) {
+		if ( level.clients[i].lastEnemyHurtTime
+			&& level.clients[i].lastEnemyHurtClient == clientNum ) {
+			level.clients[i].lastEnemyHurtTime = 0;
 		}
 	}
 

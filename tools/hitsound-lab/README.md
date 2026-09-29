@@ -477,6 +477,21 @@ es den Spieler bei jedem Sprung zurecht. **Nach einer Änderung an der Bewegung
 muss deshalb `zz-hitpitch.pk3` neu ausgeliefert werden** – seit der
 Zusammenführung mit dem Flexible HUD steckt das cgame mit darin.
 
+Der cgame liest die Werte **aus der Systeminfo des Servers**
+(`CG_ParseSysteminfo`), nicht aus seinen eigenen Cvars. Die Engine setzt nur die
+Schlüssel, die ein Server schickt; ein Server ohne dieses Spielmodul schickt
+keinen davon, und die Vorhersage rechnete sonst mit dem, was zuletzt eingestellt
+war – Auto-Hop und Luftsteuerung, die dieser Server nie macht. Fehlt ein
+Schlüssel, gilt das Original. Auch freie Zuschauer bewegt der Server mit
+derselben Schritthöhe, die der cgame vorhersagt (`G_SetPmoveQL` für jeden
+`Pmove`-Aufruf).
+
+Das Werkzeug schreibt die acht Cvars mit `unset` und `set`, **nicht** mit `seta`:
+sie sind Laboreinstellungen wie `g_selfDamage`. Mit `seta` blieben sie in der
+q3config stehen, und ein Spiel ohne das Labor hatte trotzdem Quake-Live-Bewegung.
+Das `unset` davor räumt ein Archiv-Flag weg, das ein älteres Labor dort
+hinterlassen hat – beim nächsten Beenden verschwinden die Zeilen aus der q3config.
+
 Bei allen Zahlen heißt `0` ausdrücklich *Original*, nicht null: 200/250 ms bei
 den Waffenzeiten, 1,0 bei der Luftbeschleunigung, 18 Einheiten bei der
 Schritthöhe. So muss keine Einstellung wissen, was Quake 3 vorgibt.
@@ -492,6 +507,15 @@ oder 4, also geradeaus oder gerade rückwärts, damit Strafejump unverändert
 bleibt; und das Quadrat des Skalarprodukts geht ein, sodass ein Blick quer zur
 Bewegung gar nichts tut.
 
+Die Stärke ist die von CPM: `cpm_pm_aircontrol` steht im Promode-Code auf 150,
+Xonotics CPMA-Profil nimmt dieselbe Zahl (`PM_AIRCONTROL_STRENGTH`).
+`pmove_AirControl` ist wie in Quake Live nur der Schalter und Faktor darauf – 1 ist
+Race und dreht den Schwung bei 400 u/s bis gut 260 Grad je Sekunde. **Bis
+Protokollfassung 19 fehlte die 150**: `pmove_AirControl 1` drehte kaum zwei Grad
+je Sekunde, weniger als die gewöhnliche Luftbeschleunigung ohnehin. Sitzungen mit
+„Luftsteuerung“ aus dieser Zeit sind also Sitzungen **ohne** spürbare
+Luftsteuerung; die Kopfzeile sagt das dazu.
+
 **Der Rampensprung**: Quake 3 überschreibt beim Sprung die
 Aufwärtsgeschwindigkeit (`velocity[2] = JUMP_VELOCITY`), ein Sprung von einer
 Schräge frisst also genau den Schwung, den die Schräge gerade gegeben hat. Mit
@@ -501,7 +525,12 @@ der Sprung darauf gelegt – nie weniger als ein normaler Sprung, höchstens 700
 
 **Die Schritthöhe** ersetzt `STEPSIZE` in `PM_StepSlideMove`. Beide Stellen dort
 nehmen dieselbe Zahl – die eine tastet nach unten, die andere hebt an; wären sie
-verschieden, stiege man Stufen hinauf, die man nicht gesehen hat.
+verschieden, stiege man Stufen hinauf, die man nicht gesehen hat. Über 18 steigt
+man mehr als 16 Einheiten auf einmal, und das Stufen-Ereignis kannte nur 4, 8, 12
+und 16 – der Rest war ein Ruck der Kamera. Die wahre Höhe fährt jetzt im
+`eventParm` mit, und der cgame glättet sie ganz. Auch die Vorhersage der
+Zielhilfe steigt so hoch wie das Spiel; vorher endete ihr Vorhalt am Fuß jeder
+Stufe, die ein Bot mit 28 einfach hinaufging.
 
 ### Der Abzug, der von selbst drückt
 
@@ -668,7 +697,7 @@ nicht mehr zerfallen.
 | Lebensdauer | `g_homingLifetime` | 15 s | danach zerlegt sie sich in der Luft, mit vollem Splash |
 | Blickkegel | `g_homingCone` | 45° | halber Öffnungswinkel, in dem ein Ziel gesehen wird; 180° sieht nach hinten |
 | jedes Bild neu wählen | `g_homingRetarget` | 0 | 1: jedes Bild neu nach der Zielwahl unten, auch mitten im Anflug |
-| Ziel | `g_homingPick` | 0 | 0 das nächste, 1 der kleinste Winkel zur Flugrichtung – bis zur ersten Wahl vom Abschusspunkt aus gemessen, also wohin du gezielt hast –, 2 am leichtesten zu töten, 3 der Gegner, der dich zuletzt getroffen hat |
+| Ziel | `g_homingPick` | 0 | 0 das nächste, 1 der kleinste Winkel zur Flugrichtung – bis zur ersten Wahl vom Abschusspunkt aus gemessen, also wohin du gezielt hast –, 2 am leichtesten zu töten, 3 der Gegner, der dich zuletzt getroffen hat – auch über deinen Tod hinaus, der Rachefall ist genau der, der dich eben getötet hat |
 | Wer | `g_homingAir` | 0 | 1 nur wer in der Luft ist (Luftabwehr), 2 nur wer am Boden steht – gilt beim Aussuchen; wer schon verfolgt wird, bleibt es beim Aufsetzen, auch mit „jedes Bild neu“ |
 | Jagt | `g_homingMissiles` | 0 | 1 auch gegnerische Raketen, 2 nur Raketen (Abfangjäger) |
 | Vorhalt | `g_homingLead` | 0 % | 100 %: auf den Treffpunkt statt hinter dem Ziel her; wer springt, fällt in der Rechnung mit – bis zum Boden unter ihm |
@@ -683,7 +712,10 @@ nicht mehr zerfallen.
 **Raketen gegen Raketen.** Raketen haben keinen Körper – die Spur, mit der
 `G_RunMissile` Einschläge findet, geht durch eine andere Rakete einfach durch.
 Abgeschossen wird deshalb über den Abstand: kommen sich Jäger und gejagte Rakete
-bis zum nächsten Bild näher als 40 Einheiten, platzen beide. Gerechnet mit der
+bis zum nächsten Bild näher als 40 Einheiten, platzen beide – mit Näherungszünder
+auch weiter, aber höchstens 120, so weit die eigene Explosion reicht; eine Rakete
+außerhalb davon „abzuschießen“ hieße, sie ohne Explosion verschwinden zu lassen.
+Gerechnet mit der
 Relativbewegung, denn zwei Raketen, die sich entgegenfliegen, sind in einem Bild
 90 Einheiten weiter und würden sich zwischen zwei Prüfungen sonst verfehlen. Die
 eigenen Raketen und die der Mitspieler sind nie Ziel. Dieselbe Rechnung dient
@@ -691,7 +723,10 @@ dem Näherungszünder gegen Spieler. Hätte die gejagte Rakete auf dem Weg zum
 Treffpunkt eine Wand oder einen Spieler getroffen, wird nicht abgefangen – sonst
 platzte sie auf der falschen Seite der Wand. Jeder Abschuss steht im games.log
 als `Intercept: <Jäger> <Gejagter>: X shot down a rocket of Y`, im Stil der
-`Kill:`-Zeilen.
+`Kill:`-Zeilen – auch darin, dass ein Kartenschütze als `1022 <world>` dasteht.
+Suchende Raketen bleiben aus der Trefferquoten-Tabelle (`aimrate.cfg`) heraus,
+wie eine veränderte Nachladezeit: ihr Treffer landet nicht im Zeitfenster der
+geraden Rakete.
 
 **Der Vorhalt** löst |d + v·t| = Tempo·t exakt nach t auf. Eine schrittweise
 Näherung liefe bei zwei gleich schnellen Raketen, die sich entgegenkommen, im
@@ -710,7 +745,8 @@ vorher eine Wand, eine kreisende sonst erst nach einer Viertelminute. Geht ein
 Schütze vom Server, zerfallen seine Raketen nicht mehr in Splitter – die
 gehörten sonst dem, der seinen Platz als Nächster belegt.
 
-Das Protokoll stempelt alles davon (Fassung 19: `homing` und danach `hturn hcone
+Das Protokoll stempelt alles davon (seit Fassung 19: `homing` – 0, 1 oder 2, so
+wie `fire_rocket` den Wert liest – und danach `hturn hcone
 hnear hlife hprox hlead harm hfuel hv0 hv1 hramp hdrag hpick hair hwarn hsplit
 hmiss`, Sekunden als Millisekunden, jeder Wert so gelesen, wie das Spielmodul
 ihn liest – auch die Schalter: `g_homingPick 4` ist im Modul „das nächste“ und

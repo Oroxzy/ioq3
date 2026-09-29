@@ -504,7 +504,7 @@ static int	weaponRateEchoed = -1;
 static int	homingEchoed = -1;
 
 void G_UpdateCvars( void ) {
-	int			i;
+	int			i, homing;
 	cvarTable_t	*cv;
 	qboolean remapped = qfalse;
 
@@ -546,8 +546,11 @@ void G_UpdateCvars( void ) {
 	// Dasselbe fuer die Zielsuch-Raketen, fuer den Protokollkopf: sie heben die
 	// Raketenquote so stark, dass Sitzungen mit und ohne nicht in einen Topf
 	// duerfen. Die Engine stempelt diese Cvar und nicht den Wunsch.
-	if ( g_homingRockets.integer != homingEchoed ) {
-		homingEchoed = g_homingRockets.integer;
+	// Gemeldet wird, was fire_rocket daraus macht: jede Zahl ausser 0 schaltet
+	// ein, ab 2 fuer alle. -1 hiesse im Stempel "Modul kennt keine Zielsuche".
+	homing = !g_homingRockets.integer ? 0 : ( g_homingRockets.integer >= 2 ? 2 : 1 );
+	if ( homing != homingEchoed ) {
+		homingEchoed = homing;
 		trap_Cvar_Set( "g_homingActive", va( "%i", homingEchoed ) );
 	}
 }
