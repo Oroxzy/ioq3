@@ -89,6 +89,25 @@ vmCvar_t	g_botCamper;
 vmCvar_t	g_botRethink;
 vmCvar_t	g_botTiming;
 vmCvar_t	g_botRocketJump;
+vmCvar_t	g_botLog;
+vmCvar_t	g_botDroppedWeight;
+vmCvar_t	g_botUnstuck;
+vmCvar_t	g_botAirControl;
+vmCvar_t	g_botStockMask;
+vmCvar_t	g_botDodge;
+vmCvar_t	g_botSteady;
+vmCvar_t	g_botBrave;
+vmCvar_t	g_botHear;
+vmCvar_t	g_botGrab;
+vmCvar_t	g_botHunt;
+vmCvar_t	g_botVariety;
+vmCvar_t	g_botJumper;
+vmCvar_t	g_botCroucher;
+vmCvar_t	g_botReaction;
+vmCvar_t	g_botAimAccuracy;
+vmCvar_t	g_botAimSkill;
+vmCvar_t	g_botAlertness;
+vmCvar_t	g_botFireThrottle;
 vmCvar_t	g_debugAlloc;
 vmCvar_t	g_weaponRespawn;
 vmCvar_t	g_weaponTeamRespawn;
@@ -267,6 +286,49 @@ static cvarTable_t		gameCvarTable[] = {
 	// Haushalten damit ist kein Zierat. 2 laesst zusaetzlich die Ruestungs-
 	// bedingung fallen, fuer wen es krachen soll.
 	{ &g_botRocketJump, "g_botRocketJump", "0", 0, 0, qtrue },
+	// Das Bot-Protokoll: je Denkschritt und Bot eine Zeile nach botlog.log,
+	// dazu jeder Knotenwechsel und jede Zielwahl. Ausgewertet wird es mit
+	// tools/botlog/botlog.pl.
+	{ &g_botLog, "g_botLog", "0", 0, 0, qfalse },
+	// Was ein fallengelassener Gegenstand einem Bot zusaetzlich wert ist. Im
+	// Original sind es tausend Punkte - mehr als jedes Powerup -, und die Bots
+	// laufen jeder Waffe nach, die ein Toter fallen laesst. -1 laesst den Wert
+	// der Bibliothek stehen. Wird beim Laden der Karte gelesen.
+	{ &g_botDroppedWeight, "g_botDroppedWeight", "-1", 0, 0, qfalse },
+	// Steht ein Bot auf einem Fleck ohne Wegnetz - einem Sims, einem Zierrat -,
+	// sucht er den naechsten Boden, auf dem es weitergeht, und geht hin.
+	{ &g_botUnstuck, "g_botUnstuck", "0", 0, 0, qtrue },
+	// In der Luft gegensteuern, wenn die Landung keine ist: ein Bot, den ein
+	// Treffer ueber die Kante wirft, haelt dagegen, statt sich fallen zu lassen.
+	{ &g_botAirControl, "g_botAirControl", "0", 0, 0, qtrue },
+	// Ein Bit je Clientnummer: diese Bots spielen als Original, auch wenn die
+	// Schalter an sind. Nur fuer den Vergleich im selben Spiel.
+	{ &g_botStockMask, "g_botStockMask", "0", 0, 0, qfalse },
+	// Einen Schritt quer zur Flugbahn, wenn eine Rakete auf den Bot zukommt.
+	{ &g_botDodge, "g_botDodge", "0", 0, 0, qtrue },
+	// Sekunden, die eine Entscheidung zwischen Kampf und Rueckzug mindestens
+	// gilt. Im Original kippt sie mit jedem Denkschritt neu.
+	{ &g_botSteady, "g_botSteady", "0", 0, 0, qtrue },
+	// Kampfbereitschaft nach dem, was der Bot wirklich in der Hand hat, statt
+	// nach festen Munitionsschwellen.
+	{ &g_botBrave, "g_botBrave", "0", 0, 0, qtrue },
+	// Die Bots hoeren: wer in Hoerweite schiesst, springt oder landet, wird
+	// bemerkt, auch im Ruecken.
+	{ &g_botHear, "g_botHear", "0", 0, 0, qtrue },
+	// Auch im reinen Kampf nahe Gegenstaende mitnehmen.
+	{ &g_botGrab, "g_botGrab", "0", 0, 0, qtrue },
+	// Ohne Gegner und gut ausgestattet: dorthin gehen, wo zuletzt Laerm war.
+	{ &g_botHunt, "g_botHunt", "0", 0, 0, qtrue },
+	// Prozent der Zielwahlen, bei denen das zweitbeste Ziel genommen wird.
+	{ &g_botVariety, "g_botVariety", "0", 0, 0, qtrue },
+	// Weitere Vorgaben statt Charakterdatei, -1 laesst den Wert aus pak0 stehen.
+	{ &g_botJumper, "g_botJumper", "-1", 0, 0, qtrue },
+	{ &g_botCroucher, "g_botCroucher", "-1", 0, 0, qtrue },
+	{ &g_botReaction, "g_botReaction", "-1", 0, 0, qtrue },
+	{ &g_botAimAccuracy, "g_botAimAccuracy", "-1", 0, 0, qtrue },
+	{ &g_botAimSkill, "g_botAimSkill", "-1", 0, 0, qtrue },
+	{ &g_botAlertness, "g_botAlertness", "-1", 0, 0, qtrue },
+	{ &g_botFireThrottle, "g_botFireThrottle", "-1", 0, 0, qtrue },
 	{ &g_debugAlloc, "g_debugAlloc", "0", 0, 0, qfalse },
 	{ &g_motd, "g_motd", "", 0, 0, qfalse },
 	{ &g_blood, "com_blood", "1", 0, 0, qfalse },

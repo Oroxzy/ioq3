@@ -2218,7 +2218,7 @@ Dauerfeuer in einem fort neu, statt irgendwo anzukommen.
 static void BotHurtRethink(bot_state_t *bs) {
 	int	lost;
 
-	if (!g_botRethink.integer) {
+	if (!BotSw(bs, g_botRethink)) {
 		return;
 	}
 	// frisch gespawnt oder gerade gestorben: da ist nichts umzuplanen
@@ -2232,6 +2232,7 @@ static void BotHurtRethink(bot_state_t *bs) {
 	bs->rethink_time = FloatTime() + 2;
 	// dieselbe Schreibweise, mit der das Spiel die Sperre sonst loest
 	bs->ltg_time = 0;
+	BotLogWhy(bs, "hurt");
 }
 
 /*
@@ -2247,11 +2248,59 @@ Spielmodul, das wir selbst ausliefern. Die Charakterdateien in pak0 bleiben
 unberuehrt; hier wird nur der Wert auf dem Weg nach draussen abgeklemmt.
 ==================
 */
-static float BotChar(bot_state_t *bs, int characteristic, float min, float max, float override) {
-	if (override >= 0.0f) {
+float BotChar(bot_state_t *bs, int characteristic, float min, float max, float override) {
+	if (override >= 0.0f && !BotStock(bs)) {
 		return override;
 	}
 	return trap_Characteristic_BFloat(bs->character, characteristic, min, max);
+}
+
+/*
+==================
+BotBraveAggression
+
+Kaempfen mit dem, was da ist.
+
+Das Original misst die Kampfbereitschaft an festen Schwellen: mehr als fuenf
+Raketen, mehr als zehn Schrotpatronen, mindestens sechzig Leben - und unter
+achtzig Leben zusaetzlich vierzig Ruestung. Wer darunter liegt, hat Aggression
+null und ist auf dem Rueckzug. Gemessen (zehn Bots, q3dm17, je fuenf Minuten)
+sind die Bots damit 66 bis 80 Prozent ihrer Lebenszeit auf dem Rueckzug und 9
+bis 19 Prozent im Kampf: sie laufen ihre Besorgungen ab und schiessen nebenher.
+
+Ein Mensch rechnet anders. Eine Rakete im Lauf ist eine Waffe, fuenf sind es
+erst recht, und ob er sich stellt, haengt daran, was er zusammen aushaelt -
+Leben und Ruestung, wobei die Ruestung zwei Drittel des Schadens schluckt.
+
+Siebzig ist die Schwelle, weil ein Raketenvolltreffer hundert macht: wer
+darunter steht, ist mit einem Treffer weg und mit einem Splash fast. Unter
+vierzig Leben hilft auch Ruestung nicht mehr.
+==================
+*/
+static float BotBraveAggression(bot_state_t *bs) {
+	int		*inv = bs->inventory;
+	float	stack;
+	aas_entityinfo_t entinfo;
+
+	// Wer das Quad traegt, dem stellt sich keiner, der es nicht selbst hat.
+	if (bs->enemy >= 0 && bs->enemy < MAX_CLIENTS) {
+		BotEntityInfo(bs->enemy, &entinfo);
+		if (entinfo.valid && EntityHasQuad(&entinfo)) return 0;
+	}
+	if (inv[INVENTORY_HEALTH] < 40) return 0;
+	stack = inv[INVENTORY_HEALTH] + inv[INVENTORY_ARMOR] * 0.66f;
+	if (stack < 70) return 0;
+
+	if (inv[INVENTORY_BFG10K] > 0 && inv[INVENTORY_BFGAMMO] > 0) return 100;
+	if (inv[INVENTORY_RAILGUN] > 0 && inv[INVENTORY_SLUGS] > 0) return 95;
+	if (inv[INVENTORY_LIGHTNING] > 0 && inv[INVENTORY_LIGHTNINGAMMO] > 20) return 90;
+	if (inv[INVENTORY_ROCKETLAUNCHER] > 0 && inv[INVENTORY_ROCKETS] > 0) return 90;
+	if (inv[INVENTORY_PLASMAGUN] > 0 && inv[INVENTORY_CELLS] > 10) return 85;
+	if (inv[INVENTORY_GRENADELAUNCHER] > 0 && inv[INVENTORY_GRENADES] > 1) return 80;
+	if (inv[INVENTORY_SHOTGUN] > 0 && inv[INVENTORY_SHELLS] > 1) return 60;
+	// Nur das Maschinengewehr: damit stellt sich, wer sonst gut dasteht.
+	if (inv[INVENTORY_MACHINEGUN] > 0 && inv[INVENTORY_BULLETS] > 30 && stack >= 120) return 55;
+	return 0;
 }
 
 float BotAggression(bot_state_t *bs) {
@@ -2274,7 +2323,7 @@ float BotAggression(bot_state_t *bs) {
 	if (bs->inventory[ENEMY_HEIGHT] > 200) {
 		qboolean reaches = qfalse;
 
-		if (g_botFightUp.integer) {
+		if (BotSw(bs, g_botFightUp)) {
 			if (bs->inventory[INVENTORY_ROCKETLAUNCHER] > 0 && bs->inventory[INVENTORY_ROCKETS] > 0) reaches = qtrue;
 			else if (bs->inventory[INVENTORY_RAILGUN] > 0 && bs->inventory[INVENTORY_SLUGS] > 0) reaches = qtrue;
 			else if (bs->inventory[INVENTORY_PLASMAGUN] > 0 && bs->inventory[INVENTORY_CELLS] > 0) reaches = qtrue;
@@ -2282,6 +2331,10 @@ float BotAggression(bot_state_t *bs) {
 			else if (bs->inventory[INVENTORY_BFG10K] > 0 && bs->inventory[INVENTORY_BFGAMMO] > 0) reaches = qtrue;
 		}
 		if (!reaches) return 0;
+	}
+	// Werkbank: nach dem, was der Bot wirklich in der Hand hat
+	if (BotSw(bs, g_botBrave)) {
+		return BotBraveAggression(bs);
 	}
 	//if the bot is very low on health
 	if (bs->inventory[INVENTORY_HEALTH] < 60) return 0;
@@ -2338,6 +2391,61 @@ float BotFeelingBad(bot_state_t *bs) {
 
 /*
 ==================
+BotMood
+
+Eine Entscheidung zwischen Kampf und Rueckzug gilt eine Weile.
+
+Im Original fragen BotWantsToRetreat und BotWantsToChase bei jedem Denkschritt
+dieselbe Zahl ab, und die Zahl haengt an Dingen, die sich mit jedem Treffer und
+jedem Sprung des Gegners aendern: sechzig Leben, zweihundert Einheiten Hoehe.
+Wer um eine dieser Grenzen pendelt, wechselt zehnmal in der Sekunde zwischen
+"zum Ziel laufen" und "den Gegner umkreisen" - gemessen 17 solcher
+Hin-und-Her je Bot und Minute.
+
+Mit g_botSteady gilt eine Entscheidung so viele Sekunden. Eine Ausnahme: wer
+seit der Entscheidung dreissig Leben verloren hat, darf sofort neu entscheiden
+- das ist kein Pendeln, das ist ein Treffer.
+==================
+*/
+static int BotMood(bot_state_t *bs) {
+	float	aggression;
+	int		mood;
+
+	aggression = BotAggression(bs);
+	if (aggression < 50) mood = BOTMOOD_RETREAT;
+	else if (aggression > 50) mood = BOTMOOD_FIGHT;
+	else mood = BOTMOOD_NEUTRAL;
+
+	if (BotVal(bs, g_botSteady) <= 0) {
+		return mood;
+	}
+	// Gehalten wird nicht blind. Die erste Fassung hielt jede Entscheidung,
+	// bis der Bot 30 Leben verloren hatte - ein Bot, der bei 70 Leben den Kampf
+	// beschlossen hatte, focht also bis 41 weiter. Gemessen auf q3dm17, Stufe 5,
+	// ein starker Spieler gegen zehn Bots: gegen dieses Feld kam er auf 1,65
+	// Abschuesse je Tod, ohne das Halten auf 1,52 - das Halten machte die Bots
+	// leichter. Jetzt wie ein Mensch: einen Kampf haelt er nur, solange er dabei
+	// nicht getroffen wird (zehn Leben), einen Rueckzug nur, bis er deutlich
+	// staerker geworden ist (25 Leben und Ruestung). Das Hin und Her bleibt weg.
+	if (mood != bs->mood && bs->mood != BOTMOOD_NONE && bs->mood_time > FloatTime()) {
+		if (bs->mood == BOTMOOD_FIGHT) {
+			if (bs->inventory[INVENTORY_HEALTH] > bs->mood_health - 10) return bs->mood;
+		} else if (bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR]
+			< bs->mood_stack + 25) {
+			return bs->mood;
+		}
+	}
+	if (mood != bs->mood) {
+		bs->mood = mood;
+		bs->mood_time = FloatTime() + BotVal(bs, g_botSteady);
+		bs->mood_health = bs->inventory[INVENTORY_HEALTH];
+		bs->mood_stack = bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR];
+	}
+	return mood;
+}
+
+/*
+==================
 BotWantsToRetreat
 ==================
 */
@@ -2387,7 +2495,7 @@ int BotWantsToRetreat(bot_state_t *bs) {
 	if (bs->ltgtype == LTG_GETFLAG)
 		return qtrue;
 	//
-	if (BotAggression(bs) < 50)
+	if (BotMood(bs) == BOTMOOD_RETREAT)
 		return qtrue;
 	return qfalse;
 }
@@ -2441,7 +2549,7 @@ int BotWantsToChase(bot_state_t *bs) {
 	if (bs->ltgtype == LTG_GETFLAG)
 		return qfalse;
 	//
-	if (BotAggression(bs) > 50)
+	if (BotMood(bs) == BOTMOOD_FIGHT)
 		return qtrue;
 	return qfalse;
 }
@@ -2480,7 +2588,7 @@ int BotCanAndWantsToRocketJump(bot_state_t *bs) {
 	// Klausel IST das Haushalten. Sie bleibt.
 	if (bs->inventory[INVENTORY_HEALTH] < 60) return qfalse;
 	//if not full health
-	if (bs->inventory[INVENTORY_HEALTH] < 90 && g_botRocketJump.integer < 2) {
+	if (bs->inventory[INVENTORY_HEALTH] < 90 && BotSw(bs, g_botRocketJump) < 2) {
 		//if the bot has insufficient armor
 		if (bs->inventory[INVENTORY_ARMOR] < 40) return qfalse;
 	}
@@ -2489,7 +2597,7 @@ int BotCanAndWantsToRocketJump(bot_state_t *bs) {
 	// klesk hat den Wert gar nicht. Das ist Geschmack, keine Vorsicht - und nur
 	// das uebergeht dieser Haken.
 	rocketjumper = BotChar(bs, CHARACTERISTIC_WEAPONJUMPING, 0, 1,
-		g_botRocketJump.integer ? 1.0f : -1.0f);
+		BotSw(bs, g_botRocketJump) ? 1.0f : -1.0f);
 	if (rocketjumper < 0.5) return qfalse;
 	return qtrue;
 }
@@ -2658,6 +2766,7 @@ void BotGoForPowerups(bot_state_t *bs) {
 	//reset the long term goal time so the bot will go for the powerup
 	//NOTE: the long term goal type doesn't change
 	bs->ltg_time = 0;
+	BotLogWhy(bs, "powerup");
 }
 
 /*
@@ -2733,6 +2842,8 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 	attackentity = bs->enemy;
 	//
 	if (bs->attackchase_time > FloatTime()) {
+		// Werkbank: Nummer und Flaggen liest botlib nicht, das Protokoll schon
+		memset(&goal, 0, sizeof(goal));
 		//create the chase goal
 		goal.entitynum = attackentity;
 		goal.areanum = bs->lastenemyareanum;
@@ -2742,7 +2853,7 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 		//initialize the movement state
 		BotSetupForMovement(bs);
 		//move towards the goal
-		trap_BotMoveToGoal(&moveresult, bs->ms, &goal, tfl);
+		BotTravelToGoal(bs, &moveresult, &goal, tfl);
 		return moveresult;
 	}
 	//
@@ -2753,8 +2864,8 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 	// zurueck, erst darueber umkreist er ihn, und erst ueber 0,7 bekommt das
 	// Umkreisen den zufaelligen Rhythmus, den ein Mensch hat.
 	attack_skill = BotChar(bs, CHARACTERISTIC_ATTACK_SKILL, 0, 1, g_botAttackSkill.value);
-	jumper = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_JUMPER, 0, 1);
-	croucher = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_CROUCHER, 0, 1);
+	jumper = BotChar(bs, CHARACTERISTIC_JUMPER, 0, 1, g_botJumper.value);
+	croucher = BotChar(bs, CHARACTERISTIC_CROUCHER, 0, 1, g_botCroucher.value);
 	//if the bot is really stupid
 	if (attack_skill < 0.2) return moveresult;
 	//initialize the movement state
@@ -2774,18 +2885,8 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 			movetype = MOVE_JUMP;
 			// Werkbank: der Kampfsprung ist ein Wuerfelwurf gegen die
 			// Sprungfreude des Charakters und hat mit dem Weg nichts zu tun -
-			// ueber einem Abgrund ist er schlicht ein Sturz. Der Weg nach der
-			// Karte laeuft hier nicht durch, also kann das keine Strecke sperren.
-			if (g_botEdgeCare.integer) {
-				vec3_t vel, dir;
-
-				VectorCopy(bs->cur_ps.velocity, vel);
-				vel[2] = 0;
-				if (VectorNormalize2(vel, dir) < 40) VectorCopy(forward, dir);
-				dir[2] = 0;
-				VectorNormalize(dir);
-				if (!BotGroundAhead(bs, dir, 220)) movetype = MOVE_WALK;
-			}
+			// ueber einem Abgrund ist er schlicht ein Sturz. Ob er einer wird,
+			// rechnet der Tritt aus (BotFooting), sobald die Richtung feststeht.
 		}
 		//wait at least one second before crouching again
 		else if (bs->attackcrouch_time < FloatTime() - 1 && random() < croucher) {
@@ -2859,6 +2960,22 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 				VectorAdd(sideward, backward, sideward);
 			}
 		}
+		// Werkbank: botlib prueft diese Richtung mit dem Wegnetz, und das kennt
+		// weder Todeszonen noch den Boden eines Lavasees - beides ist dort
+		// Grund, auf dem man landen kann. Der Tritt (BotFooting) haelt den Bot
+		// zwar an der Kante fest, aber dann steht er im Gefecht still. Also
+		// hier schon fragen, und bei Leere die andere Seite nehmen.
+		if (BotSw(bs, g_botEdgeCare)) {
+			vec3_t dir;
+
+			VectorCopy(sideward, dir);
+			dir[2] = 0;
+			if (VectorNormalize(dir) > 0 && !BotGroundAhead(bs, dir, 72)) {
+				bs->flags ^= BFL_STRAFERIGHT;
+				bs->attackstrafe_time = 0;
+				continue;
+			}
+		}
 		//perform the movement
 		if (trap_BotMoveInDirection(bs->ms, sideward, 400, movetype))
 			return moveresult;
@@ -2881,7 +2998,8 @@ bot_moveresult_t BotAttackMove(bot_state_t *bs, int tfl) {
 	// Zweig toter Code. Hier wird sie gesetzt - aber eine halbe Sekunde und
 	// nicht sechs: sechs Sekunden machen aus jedem Scharmuetzel eine Verfolgung,
 	// eine halbe reicht, um den naechsten Denkschritt in Bewegung zu bringen.
-	if (g_botEdgeCare.integer) {
+	bs->log_flags |= BOTLOG_NOMOVE;
+	if (BotSw(bs, g_botEdgeCare)) {
 		bs->attackchase_time = FloatTime() + 0.5f;
 	}
 	return moveresult;
@@ -3062,7 +3180,7 @@ int BotFindEnemy(bot_state_t *bs, int curenemy) {
 	aas_entityinfo_t entinfo, curenemyinfo;
 	vec3_t dir, angles;
 
-	alertness = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_ALERTNESS, 0, 1);
+	alertness = BotChar(bs, CHARACTERISTIC_ALERTNESS, 0, 1, g_botAlertness.value);
 	easyfragger = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_EASY_FRAGGER, 0, 1);
 	//check if the health decreased
 	healthdecrease = bs->lasthealth > bs->inventory[INVENTORY_HEALTH];
@@ -3146,7 +3264,8 @@ int BotFindEnemy(bot_state_t *bs, int curenemy) {
 		//if on the same team
 		if (BotSameTeam(bs, i)) continue;
 		//if the bot's health decreased or the enemy is shooting
-		if (curenemy < 0 && (healthdecrease || EntityIsShooting(&entinfo)))
+		// Werkbank: oder zu hoeren ist
+		if (curenemy < 0 && (healthdecrease || EntityIsShooting(&entinfo) || BotHeard(bs, i)))
 			f = 360;
 		else
 			f = 90 + 90 - (90 - (squaredist > Square(810) ? Square(810) : squaredist) / (810 * 9));
@@ -3429,12 +3548,12 @@ void BotAimAtEnemy(bot_state_t *bs) {
 	//
 	//BotAI_Print(PRT_MESSAGE, "client %d: aiming at client %d\n", bs->entitynum, bs->enemy);
 	//
-	aim_skill = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_AIM_SKILL, 0, 1);
-	aim_accuracy = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_AIM_ACCURACY, 0, 1);
+	aim_skill = BotChar(bs, CHARACTERISTIC_AIM_SKILL, 0, 1, g_botAimSkill.value);
+	aim_accuracy = BotChar(bs, CHARACTERISTIC_AIM_ACCURACY, 0, 1, g_botAimAccuracy.value);
 	//
 	if (aim_skill > 0.95) {
 		//don't aim too early
-		reactiontime = 0.5 * trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_REACTIONTIME, 0, 1);
+		reactiontime = 0.5 * BotChar(bs, CHARACTERISTIC_REACTIONTIME, 0, 1, g_botReaction.value);
 		if (bs->enemysight_time > FloatTime() - reactiontime) return;
 		if (bs->teleport_time > FloatTime() - reactiontime) return;
 	}
@@ -3470,6 +3589,10 @@ void BotAimAtEnemy(bot_state_t *bs) {
 		aim_accuracy = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_AIM_ACCURACY_BFG10K, 0, 1);
 		aim_skill = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_AIM_SKILL_BFG10K, 0, 1);
 	}
+	// Werkbank: eine Vorgabe gilt fuer jede Waffe, sonst haette sie bei genau
+	// den acht Waffen keine Wirkung, die einen eigenen Wert mitbringen
+	if (!BotStock(bs) && g_botAimAccuracy.value >= 0) aim_accuracy = g_botAimAccuracy.value;
+	if (!BotStock(bs) && g_botAimSkill.value >= 0) aim_skill = g_botAimSkill.value;
 	//
 	if (aim_accuracy <= 0) aim_accuracy = 0.0001f;
 	//get the enemy entity information
@@ -3714,14 +3837,14 @@ void BotCheckAttack(bot_state_t *bs) {
 #endif
 	}
 	//
-	reactiontime = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_REACTIONTIME, 0, 1);
+	reactiontime = BotChar(bs, CHARACTERISTIC_REACTIONTIME, 0, 1, g_botReaction.value);
 	if (bs->enemysight_time > FloatTime() - reactiontime) return;
 	if (bs->teleport_time > FloatTime() - reactiontime) return;
 	//if changing weapons
 	if (bs->weaponchange_time > FloatTime() - 0.1) return;
 	//check fire throttle characteristic
 	if (bs->firethrottlewait_time > FloatTime()) return;
-	firethrottle = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_FIRETHROTTLE, 0, 1);
+	firethrottle = BotChar(bs, CHARACTERISTIC_FIRETHROTTLE, 0, 1, g_botFireThrottle.value);
 	if (bs->firethrottleshoot_time < FloatTime()) {
 		if (random() > firethrottle) {
 			bs->firethrottlewait_time = FloatTime() + firethrottle;
@@ -4653,7 +4776,7 @@ void BotAIBlocked(bot_state_t *bs, bot_moveresult_t *moveresult, int activate) {
 		// just reset goals and hope the bot will go into another direction?
 		// is this still needed??
 		if (bs->ainode == AINode_Seek_NBG) bs->nbg_time = 0;
-		else if (bs->ainode == AINode_Seek_LTG) bs->ltg_time = 0;
+		else if (bs->ainode == AINode_Seek_LTG) { bs->ltg_time = 0; BotLogWhy(bs, "blocked"); }
 	}
 }
 
@@ -4892,6 +5015,93 @@ void BotCheckForKamikazeBody(bot_state_t *bs, entityState_t *state) {
 
 /*
 ==================
+BotHearNoise
+
+Die Bots sind im Original taub. Jedes Geraeusch - Schuss, Sprung, Landung,
+Schritt, Aufsammeln - faellt in BotCheckEvents in denselben leeren Zweig, ueber
+dem id Softwares eigenes FIXME steht. Das einzige Feuerzeichen, das sie kennen,
+ist EF_FIRING, und das steht nur, solange die Taste gehalten wird.
+
+Hier wird gehoert. Die Reichweiten sind nach Lautstaerke gestaffelt; wer geht
+oder geduckt laeuft, macht in Quake 3 keine Schrittgeraeusche und bleibt
+deshalb auch fuer die Bots lautlos. Gehoert wird nur, was im Schnappschuss des
+Bots steht, also was der Server auch einem Menschen an dieser Stelle schicken
+wuerde.
+
+Hoeren heisst nicht sehen: BotFindEnemy nimmt einen Gehoerten nur dann zum
+Gegner, wenn zwischen beiden freie Sicht ist. Aber er muss dafuer nicht mehr
+im Blickfeld stehen.
+==================
+*/
+static void BotHearNoise(bot_state_t *bs, entityState_t *state, int event) {
+	float	range;
+	vec3_t	dir;
+
+	if (!BotSw(bs, g_botHear)) {
+		return;
+	}
+	// nur, was an einem Spieler haengt, und nicht der Bot selbst
+	if (state->eType > ET_EVENTS || state->number < 0 || state->number >= MAX_CLIENTS
+		|| state->number == bs->client) {
+		return;
+	}
+	if (BotSameTeam(bs, state->number)) {
+		return;
+	}
+	switch (event) {
+		case EV_FIRE_WEAPON:
+			range = (state->weapon == WP_GAUNTLET) ? 500 : 1500;
+			break;
+		case EV_JUMP_PAD:
+		case EV_TAUNT:
+			range = 1000;
+			break;
+		case EV_FALL_MEDIUM:
+		case EV_FALL_FAR:
+		case EV_ITEM_PICKUP:
+		case EV_GLOBAL_ITEM_PICKUP:
+			range = 800;
+			break;
+		case EV_JUMP:
+		case EV_FALL_SHORT:
+		case EV_FOOTSPLASH:
+		case EV_FOOTWADE:
+		case EV_SWIM:
+		case EV_WATER_TOUCH:
+		case EV_WATER_LEAVE:
+			range = 600;
+			break;
+		case EV_FOOTSTEP:
+		case EV_FOOTSTEP_METAL:
+			range = 400;
+			break;
+		default:
+			range = 300;
+			break;
+	}
+	VectorSubtract(state->pos.trBase, bs->origin, dir);
+	if (VectorLengthSquared(dir) > Square(range)) {
+		return;
+	}
+	bs->heard_time[state->number] = FloatTime();
+	VectorCopy(state->pos.trBase, bs->noise_origin);
+	bs->noise_time = FloatTime();
+}
+
+/*
+==================
+BotHeard
+==================
+*/
+qboolean BotHeard(bot_state_t *bs, int client) {
+	if (!BotSw(bs, g_botHear) || client < 0 || client >= MAX_CLIENTS) {
+		return qfalse;
+	}
+	return (bs->heard_time[client] > 0 && bs->heard_time[client] > FloatTime() - 1.0f);
+}
+
+/*
+==================
 BotCheckEvents
 ==================
 */
@@ -5117,6 +5327,8 @@ void BotCheckEvents(bot_state_t *bs, entityState_t *state) {
 		case EV_CHANGE_WEAPON:
 		case EV_FIRE_WEAPON:
 			//FIXME: either add to sound queue or mark player as someone making noise
+			// Werkbank: genau das
+			BotHearNoise(bs, state, event);
 			break;
 		case EV_USE_ITEM0:
 		case EV_USE_ITEM1:

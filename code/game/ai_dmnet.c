@@ -100,12 +100,62 @@ void BotRecordNodeSwitch(bot_state_t *bs, char *node, char *str, char *s) {
 
 	ClientName(bs->client, netname, sizeof(netname));
 	Com_sprintf(nodeswitch[numnodeswitches], 144, "%s at %2.1f entered %s: %s from %s\n", netname, FloatTime(), node, str, s);
+	// Werkbank: jeder Knotenwechsel mit seinem Grund ins Bot-Protokoll
+	bs->log_switches++;
+	BotLogPrintf("S %i %i %s | %s\n", level.time, bs->client, node, s);
 #ifdef DEBUG
 	if (0) {
 		BotAI_Print(PRT_MESSAGE, "%s", nodeswitch[numnodeswitches]);
 	}
 #endif //DEBUG
 	numnodeswitches++;
+}
+
+/*
+==================
+BotNodeName
+
+Der Knoten, in dem ein Bot gerade steckt, als Kuerzel fuer das Bot-Protokoll.
+==================
+*/
+char *BotNodeName(bot_state_t *bs) {
+	if (bs->ainode == AINode_Seek_LTG) return "LTG";
+	if (bs->ainode == AINode_Seek_NBG) return "NBG";
+	if (bs->ainode == AINode_Battle_Fight) return "FIGHT";
+	if (bs->ainode == AINode_Battle_Chase) return "CHASE";
+	if (bs->ainode == AINode_Battle_Retreat) return "RETREAT";
+	if (bs->ainode == AINode_Battle_NBG) return "BNBG";
+	if (bs->ainode == AINode_Seek_ActivateEntity) return "ACT";
+	if (bs->ainode == AINode_Stand) return "STAND";
+	if (bs->ainode == AINode_Respawn) return "RESPAWN";
+	if (bs->ainode == AINode_Observer) return "OBS";
+	if (bs->ainode == AINode_Intermission) return "INTER";
+	return "NONE";
+}
+
+/*
+==================
+BotLogGoal
+
+Welches Ziel gewaehlt wurde - oder dass keines zu finden war.
+==================
+*/
+static void BotLogGoal(bot_state_t *bs, char *kind) {
+	bot_goal_t goal;
+	char buf[64];
+	char *why;
+
+	// der Grund gilt fuer genau eine Wahl, und nur, solange er frisch ist
+	why = (bs->log_why && bs->log_why_time >= FloatTime() - 0.25) ? bs->log_why : "time";
+	bs->log_why = NULL;
+	if (!g_botLog.integer) return;
+	if (!trap_BotGetTopGoal(bs->gs, &goal)) {
+		BotLogPrintf("G %i %i - 0 0 0 0 0 %s | none\n", level.time, bs->client, why);
+		return;
+	}
+	trap_BotGoalName(goal.number, buf, sizeof(buf));
+	BotLogPrintf("G %i %i %s %i %i %.0f %.0f %.0f %s | %s\n", level.time, bs->client, kind,
+		goal.number, goal.flags, goal.origin[0], goal.origin[1], goal.origin[2], why, buf);
 }
 
 /*
@@ -208,6 +258,7 @@ int BotNearbyGoal(bot_state_t *bs, int tfl, bot_goal_t *ltg, float range) {
 	}
 	//
 	ret = trap_BotChooseNBGItem(bs->gs, bs->origin, bs->inventory, tfl, ltg, range);
+	if (ret) BotLogGoal(bs, "N");
 	/*
 	if (ret)
 	{
@@ -226,13 +277,65 @@ int BotNearbyGoal(bot_state_t *bs, int tfl, bot_goal_t *ltg, float range) {
 BotReachedGoal
 ==================
 */
+/*
+==================
+BotGoalReturnsSoon
+
+Liegt das Ziel gerade nicht da, kommt aber in den naechsten Sekunden wieder?
+
+Das Mitzaehlen (g_botTiming) schickt einen Bot rechtzeitig los, damit er da
+ist, wenn der Gegenstand wiederkommt. Genau dann sieht er aber die leere
+Stelle, und das Original wertet eine leere Stelle als "Ziel erledigt": der Bot
+dreht ab, zwei Sekunden bevor das Quad erscheint. Gemessen sind 68 bis 81
+Prozent aller Zielwahlen die Folge eines Ziels, das "nicht da" war.
+
+Gewartet wird nur auf das, worauf auch ein Mensch wartet, und hoechstens zwei
+Sekunden: Powerups, Ruestung, die grossen Medipacks, und eine Waffe, die der
+Bot noch nicht hat. Fuer eine Munitionskiste bleibt niemand stehen, und fuer
+eine Waffe, die er schon traegt, auch nicht - die erste Fassung wartete auf
+jede Waffe, und auf einer Karte, auf der alle fuenf Sekunden ein Raketenwerfer
+wiederkommt, standen die Bots dann an den Sockeln herum.
+==================
+*/
+static qboolean BotGoalReturnsSoon(bot_state_t *bs, bot_goal_t *goal) {
+	gentity_t	*ent;
+
+	if (!BotSw(bs, g_botTiming)) {
+		return qfalse;
+	}
+	if (goal->entitynum < MAX_CLIENTS || goal->entitynum >= MAX_GENTITIES) {
+		return qfalse;
+	}
+	ent = &g_entities[goal->entitynum];
+	if (!ent->inuse || !ent->item || ent->think != RespawnItem) {
+		return qfalse;
+	}
+	// liegt er da, gibt es nichts zu warten
+	if (!(ent->r.svFlags & SVF_NOCLIENT)) {
+		return qfalse;
+	}
+	// Die Wiederkehr muss anstehen: bei einer "team"-Gruppe laesst RespawnItem
+	// ein anderes Mitglied erscheinen, und dieses hier bleibt verborgen mit
+	// abgelaufener Uhr - darauf wuerde ein Bot sonst warten, bis seine
+	// Zielsperre ablaeuft.
+	if (ent->nextthink <= level.time || ent->nextthink - level.time > 2000) {
+		return qfalse;
+	}
+	return BotItemWorthWaiting(bs, ent->item);
+}
+
 int BotReachedGoal(bot_state_t *bs, bot_goal_t *goal) {
+	// Werkbank: gleich ist er wieder da - hingehen und dort sein
+	if ((goal->flags & GFL_ITEM) && BotGoalReturnsSoon(bs, goal)) {
+		return qfalse;
+	}
 	if (goal->flags & GFL_ITEM) {
 		//if touching the goal
 		if (trap_BotTouchingGoal(bs->origin, goal)) {
 			if (!(goal->flags & GFL_DROPPED)) {
 				trap_BotSetAvoidGoalTime(bs->gs, goal->number, -1);
 			}
+			BotLogWhy(bs, "touch");
 			return qtrue;
 		}
 		//if the goal isn't there
@@ -248,6 +351,7 @@ int BotReachedGoal(bot_state_t *bs, bot_goal_t *goal) {
 					return qtrue;
 			}
 			*/
+			BotLogWhy(bs, "gone");
 			return qtrue;
 		}
 		//if in the goal area and below or above the goal and not swimming
@@ -255,6 +359,7 @@ int BotReachedGoal(bot_state_t *bs, bot_goal_t *goal) {
 			if (bs->origin[0] > goal->origin[0] + goal->mins[0] && bs->origin[0] < goal->origin[0] + goal->maxs[0]) {
 				if (bs->origin[1] > goal->origin[1] + goal->mins[1] && bs->origin[1] < goal->origin[1] + goal->maxs[1]) {
 					if (!trap_AAS_Swimming(bs->origin)) {
+						BotLogWhy(bs, "inarea");
 						return qtrue;
 					}
 				}
@@ -279,11 +384,128 @@ int BotReachedGoal(bot_state_t *bs, bot_goal_t *goal) {
 BotGetItemLongTermGoal
 ==================
 */
+/*
+==================
+BotSecondChoice
+
+Das zweitbeste Ziel statt des besten.
+
+Die Zielwahl ist im Original streng: Gewicht durch Wegzeit, das hoechste
+gewinnt, jedes Mal. Zwei Bots mit demselben Inventar an derselben Stelle
+laufen deshalb denselben Weg zum selben Gegenstand, und wer ein paar Runden
+zugesehen hat, weiss, wo sie als Naechstes auftauchen.
+
+Die Wahl selbst liegt in botlib und laesst sich von hier nicht gewichten. Aber
+sie traegt jedes gewaehlte Ziel in die Vermeidungsliste ein - eine zweite Wahl
+gleich danach liefert also von selbst das Zweitbeste. Das Erste wird danach
+wieder freigegeben, sonst waere es dreissig Sekunden gesperrt, ohne dass der
+Bot je dort war.
+
+Nicht abgewichen wird, wenn es ernst ist: unter siebzig aus Leben und
+Ruestung nimmt der Bot, was er braucht, und ein Powerup laesst niemand liegen.
+==================
+*/
+static void BotSecondChoice(bot_state_t *bs, int tfl) {
+	bot_goal_t	first;
+	gentity_t	*ent;
+
+	if (BotSw(bs, g_botVariety) <= 0 || random() * 100 >= BotSw(bs, g_botVariety)) {
+		return;
+	}
+	if (bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR] * 0.66f < 70) {
+		return;
+	}
+	if (!trap_BotGetTopGoal(bs->gs, &first)) {
+		return;
+	}
+	if (first.entitynum >= MAX_CLIENTS && first.entitynum < MAX_GENTITIES) {
+		ent = &g_entities[first.entitynum];
+		if (ent->inuse && ent->item && ent->item->giType == IT_POWERUP) {
+			return;
+		}
+	}
+	trap_BotPopGoal(bs->gs);
+	if (!trap_BotChooseLTGItem(bs->gs, bs->origin, bs->inventory, tfl)) {
+		// es gab kein zweites
+		trap_BotPushGoal(bs->gs, &first);
+		return;
+	}
+	trap_BotRemoveFromAvoidGoals(bs->gs, first.number);
+}
+
+/*
+==================
+BotHuntGoal
+
+Dorthin gehen, wo zuletzt Laerm war.
+
+Ein Bot ohne Gegner geht im Original zum naechsten Gegenstand, der ihm etwas
+wert ist - auch wenn er alles hat und zwei Raeume weiter geschossen wird. Ein
+Mensch, der gut dasteht, geht dem Laerm nach.
+
+Das Ziel ist kein Gegenstand, sondern die Stelle, an der zuletzt etwas zu
+hoeren war; erreicht ist es, wenn der Bot dort steht. Meist kommt es nicht so
+weit, weil er unterwegs jemanden sieht.
+==================
+*/
+static qboolean BotHuntGoal(bot_state_t *bs) {
+	bot_goal_t	goal;
+	int			areanum;
+	vec3_t		spot, below;
+	vec3_t		mins = {-15, -15, -24}, maxs = {15, 15, 32};
+	trace_t		tr;
+
+	if (!BotSw(bs, g_botHunt) || !BotSw(bs, g_botHear)) {
+		return qfalse;
+	}
+	if (bs->enemy >= 0 || bs->noise_time <= 0 || bs->noise_time < FloatTime() - 6) {
+		return qfalse;
+	}
+	// nur, wer sich auch stellen wuerde
+	if (BotAggression(bs) <= 50) {
+		return qfalse;
+	}
+	// Wer schiesst, waehrend er vom Sprungfeld fliegt, macht seinen Laerm in
+	// der Luft. Dorthin kommt kein Bot - erreicht ist ein Ziel, wenn er es
+	// beruehrt, und unter einem Punkt in der Luft stuende er, bis die
+	// Zielsperre ablaeuft. Also die Stelle darunter, auf der man stehen kann.
+	// Ein Stueck ueber dem Geraeusch anfangen: wer auf dem Boden steht,
+	// beruehrt ihn mit dem Koerper, und eine Probe, die im Boden beginnt,
+	// gilt als gescheitert - gemessen blieben so von dreissig Jagden je
+	// Lauf vier uebrig.
+	VectorCopy(bs->noise_origin, spot);
+	spot[2] += 32;
+	VectorCopy(spot, below);
+	below[2] -= 544;
+	trap_Trace(&tr, spot, mins, maxs, below, ENTITYNUM_NONE, MASK_PLAYERSOLID);
+	if (tr.startsolid || tr.fraction >= 1.0f) {
+		return qfalse;
+	}
+	VectorCopy(tr.endpos, spot);
+	areanum = BotPointAreaNum(spot);
+	if (!areanum || !trap_AAS_AreaReachability(areanum)) {
+		return qfalse;
+	}
+	if (!trap_AAS_AreaTravelTimeToGoalArea(bs->areanum, bs->origin, areanum, bs->tfl)) {
+		return qfalse;
+	}
+	memset(&goal, 0, sizeof(goal));
+	goal.areanum = areanum;
+	VectorCopy(spot, goal.origin);
+	VectorSet(goal.mins, -8, -8, -8);
+	VectorSet(goal.maxs, 8, 8, 8);
+	trap_BotPushGoal(bs->gs, &goal);
+	// einmal nachsehen genuegt: dasselbe Geraeusch loest keine zweite Jagd aus
+	bs->noise_time = 0;
+	return qtrue;
+}
+
 int BotGetItemLongTermGoal(bot_state_t *bs, int tfl, bot_goal_t *goal) {
 	//if the bot has no goal
 	if (!trap_BotGetTopGoal(bs->gs, goal)) {
 		//BotAI_Print(PRT_MESSAGE, "no ltg on stack\n");
 		bs->ltg_time = 0;
+		if (bs->log_why_time < FloatTime() - 0.25) BotLogWhy(bs, "nogoal");
 	}
 	//if the bot touches the current goal
 	else if (BotReachedGoal(bs, goal)) {
@@ -295,9 +517,17 @@ int BotGetItemLongTermGoal(bot_state_t *bs, int tfl, bot_goal_t *goal) {
 		//pop the current goal from the stack
 		trap_BotPopGoal(bs->gs);
 		//BotAI_Print(PRT_MESSAGE, "%s: choosing new ltg\n", ClientName(bs->client, netname, sizeof(netname)));
+		// Werkbank: dem Laerm nach, wenn der Bot gut dasteht
+		if (BotHuntGoal(bs)) {
+			bs->ltg_time = FloatTime() + 8;
+			BotLogGoal(bs, "H");
+			return trap_BotGetTopGoal(bs->gs, goal);
+		}
 		//choose a new goal
 		//BotAI_Print(PRT_MESSAGE, "%6.1f client %d: BotChooseLTGItem\n", FloatTime(), bs->client);
 		if (trap_BotChooseLTGItem(bs->gs, bs->origin, bs->inventory, tfl)) {
+			// Werkbank: nicht jedes Mal dasselbe
+			BotSecondChoice(bs, tfl);
 			/*
 			char buf[128];
 			//get the goal at the top of the stack
@@ -306,6 +536,7 @@ int BotGetItemLongTermGoal(bot_state_t *bs, int tfl, bot_goal_t *goal) {
 			BotAI_Print(PRT_MESSAGE, "%1.1f: new long term goal %s\n", FloatTime(), buf);
             */
 			bs->ltg_time = FloatTime() + 20;
+			BotLogGoal(bs, "L");
 		}
 		else {//the bot gets sorta stuck with all the avoid timings, shouldn't happen though
 			//
@@ -314,6 +545,7 @@ int BotGetItemLongTermGoal(bot_state_t *bs, int tfl, bot_goal_t *goal) {
 
 			BotAI_Print(PRT_MESSAGE, "%s: no valid ltg (probably stuck)\n", ClientName(bs->client, netname, sizeof(netname)));
 #endif
+			BotLogGoal(bs, "-");
 			//trap_BotDumpAvoidGoals(bs->gs);
 			//reset the avoid goals and the avoid reach
 			trap_BotResetAvoidGoals(bs->gs);
@@ -1570,7 +1802,7 @@ int AINode_Seek_ActivateEntity(bot_state_t *bs) {
 		//initialize the movement state
 		BotSetupForMovement(bs);
 		//move towards the goal
-		trap_BotMoveToGoal(&moveresult, bs->ms, goal, bs->tfl);
+		BotTravelToGoal(bs, &moveresult, goal, bs->tfl);
 		//if the movement failed
 		if (moveresult.failure) {
 			//reset the avoid reach, otherwise bot is stuck in current area
@@ -1644,6 +1876,29 @@ int AINode_Seek_ActivateEntity(bot_state_t *bs) {
 		}
 		BotClearActivateGoalStack(bs);
 	}
+	return qtrue;
+}
+
+/*
+==================
+BotLookAtNoise
+
+Wer etwas hoert und niemanden sieht, dreht den Kopf dorthin. Das ist mehr als
+Zierde: was ein Bot sieht, haengt an seinem Blickfeld.
+==================
+*/
+static qboolean BotLookAtNoise(bot_state_t *bs) {
+	vec3_t dir;
+
+	if (!BotSw(bs, g_botHear) || bs->noise_time <= 0 || bs->noise_time < FloatTime() - 0.8f) {
+		return qfalse;
+	}
+	VectorSubtract(bs->noise_origin, bs->eye, dir);
+	if (VectorLengthSquared(dir) < Square(48)) {
+		return qfalse;
+	}
+	vectoangles(dir, bs->ideal_viewangles);
+	bs->ideal_viewangles[2] *= 0.5;
 	return qtrue;
 }
 
@@ -1734,7 +1989,7 @@ int AINode_Seek_NBG(bot_state_t *bs) {
 	//initialize the movement state
 	BotSetupForMovement(bs);
 	//move towards the goal
-	trap_BotMoveToGoal(&moveresult, bs->ms, &goal, bs->tfl);
+	BotTravelToGoal(bs, &moveresult, &goal, bs->tfl);
 	//if the movement failed
 	if (moveresult.failure) {
 		//reset the avoid reach, otherwise bot is stuck in current area
@@ -1757,6 +2012,9 @@ int AINode_Seek_NBG(bot_state_t *bs) {
 			vectoangles(dir, bs->ideal_viewangles);
 			bs->ideal_viewangles[2] *= 0.5;
 		}
+	}
+	else if (!(bs->flags & BFL_IDEALVIEWSET) && BotLookAtNoise(bs)) {
+		// Werkbank: dem Geraeusch nachsehen
 	}
 	else if (!(bs->flags & BFL_IDEALVIEWSET)) {
 		if (!trap_BotGetSecondGoal(bs->gs, &goal)) trap_BotGetTopGoal(bs->gs, &goal);
@@ -1886,6 +2144,7 @@ int AINode_Seek_LTG(bot_state_t *bs)
 	BotTeamGoals(bs, qfalse);
 	//get the current long term goal
 	if (!BotLongTermGoal(bs, bs->tfl, qfalse, &goal)) {
+		bs->log_flags |= BOTLOG_NOGOAL;
 		return qtrue;
 	}
 	//check for nearby goals periodicly
@@ -1933,13 +2192,14 @@ int AINode_Seek_LTG(bot_state_t *bs)
 	//initialize the movement state
 	BotSetupForMovement(bs);
 	//move towards the goal
-	trap_BotMoveToGoal(&moveresult, bs->ms, &goal, bs->tfl);
+	BotTravelToGoal(bs, &moveresult, &goal, bs->tfl);
 	//if the movement failed
 	if (moveresult.failure) {
 		//reset the avoid reach, otherwise bot is stuck in current area
 		trap_BotResetAvoidReach(bs->ms);
 		//BotAI_Print(PRT_MESSAGE, "movement failure %d\n", moveresult.traveltype);
 		bs->ltg_time = 0;
+		BotLogWhy(bs, "movefail");
 	}
 	//
 	BotAIBlocked(bs, &moveresult, qtrue);
@@ -1957,6 +2217,9 @@ int AINode_Seek_LTG(bot_state_t *bs)
 			vectoangles(dir, bs->ideal_viewangles);
 			bs->ideal_viewangles[2] *= 0.5;
 		}
+	}
+	else if (!(bs->flags & BFL_IDEALVIEWSET) && BotLookAtNoise(bs)) {
+		// Werkbank: dem Geraeusch nachsehen
 	}
 	else if (!(bs->flags & BFL_IDEALVIEWSET)) {
 		if (trap_BotMovementViewTarget(bs->ms, &goal, bs->tfl, 300, target)) {
@@ -2057,6 +2320,7 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 			}
 			else {
 				bs->ltg_time = 0;
+				BotLogWhy(bs, "enemydead");
 				AIEnter_Seek_LTG(bs, "battle fight: enemy dead");
 			}
 			return qfalse;
@@ -2088,7 +2352,7 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 	}
 	//update the reachability area and origin if possible
 	areanum = BotPointAreaNum(target);
-	if (areanum && trap_AAS_AreaReachability(areanum)) {
+	if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 		VectorCopy(target, bs->lastenemyorigin);
 		bs->lastenemyareanum = areanum;
 	}
@@ -2111,7 +2375,21 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 		}
 	}
 	//if the enemy is not visible
-	if (!BotEntityVisible(bs->entitynum, bs->eye, bs->viewangles, 360, bs->enemy)) {
+	if (BotEntityVisible(bs->entitynum, bs->eye, bs->viewangles, 360, bs->enemy)) {
+		// im Original fuehrt dieser Knoten die Uhr nicht, und der Rueckzug liest
+		// sie - deshalb nur mit dem Schalter
+		if (BotVal(bs, g_botSteady) > 0) bs->enemyvisible_time = FloatTime();
+	}
+	// Werkbank: wer hinter einer Ecke verschwindet, ist im naechsten Denkschritt
+	// oft wieder da. Im Original wechselt der Bot bei jedem Verschwinden in die
+	// Verfolgung und bei jedem Auftauchen zurueck - gemessen sieben solcher
+	// Wechsel je Bot und Minute, jeder mit einer anderen Laufrichtung. Mit
+	// g_botSteady bleibt er vier Zehntelsekunden beim Kampf und zielt dorthin,
+	// wo der Gegner zuletzt war.
+	else if (BotVal(bs, g_botSteady) > 0 && bs->enemy < MAX_CLIENTS
+			&& bs->enemyvisible_time > FloatTime() - 0.4f) {
+	}
+	else {
 #ifdef MISSIONPACK
 		if (bs->enemy == redobelisk.entitynum || bs->enemy == blueobelisk.entitynum) {
 			AIEnter_Battle_Chase(bs, "battle fight: obelisk out of sight");
@@ -2138,6 +2416,20 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 	if (BotCanAndWantsToRocketJump(bs)) {
 		bs->tfl |= TFL_ROCKETJUMP;
 	}
+	// Werkbank: im reinen Kampf nimmt ein Bot im Original nichts auf - der
+	// Knoten fragt gar nicht nach nahen Gegenstaenden, anders als Rueckzug und
+	// Verfolgung. Ein Mensch nimmt die Ruestung mit, neben der er kaempft.
+	// Die Reichweite ist kleiner als dort (hundert statt hundertfuenfzig, also
+	// etwa eine Sekunde Weg), weil der Kampf die Hauptsache bleiben soll.
+	if (BotSw(bs, g_botGrab) && bs->check_time < FloatTime()) {
+		bs->check_time = FloatTime() + 1;
+		if (BotNearbyGoal(bs, bs->tfl, NULL, 100)) {
+			trap_BotResetLastAvoidReach(bs->ms);
+			bs->nbg_time = FloatTime() + 2;
+			AIEnter_Battle_NBG(bs, "battle fight: nbg");
+			return qfalse;
+		}
+	}
 	//choose the best weapon to fight with
 	BotChooseWeapon(bs);
 	//do attack movements
@@ -2148,6 +2440,7 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 		trap_BotResetAvoidReach(bs->ms);
 		//BotAI_Print(PRT_MESSAGE, "movement failure %d\n", moveresult.traveltype);
 		bs->ltg_time = 0;
+		BotLogWhy(bs, "movefail");
 	}
 	//
 	BotAIBlocked(bs, &moveresult, qfalse);
@@ -2264,13 +2557,14 @@ int AINode_Battle_Chase(bot_state_t *bs)
 	//initialize the movement state
 	BotSetupForMovement(bs);
 	//move towards the goal
-	trap_BotMoveToGoal(&moveresult, bs->ms, &goal, bs->tfl);
+	BotTravelToGoal(bs, &moveresult, &goal, bs->tfl);
 	//if the movement failed
 	if (moveresult.failure) {
 		//reset the avoid reach, otherwise bot is stuck in current area
 		trap_BotResetAvoidReach(bs->ms);
 		//BotAI_Print(PRT_MESSAGE, "movement failure %d\n", moveresult.traveltype);
 		bs->ltg_time = 0;
+		BotLogWhy(bs, "movefail");
 	}
 	//
 	BotAIBlocked(bs, &moveresult, qfalse);
@@ -2392,7 +2686,7 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 		}
 		//update the reachability area and origin if possible
 		areanum = BotPointAreaNum(target);
-		if (areanum && trap_AAS_AreaReachability(areanum)) {
+		if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 			VectorCopy(target, bs->lastenemyorigin);
 			bs->lastenemyareanum = areanum;
 		}
@@ -2406,8 +2700,17 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 	else if (bs->enemyvisible_time < FloatTime()) {
 		//if there is another enemy
 		if (BotFindEnemy(bs, -1)) {
-			AIEnter_Battle_Fight(bs, "battle retreat: another enemy");
-			return qfalse;
+			// Werkbank: im Original geht es von hier immer in den Kampf, und
+			// der Kampfknoten schickt den Bot im selben Denkschritt zurueck,
+			// wenn er sich gar nicht stellen will - gemessen acht solcher
+			// Wechsel je Bot und Minute, jeder mit einem Schritt Kampfbewegung
+			// mitten im Lauf. Wer auf dem Rueckzug bleiben will, bleibt es und
+			// hat nur einen neuen Gegner.
+			if (BotVal(bs, g_botSteady) <= 0 || !BotWantsToRetreat(bs)) {
+				AIEnter_Battle_Fight(bs, "battle retreat: another enemy");
+				return qfalse;
+			}
+			BotEntityInfo(bs->enemy, &entinfo);
 		}
 	}
 	//
@@ -2452,13 +2755,14 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 	//initialize the movement state
 	BotSetupForMovement(bs);
 	//move towards the goal
-	trap_BotMoveToGoal(&moveresult, bs->ms, &goal, bs->tfl);
+	BotTravelToGoal(bs, &moveresult, &goal, bs->tfl);
 	//if the movement failed
 	if (moveresult.failure) {
 		//reset the avoid reach, otherwise bot is stuck in current area
 		trap_BotResetAvoidReach(bs->ms);
 		//BotAI_Print(PRT_MESSAGE, "movement failure %d\n", moveresult.traveltype);
 		bs->ltg_time = 0;
+		BotLogWhy(bs, "movefail");
 	}
 	//
 	BotAIBlocked(bs, &moveresult, qfalse);
@@ -2470,7 +2774,7 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 	}
 	else if (!(moveresult.flags & MOVERESULT_MOVEMENTVIEWSET)
 				&& !(bs->flags & BFL_IDEALVIEWSET) ) {
-		attack_skill = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_ATTACK_SKILL, 0, 1);
+		attack_skill = BotChar(bs, CHARACTERISTIC_ATTACK_SKILL, 0, 1, g_botAttackSkill.value);
 		//if the bot is skilled enough
 		if (attack_skill > 0.3) {
 			BotAimAtEnemy(bs);
@@ -2569,7 +2873,7 @@ int AINode_Battle_NBG(bot_state_t *bs) {
 		}
 		//update the reachability area and origin if possible
 		areanum = BotPointAreaNum(target);
-		if (areanum && trap_AAS_AreaReachability(areanum)) {
+		if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 			VectorCopy(target, bs->lastenemyorigin);
 			bs->lastenemyareanum = areanum;
 		}
@@ -2596,7 +2900,7 @@ int AINode_Battle_NBG(bot_state_t *bs) {
 	//initialize the movement state
 	BotSetupForMovement(bs);
 	//move towards the goal
-	trap_BotMoveToGoal(&moveresult, bs->ms, &goal, bs->tfl);
+	BotTravelToGoal(bs, &moveresult, &goal, bs->tfl);
 	//if the movement failed
 	if (moveresult.failure) {
 		//reset the avoid reach, otherwise bot is stuck in current area
@@ -2616,7 +2920,7 @@ int AINode_Battle_NBG(bot_state_t *bs) {
 	}
 	else if (!(moveresult.flags & MOVERESULT_MOVEMENTVIEWSET)
 				&& !(bs->flags & BFL_IDEALVIEWSET)) {
-		attack_skill = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_ATTACK_SKILL, 0, 1);
+		attack_skill = BotChar(bs, CHARACTERISTIC_ATTACK_SKILL, 0, 1, g_botAttackSkill.value);
 		//if the bot is skilled enough and the enemy is visible
 		if (attack_skill > 0.3) {
 			//&& BotEntityVisible(bs->entitynum, bs->eye, bs->viewangles, 360, bs->enemy)

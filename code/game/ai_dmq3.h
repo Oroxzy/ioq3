@@ -84,6 +84,10 @@ int BotSetLastOrderedTask(bot_state_t *bs);
 void BotTeamGoals(bot_state_t *bs, int retreat);
 //returns the aggression of the bot in the range [0, 100]
 float BotAggression(bot_state_t *bs);
+// Werkbank: eine Charaktereigenschaft lesen, oder die Vorgabe an ihrer Stelle
+float BotChar(bot_state_t *bs, int characteristic, float min, float max, float override);
+// Werkbank: hat der Bot diesen Client gerade gehoert (g_botHear)
+qboolean BotHeard(bot_state_t *bs, int client);
 //returns how bad the bot feels
 float BotFeelingBad(bot_state_t *bs);
 //returns true if the bot wants to retreat

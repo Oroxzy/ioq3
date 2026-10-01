@@ -1,0 +1,5 @@
+# Das Messgeraet fuer die Bots laeuft in der Git-Bash, und die nimmt kein CRLF:
+# mit der ueblichen Umwandlung beim Auschecken endet jede Zeile des Skripts auf
+# einem Wagenruecklauf, und bash sucht ein Kommando dieses Namens.
+*.sh text eol=lf
+*.pl text eol=lf

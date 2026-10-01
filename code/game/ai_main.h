@@ -272,7 +272,90 @@ typedef struct bot_state_s
 	bot_waypoint_t *patrolpoints;					//patrol points
 	bot_waypoint_t *curpatrolpoint;					//current patrol point the bot is going for
 	int patrolflags;								//patrol flags
+	// Werkbank: was der letzte Denkschritt getan hat. Die Reiseart liest auch
+	// die Kantenbremse, der Rest steht nur im Bot-Protokoll (g_botLog).
+	int travel_type;								//Reiseart des Wegbefehls dieses Denkschritts, 0 = keiner
+	int log_flags;									//BOTLOG_*, seit der letzten Protokollzeile
+	int log_goal;									//Nummer des Ziels, zu dem zuletzt gelaufen wurde
+	int log_switches;								//Knotenwechsel seit der letzten Protokollzeile
+	char *log_why;									//warum die Zielsperre zuletzt geloest wurde
+	float log_why_time;								//und wann
+	// Werkbank: Entscheidung halten (g_botSteady)
+	int mood;										//BOTMOOD_*, was zuletzt entschieden wurde
+	float mood_time;								//bis dahin gilt es
+	int mood_health;								//Leben zum Zeitpunkt der Entscheidung
+	int mood_stack;									//Leben und Ruestung zum Zeitpunkt der Entscheidung
+	// Werkbank: hoeren (g_botHear)
+	float heard_time[MAX_CLIENTS];					//wann wer zuletzt zu hoeren war
+	vec3_t noise_origin;							//wo das letzte Geraeusch herkam
+	float noise_time;								//und wann
+	// Werkbank: ausweichen (g_botDodge)
+	vec3_t dodge_dir;								//wohin der Ausweichschritt geht
+	float dodge_time;								//bis dahin gilt er
+	int dodge_missile;								//ueber welches Geschoss zuletzt entschieden wurde
+	int dodge_decided;								//und wie
+	// Werkbank: gestrandet (g_botUnstuck)
+	int stranded_count;								//Denkschritte ohne Ziel oder Weg, seit es zuletzt voranging
+	int lastgood_area;								//das Feld, von dem aus zuletzt ein Weg gefunden wurde
+	float stranded_search;							//wann das naechste Mal gesucht wird
+	vec3_t stranded_dir;							//wohin es dort hinausgeht
+	int stranded_blind;								//und ob das nur geraten ist
+	// Werkbank: Tritt (g_botEdgeCare, g_botAirControl)
+	float foot_release;								//bis dahin wird in der Luft nicht neu gerechnet
+	float foot_knock;								//wann ihn zuletzt ein Treffer geworfen hat
+	float foot_lastspeed;							//Tempo im letzten Bild
+	int foot_void;									//Bilder in Folge ohne Landung
+	int foot_astray;								//der Flug ist nicht mehr der geplante
+	int foot_pad;									//zuletzt auf einem Sprungfeld gestanden
+	float foot_padhold;								//wann zuletzt vor einem Sprungfeld gewartet wurde
+	float foot_padstart;							//seit wann am Stueck
+	int foot_kind;									//Eingriff in diesem Bild: 0 keiner, 1-5 am Boden, 11-14 in der Luft
+	vec3_t foot_origin;								//wo er zuletzt sicher stand
+	vec3_t foot_air_dir;							//wohin zuletzt in der Luft gesteuert wurde
+	float foot_air_time;							//und wann
 } bot_state_t;
+
+// Werkbank: im selben Spiel einen Teil der Bots als Original laufen lassen
+// (g_botStockMask, ein Bit je Clientnummer). Das ist das Messgeraet fuer die
+// Frage, ob die Schalter die Bots besser oder schlechter machen: sechs gegen
+// sechs auf derselben Karte, und gezaehlt wird, wer wen wie oft erwischt.
+#define BotStock(bs)		( g_botStockMask.integer & ( 1 << (bs)->client ) )
+#define BotSw(bs, cv)		( BotStock(bs) ? 0 : (cv).integer )
+#define BotVal(bs, cv)		( BotStock(bs) ? 0.0f : (cv).value )
+
+// Werkbank: festhalten, warum ein Ziel aufgegeben wird - fuer die naechste Wahl
+#define BotLogWhy(bs, why)	((bs)->log_why = (why), (bs)->log_why_time = FloatTime())
+
+// Werkbank: was ein Bot zwischen Kampf und Rueckzug zuletzt entschieden hat
+#define BOTMOOD_NONE				0
+#define BOTMOOD_RETREAT				1
+#define BOTMOOD_NEUTRAL				2
+#define BOTMOOD_FIGHT				3
+
+// from aasfile.h
+#define TRAVEL_WALK					2
+#define TRAVEL_JUMP					5
+#define TRAVEL_WALKOFFLEDGE			7
+#define TRAVEL_TELEPORT				10
+#define TRAVEL_ELEVATOR				11
+#define TRAVEL_ROCKETJUMP			12
+#define TRAVEL_BFGJUMP				13
+#define TRAVEL_GRAPPLEHOOK			14
+#define TRAVEL_JUMPPAD				18
+#define TRAVEL_FUNCBOB				19
+#define TRAVELTYPE_MASK				0xFFFFFF
+
+// Werkbank: die Flaggen einer Protokollzeile
+#define BOTLOG_BRAKE		1		//die Kantenbremse hat gegriffen
+#define BOTLOG_FAILURE		2		//der Wegbefehl ist gescheitert
+#define BOTLOG_BLOCKED		4		//eine Entitaet steht im Weg
+#define BOTLOG_NOGOAL		8		//kein Ziel gefunden, der Knoten gibt keinen Befehl
+#define BOTLOG_NOMOVE		16		//die Kampfbewegung hat keinen Befehl gegeben
+#define BOTLOG_DROPPED		32		//das Ziel gilt botlib als fallengelassen
+#define BOTLOG_STRANDED		64		//steht ohne Wegnetz und sucht den naechsten Boden
+#define BOTLOG_DODGE		128		//Ausweichschritt vor einem Geschoss
+#define BOTLOG_AIR			256		//in der Luft umgesteuert, weil die Landung nicht sicher war
+#define BOTLOG_MOVER		512		//einem Pendel, einer Plattform oder einer Quetschfalle ausgewichen
 
 //resets the whole bot state
 void BotResetState(bot_state_t *bs);
@@ -295,3 +378,11 @@ int		BotTeamLeader(bot_state_t *bs);
 // Werkbank: ist in dieser Richtung, so weit voraus, ueberhaupt Boden - oder
 // geht es dort tausend Einheiten weit nach unten ins Nichts?
 qboolean BotGroundAhead(bot_state_t *bs, vec3_t dir, float dist);
+// Werkbank: ist unter dem Gegner Boden, auf dem man ihm nachlaufen kann?
+qboolean BotEnemySpotSafe(bot_state_t *bs, vec3_t origin);
+// Werkbank: worauf es sich zu warten lohnt; bs darf NULL sein
+qboolean BotItemWorthWaiting(bot_state_t *bs, gitem_t *item);
+// Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist
+void	QDECL BotLogPrintf(const char *fmt, ...) Q_PRINTF_FUNC(1, 2);
+// Werkbank: den Weg nach der Karte gehen und festhalten, welche Reiseart es war
+void	BotTravelToGoal(bot_state_t *bs, bot_moveresult_t *moveresult, bot_goal_t *goal, int tfl);

@@ -490,6 +490,10 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	G_LogPrintf("Kill: %i %i %i: %s killed %s by %s\n", 
 		killer, self->s.number, meansOfDeath, killerName, 
 		self->client->pers.netname, obit );
+	// Werkbank: auch ins Bot-Protokoll, dort mit der Spielzeit - das
+	// Konsolenprotokoll hat keine, und ohne sie laesst sich nicht nachsehen,
+	// was ein Bot in den Sekunden vor seinem Tod getan hat
+	BotLogPrintf( "K %i %i %i %s\n", level.time, self->s.number, killer, obit );
 
 	// broadcast the death event to everyone
 	ent = G_TempEntity( self->r.currentOrigin, EV_OBITUARY );
@@ -1068,6 +1072,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 			targ->client->lastEnemyHurtClient = attacker->s.number;
 			targ->client->lastEnemyHurtTime = level.time;
 		}
+	}
+
+	// Werkbank: jeder Treffer ins Bot-Protokoll - Opfer, Taeter, was ankam und
+	// was die Ruestung schluckte. Aus Abschuessen allein laesst sich nicht
+	// ablesen, wer staerker ist: dafuer sind es zu wenige.
+	if ( targ->client && ( take || asave ) ) {
+		BotLogPrintf( "D %i %i %i %i %i %i\n", level.time, targ->s.number,
+			attacker ? attacker->s.number : ENTITYNUM_WORLD, take, asave, mod );
 	}
 
 	// do the damage

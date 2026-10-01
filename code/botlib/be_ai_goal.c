@@ -110,6 +110,7 @@ typedef struct levelitem_s
 {
 	int number;							//number of the level item
 	int iteminfo;						//index into the item info
+	int bspiteminfo;					//Werkbank: was im BSP stand, siehe BotRelinkSocket
 	int flags;							//item flags
 	float weight;						//fixed roam weight
 	vec3_t origin;						//origin of the item
@@ -192,6 +193,10 @@ campspot_t *campspots = NULL;
 int g_gametype = 0;
 //additional dropped item weight
 libvar_t *droppedweight = NULL;
+// Werkbank: die Karte traegt auf ihren Sockeln etwas anderes, als im BSP steht
+// (g_weaponSpawns). Dann gilt, was wirklich daliegt. Das Spielmodul setzt die
+// Variable bei jedem Laden und jedem Neustart der Karte; siehe BotRelinkSocket.
+libvar_t *relinksockets = NULL;
 
 //========================================================================
 //
@@ -647,6 +652,7 @@ void BotInitLevelItems(void)
 		} //end if
 		//item info of the level item
 		li->iteminfo = i;
+		li->bspiteminfo = i;
 		//origin of the item
 		VectorCopy(origin, li->origin);
 		//
@@ -1013,6 +1019,89 @@ void BotFindEntityForLevelItem(levelitem_t *li)
 //NOTE: enum entityType_t in bg_public.h
 #define ET_ITEM			2
 
+//===========================================================================
+// Werkbank: einen Sockel der Karte umwidmen.
+//
+// Die Gegenstaende einer Karte liest botlib selbst aus dem BSP, und eine
+// Entitaet wird ihrem Eintrag ueber das Modell zugeordnet. Engt das Spiel die
+// Karte auf wenige Waffen ein, liegt auf dem Sockel der Schrotflinte ein
+// Raketenwerfer: das Modell passt nicht, der Eintrag der Schrotflinte bleibt
+// fuer immer ohne Entitaet, und der Raketenwerfer gilt als fallengelassen -
+// mit zehn statt dreissig Sekunden Sperre nach der Wahl, ohne Umwegpruefung
+// beim Nahziel, und alle dreissig Sekunden wird er vergessen und neu entdeckt.
+//
+// Hier bekommt der Eintrag des Sockels das, was wirklich daliegt. Nicht aber,
+// was ein Toter fallen liess: das Spiel zeichnet Fallengelassenes mit
+// modelindex2 = 1 aus (LaunchItem in g_items.c), und daran wird es erkannt.
+// Eine erste Fassung entschied nach der Uhr - nur in den ersten drei Sekunden
+// der Karte - und uebersah damit jeden Gegenstand, der erst spaeter erscheint
+// (alle bis auf den ersten einer "team"-Gruppe, alles mit targetname).
+//
+// Von mehreren freien Sockeln in Reichweite gilt der naechste.
+//
+// Parameter:			-
+// Returns:				-
+// Changes Globals:		-
+//===========================================================================
+levelitem_t *BotRelinkSocket(int ent, int modelindex, int modelindex2, vec3_t origin)
+{
+	int i;
+	float dist, bestdist;
+	vec3_t dir;
+	levelitem_t *li, *best;
+	itemconfig_t *ic;
+
+	ic = itemconfig;
+	if (!ic) return NULL;
+	if (!relinksockets || !relinksockets->value) return NULL;
+	//not what somebody dropped
+	if (modelindex2) return NULL;
+	//the item info for what is really there
+	for (i = 0; i < ic->numiteminfo; i++)
+	{
+		if (ic->iteminfo[i].modelindex == modelindex) break;
+	} //end for
+	if (i >= ic->numiteminfo) return NULL;
+	//
+	best = NULL;
+	bestdist = 30;
+	for (li = levelitems; li; li = li->next)
+	{
+		//only sockets of the map nothing has been found for
+		if (li->entitynum || li->timeout) continue;
+		if (li->flags & IFL_ROAM) continue;
+		//
+		if (g_gametype == GT_SINGLE_PLAYER) {
+			if (li->flags & IFL_NOTSINGLE) continue;
+		}
+		else if (g_gametype >= GT_TEAM) {
+			if (li->flags & IFL_NOTTEAM) continue;
+		}
+		else {
+			if (li->flags & IFL_NOTFREE) continue;
+		}
+		VectorSubtract(li->origin, origin, dir);
+		dist = VectorLength(dir);
+		if (dist >= bestdist) continue;
+		bestdist = dist;
+		best = li;
+	} //end for
+	if (!best) return NULL;
+	//
+	best->iteminfo = i;
+	best->entitynum = ent;
+	if (origin[0] != best->origin[0] ||
+		origin[1] != best->origin[1] ||
+		origin[2] != best->origin[2])
+	{
+		VectorCopy(origin, best->origin);
+		best->goalareanum = AAS_BestReachableArea(best->origin,
+						ic->iteminfo[i].mins, ic->iteminfo[i].maxs,
+						best->goalorigin);
+	} //end if
+	return best;
+} //end of the function BotRelinkSocket
+
 void BotUpdateEntityItems(void)
 {
 	int ent, i, modelindex;
@@ -1065,6 +1154,18 @@ void BotUpdateEntityItems(void)
 				//the entity is re-used if the models are different
 				if (ic->iteminfo[li->iteminfo].modelindex != modelindex)
 				{
+					// Werkbank: ein Sockel der Karte, der umgewidmet war
+					// und auf dem nach einem Neustart der Karte wieder
+					// etwas anderes liegt. Er bekommt zurueck, was im BSP
+					// stand, und wird gleich darunter neu zugeordnet -
+					// geloescht waere er fuer den Rest der Karte weg.
+					if (!li->timeout && li->iteminfo != li->bspiteminfo)
+					{
+						li->iteminfo = li->bspiteminfo;
+						li->entitynum = 0;
+						li = NULL;
+						break;
+					} //end if
 					//remove this level item
 					RemoveLevelItemFromList(li);
 					FreeLevelItem(li);
@@ -1132,6 +1233,8 @@ void BotUpdateEntityItems(void)
 			} //end else
 		} //end for
 		if (li) continue;
+		// Werkbank: liegt auf einem Sockel der Karte etwas anderes, als im BSP steht
+		if (BotRelinkSocket(ent, modelindex, entinfo.modelindex2, entinfo.origin)) continue;
 		//check if the model is from a known item
 		for (i = 0; i < ic->numiteminfo; i++)
 		{
@@ -1152,6 +1255,7 @@ void BotUpdateEntityItems(void)
 		li->number = numlevelitems + ent;
 		//set the item info index for the level item
 		li->iteminfo = i;
+		li->bspiteminfo = i;
 		//origin of the item
 		VectorCopy(entinfo.origin, li->origin);
 		//get the item goal area and goal origin
@@ -1795,6 +1899,11 @@ int BotSetupGoalAI(void)
 	} //end if
 	//
 	droppedweight = LibVar("droppedweight", "1000");
+	// Werkbank: siehe BotRelinkSocket. Die zweite Variable sagt dem Spielmodul,
+	// dass diese Bibliothek es kann - eine aeltere kennt sie nicht, und dann
+	// behilft es sich anders.
+	relinksockets = LibVar("relinksockets", "0");
+	LibVarSet("relinksockets_ok", "1");
 	//everything went ok
 	return BLERR_NOERROR;
 } //end of the function BotSetupGoalAI

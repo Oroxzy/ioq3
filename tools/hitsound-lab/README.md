@@ -1071,6 +1071,10 @@ aber sie trägt nichts zur Trefferquoten-Kurve bei.
 
 ## Warum die Bots in die Leere laufen
 
+> **Stand 29.09.2026:** die Bremse, die hier beschrieben ist, hat die Bots an
+> Kanten festgehalten und ist umgebaut — siehe „Warum die Bots zappelten“
+> weiter unten. Die Ursachenforschung in diesem Abschnitt gilt weiter.
+
 Die Klage ist berechtigt und lässt sich beziffern. Aus `games.log`, rund 6700
 Tode: **937 MOD_TRIGGER_HURT** — das ist die Grube unter q3dm17 — plus 238
 MOD_FALLING. Die zweite Zahl gehört allerdings nicht dazu: `EV_FALL_FAR` macht
@@ -1204,6 +1208,10 @@ in seiner Wunschentfernung steht.
 
 ## Menschlichere Bots, erste Stufe
 
+> **Stand 29.09.2026:** die Haken dieses Abschnitts stehen jetzt auf der Karte
+> „Bots“. „Bots beweglicher“ ist in zwei Zahlenfelder zerlegt (Kampfbewegung,
+> Lagern), der Raketensprung ist eine Auswahl mit vier Einträgen.
+
 Zwei Haken, beide aus voreingestellt, beide im Spielmodul — kein pak0, keine
 Engine.
 
@@ -1333,6 +1341,488 @@ die Nachteile: eine Wurfparabel ist leichter zu treffen, und wer öfter in der
 Luft ist, verpasst öfter die Landung.
 
 Der Haken bleibt drin, damit man es selbst sehen kann. Empfohlen ist er nicht.
+
+## Die Karte „Bots"
+
+Alles, was die Bots betrifft, steht auf einer eigenen Karte, gleich nach
+„Spiel". Oben zwei Knöpfe: **„Standard Q3"** stellt jeden Regler auf das
+Original, **„Menschlich"** auf die empfohlenen Werte. Die Zeile darunter sagt,
+welcher Stand gerade gilt. Wie viele Bots mitspielen und wie gut sie sind,
+fassen die Knöpfe nicht an — das gehört zur Sitzung, nicht zum Verhalten.
+
+| Regler | Cvar | Standard Q3 | Menschlich |
+|---|---|---|---|
+| nicht in die Leere laufen | `g_botEdgeCare` | 0 | 1 |
+| in der Luft zurück ans Land steuern | `g_botAirControl` | 0 | 1 |
+| Raketen ausweichen | `g_botDodge` | 0 | 1 |
+| von Simsen ohne Wegnetz herunterkommen | `g_botUnstuck` | 0 | 1 |
+| Raketensprung | `bot_rocketjump`, `g_botRocketJump` | wie der Charakter | alle, mit Gesundheitsklausel (gemessen ohne Wirkung, siehe unten) |
+| hüpfen, um Tempo zu halten | `g_botJump` | 0 | 0 |
+| Sprungfreude im Kampf | `g_botJumper` | −1 | 0,25 |
+| Ducken im Kampf | `g_botCroucher` | −1 | −1 |
+| auch nach oben kämpfen | `g_botFightUp` | 0 | 1 |
+| kämpfen mit dem, was da ist | `g_botBrave` | 0 | 0 (gemessen schwächer, siehe unten) |
+| Schüsse, Sprünge und Schritte hören | `g_botHear` | 0 | 1 |
+| Entscheidung halten (s) | `g_botSteady` | 0 | 1,5 |
+| Kampfbewegung | `g_botAttackSkill` | −1 | 0,9 |
+| Reaktionszeit, Zielgenauigkeit, Zielkönnen, Wachsamkeit, Feuerdisziplin | `g_botReaction`, `g_botAimAccuracy`, `g_botAimSkill`, `g_botAlertness`, `g_botFireThrottle` | −1 | −1 |
+| Herausforderung | `bot_challenge` | 0 | 0 |
+| nach Treffern neu planen | `g_botRethink` | 0 | 1 |
+| Respawn-Zeiten mitzählen | `g_botTiming` | 0 | 1 |
+| im Kampf Gegenstände mitnehmen | `g_botGrab` | 0 | 1 |
+| ohne Gegner dorthin gehen, wo Lärm war | `g_botHunt` | 0 | 1 |
+| zweitbestes Ziel nehmen (%) | `g_botVariety` | 0 | 25 |
+| Lagern | `g_botCamper` | −1 | 0 |
+| Aufschlag für Fallengelassenes | `g_botDroppedWeight` | 1000 | 100 |
+| nicht quatschen | `bot_nochat` | 0 | 1 |
+
+**−1 heißt überall „aus der Charakterdatei".** Zielen und Reagieren bleiben
+auch bei „Menschlich" beim Charakter: gegen diese Bots wird gemessen, und ein
+Bot, der besser trifft, ist nicht menschlicher.
+
+**Was „Standard Q3" nicht zurückdreht**, damit niemand es für das unberührte
+Original hält: die beiden Enemy-Werte, die der Seek-Knoten seit der ersten
+Stufe mitlöscht (ein liegengebliebener Wert, kein Verhalten), und das
+Umwidmen ersetzter Sockel — das greift aber nur, wenn unter „Waffen auf der
+Karte" eingeengt wird, und eine eingeengte Karte ist ohnehin nicht das
+Original.
+
+## Das Bot-Protokoll
+
+`g_botLog 1` (Haken „Bot-Protokoll schreiben") legt im Homeverzeichnis neben
+`qconsole.log` eine `botlog.log` an. Zehn Bots schreiben rund 400 Kilobyte je
+Minute. Die Zeilenarten, jede mit Spielzeit in Millisekunden und Clientnummer:
+
+| | |
+|---|---|
+| `T` | ein Denkschritt: Knoten, Ort, Tempo, Boden, Leben, Rüstung, Waffe, Gegner, Ziel, Reiseart, Flaggen, Knotenwechsel |
+| `S` | ein Knotenwechsel mit dem Grund aus dem Quelltext |
+| `G` | eine Zielwahl: `L` Fernziel, `N` Nahziel, `H` dem Lärm nach, `-` nichts gefunden — und warum das alte Ziel aufgegeben wurde |
+| `I` | ein Gegenstand wurde genommen, von wem, und wann er wiederkommt |
+| `K` | ein Tod: Opfer, Täter (1022 ist die Karte), Todesart |
+| `B` | der Tritt hat am Boden eingegriffen: Ort, Tempo, Schwung, Befehl, Reiseart, Art des Eingriffs (1 ohne Sprung, 2 Schritttempo, 3 stehen, 4 gegen den Schwung, 5 zurück), und wo die Rechnung den Bot sonst enden sah |
+| `A` | der Tritt hat in der Luft umgesteuert: Ort, Tempo, wohin |
+| `U` | gestrandet, und wohin es hinausgeht |
+| `P` | Abschuss von einem Sprungfeld: welches, was die Rechnung vorhersagt (landet ja/nein, warum, wo) |
+| `M` | einem Pendel, einer Plattform oder einer Quetschfalle ausgewichen: welche, wie (1 warten, 2 zurück, 3 weg) |
+| `D` | ein Treffer: Opfer, Täter, Schaden, von der Rüstung geschluckt, Waffe |
+
+`g_botLog 2` schreibt zusätzlich `J` (ein Sprung, den die Rechnung für sicher
+hielt, samt vorhergesagter Landung) und `B` mit Art 0 (keine Landung gesehen,
+aber auch kein Ausweg). `g_botLog 3` dazu `F`: jedes Serverbild je Bot, mit Ort,
+Tempo, Blickrichtung, Befehl und Eingriff — daraus sucht `tools/botlog/jitter.pl`
+Zittern, das schneller ist als ein Denkschritt.
+
+Weitere Auswertungen in `tools/botlog/`: `deaths.pl` (Tode durch die Karte nach
+dem, was der Bot davor tat), `proxy.pl` (ein Stellvertreter gegen das Feld),
+`dmg.pl` (Schaden im gemischten Spiel mit `g_botStockMask`), `sweep.sh` mit
+`EXTRA="+set g_botLog 3"` für Zusatzargumente, und `run.sh` mit `QVM=<datei>`
+für ein anderes Spielmodul, etwa das eingespielte zum Vergleich.
+
+Ausgewertet wird mit `tools/botlog/botlog.pl`, mehrere Dateien stehen als
+Spalten nebeneinander:
+
+```
+perl tools/botlog/botlog.pl lauf1/baseq3/botlog.log lauf2/baseq3/botlog.log
+```
+
+Und `tools/botlog/run.sh` fährt einen Lauf **ohne Spieler**: `ioq3ded` mit
+eigenem Homeverzeichnis, Bots aus einer Config, nach einer festen Zeit ist
+Schluss. Acht solche Läufe nebeneinander sind auf diesem Rechner kein Problem,
+jeder braucht nur seinen eigenen Port.
+
+Was gezählt wird:
+
+| | |
+|---|---|
+| Stillstand | lebt, steht auf dem Boden, unter 20 u/s, mindestens eine halbe Sekunde |
+| Zappeln | in zwei Sekunden über 150 Einheiten gelaufen und keine 60 von der Stelle gekommen |
+| Kehrtwende | die Laufrichtung dreht zwischen zwei Denkschritten um mehr als 120° |
+| Pingpong | Knoten A, dann B, dann wieder A, innerhalb einer Sekunde |
+
+„Zappeln" im Kampf ist zum Teil gewollt — wer einen Gegner umkreist, macht
+viel Weg und kommt nicht von der Stelle. Deshalb steht der Kampf in der
+Auswertung getrennt, und deshalb ist die Kehrtwende das schärfere Maß.
+
+## Warum die Bots zappelten
+
+Gemessen, nicht vermutet. Alle Zahlen: q3dm17, zehn Bots auf Stufe drei, nur
+Raketenwerfer auf der Karte, Läufe von fünf Minuten ohne Spieler.
+
+**Es war die Kantenbremse — also hausgemacht.** Ein Bot stand 8,7 Sekunden an
+einer Stelle und pendelte um zehn Einheiten, die Bremse griff bei jedem zweiten
+Denkschritt:
+
+```
+T 106650 0 RETREAT -221 322 24 170 ... Bremse
+T 106750 0 RETREAT -223 311 24 170 ...
+T 106850 0 RETREAT -221 322 24 170 ... Bremse
+T 106950 0 RETREAT -223 311 24 171 ...
+```
+
+Zwei Fehler, beide in `BotEdgeCare`:
+
+1. **Der Boden wurde mit einem Punkt gesucht.** Ein Punkt fällt durch jede
+   Lücke eines Gitterbodens. Nachgemessen an 316 Bremsungen: bei 190 fand
+   dieselbe Probe mit der Standfläche des Körpers Boden, meist keine vierzig
+   Einheiten tiefer. Sechzig Prozent der Bremsungen waren schlicht falsch.
+2. **Gebremst wurde auch, wer genau dorthin wollte.** Von den übrigen 126
+   zeigte bei 62 der eigene Bewegungsbefehl des Bots in dieselbe Richtung wie
+   sein Schwung: sein Weg führte dicht an der Kante vorbei, und die Bremse
+   hielt ihn vor jeder solchen Stelle fest — anlaufen, gebremst werden, wieder
+   anlaufen.
+
+Jetzt sucht die Probe mit dem Körper, und dem eigenen Weg wird getraut. Das
+ist kein Leichtsinn: der Weg nach der Karte drosselt vor einer Lücke von sich
+aus das Tempo (`BotTravel_Walk`), und die freie Bewegung rechnet zwei Bilder
+voraus. Die Bremse ist für das da, was keiner von beiden sieht — Schwung nach
+einem Rückstoß, einem Ausweichschritt, einer zu schnell genommenen Kurve.
+
+| | Original | alte Bremse | neue Bremse |
+|---|---|---|---|
+| Tode in der Grube | 15,9 % | 9,7 % | **9,1 %** |
+| Kehrtwenden im Kampf, je Minute | 5,4–6,3 | 16,2 | **6,2–7,2** |
+| Bremse greift (Anteil der Lebenszeit) | – | 2,1 % | 0,3–0,6 % |
+
+Die Stürze bleiben fast halbiert, die Kehrtwenden sind wieder beim Original.
+
+**Was sich nicht bestätigt hat**, damit es niemand noch einmal sucht:
+
+- *„Ein Bot ohne lohnendes Ziel steht herum."* In keinem einzigen Lauf blieb
+  eine Zielwahl ohne Ergebnis (0,00 je Bot-Minute). Stillstand gab es bei den
+  Original-Bots auf q3dm6 zu sechs bis zehn Prozent — das ist das Quatschen.
+- *„Die Bremse hält Sprungfelder über der Leere für die Leere."* Bei 8 von 686
+  Bremsungen lag ein Sprungfeld voraus. Stimmt im Prinzip, spielt keine Rolle.
+- *„Ein kreisender Bot muss nur langsamer werden."* Gebaut (`g_botSteer`),
+  gemessen, wieder entfernt: der Bot kreiste langsam weiter, und die Erkennung
+  hielt jeden Ausweichschritt für einen Kreis. Das Kreisen selbst gibt es —
+  im Original ein halbes Prozent der Lebenszeit, ein Bot verfehlt eine schmale
+  Rampe und läuft im Bogen zurück an ihren Anfang — und es steht noch offen.
+
+## Menschlichere Bots, zweite Stufe
+
+Nach der Bremse blieben drei Dinge, die das Protokoll zeigt und die ein
+Zuschauer als „gescriptet" oder „unentschlossen" liest.
+
+**Die Bots sind drei Viertel der Zeit auf dem Rückzug.** `BotAggression` misst
+an festen Schwellen — mehr als fünf Raketen, mindestens sechzig Leben, unter
+achtzig zusätzlich vierzig Rüstung — und wer darunter liegt, läuft seine
+Besorgungen ab und schießt nebenher. **`g_botBrave`** fragt stattdessen, ob
+der Bot eine Waffe mit Munition hat und ob Leben und Rüstung zusammen siebzig
+ergeben (die Rüstung zu zwei Dritteln gerechnet). Wer das Quad trägt, dem
+stellt sich keiner, der es nicht selbst hat.
+
+**Kampf, Rückzug und Verfolgung kippen bei jedem Denkschritt neu.** Alle drei
+hängen an derselben Zahl, und die ändert sich mit jedem Treffer. Dazu zwei
+feste Schleifen: der Rückzug schickt den Bot bei jedem Gegnerwechsel in den
+Kampfknoten, der ihn im selben Denkschritt zurückschickt; und der Kampfknoten
+nimmt die Verfolgung auf, sobald der Gegner für ein Bild hinter einer Ecke
+verschwindet. **`g_botSteady`** lässt eine Entscheidung so viele Sekunden
+gelten (wer seither dreißig Leben verloren hat, darf sofort neu), hält den Bot
+beim Gegnerwechsel auf dem Rückzug und gibt einem verschwundenen Gegner vier
+Zehntelsekunden.
+
+**Zwei von drei Zielwahlen gelten etwas, das nicht da ist.** Der Grund jeder
+Wahl steht im Protokoll, und 68 bis 81 Prozent lauten „gone": der Bot sieht
+die leere Stelle und wählt neu. Drei Ursachen, drei Korrekturen:
+
+- *Fallengelassenes.* botlib führt eine Waffe, die ein Toter fallen ließ,
+  dreißig Sekunden lang in seiner Liste, auch wenn sie längst jemand genommen
+  hat, und gibt ihr tausend Punkte Aufschlag. Mit `g_botTiming` erfahren jetzt
+  alle Bots, dass sie weg ist; **`g_botDroppedWeight`** stellt den Aufschlag.
+- *Zu früh da.* Das Mitzählen schickt einen Bot zwei Sekunden vor der
+  Wiederkehr los, und das Original hält die leere Stelle dann für „Ziel
+  erledigt". Jetzt wartet er — aber nur auf das, worauf auch ein Mensch
+  wartet: Powerups, Rüstung, die großen Medipacks, eine Waffe, die er noch
+  nicht hat. Für alles andere gibt es keinen Vorlauf mehr.
+- *Ersetzte Sockel*, siehe unten.
+
+**Und einer stand achtzig Sekunden auf einem Sims.** Im letzten Messsatz
+fand ein Bot 517-mal hintereinander kein Ziel: ein Kampfsprung hatte ihn von
+der oberen Plattform auf ein Sims an der Außenwand gebracht, ein Zierrat,
+den der Kartenbauer nie zum Betreten gedacht hat. Ein Bot kennt die Karte
+nur als Netz von Feldern, und von dort führt kein Weg zu irgendeinem Ziel —
+also stand er, schoss von dort auf alles, was vorbeikam, und wartete, bis ihn
+jemand traf. Das ist der Fall, den ein Zuschauer als „weiß nicht, was er tun
+soll" liest, und er tritt selten auf (einmal in rund fünfundzwanzig Läufen),
+dann aber lange.
+
+**`g_botUnstuck`**: hat ein Bot zehn Denkschritte lang kein Ziel oder keinen
+Weg gefunden, sucht er in sechzehn Richtungen den nächsten Boden, von dem aus
+das Wegnetz wieder dorthin führt, wo er zuletzt einen Weg hatte — und geht
+hin, über die Kante. Das Sims selbst zählt nicht: es *hat* Verbindungen im
+Wegnetz, sie führen nur nirgends hin, weshalb die erste Fassung genau dort
+nichts tat. Und die Grube zählt nicht, sie hat auch einen Boden. Findet er
+nichts, springt er nach drei Sekunden irgendwohin — und sei es in die Grube.
+Das ist, was ein Mensch auf einem Sims auch tut. Geprüft, indem ein Bot im
+Test dorthin gesetzt wurde: ohne den Haken blieb er, mit ihm war er nach vier
+Sekunden unten.
+
+Dazu fünf Dinge, die das Original gar nicht kann:
+
+| | |
+|---|---|
+| **`g_botHear`** | Die Bots sind taub; jedes Geräusch fällt in einen leeren Zweig unter id Softwares eigenem FIXME. Jetzt bemerkt ein Bot, wer in Hörweite schießt (1500), springt (600) oder läuft (400) — auch im Rücken. Sehen muss er ihn trotzdem können, und wer geht oder geduckt läuft, bleibt lautlos. |
+| **`g_botHunt`** | Ohne Gegner und gut ausgestattet geht der Bot dem letzten Geräusch nach statt zur nächsten Kiste. |
+| **`g_botDodge`** | Ein Schritt quer zur Flugbahn, wenn eine Rakete in unter 0,6 s näher als 90 Einheiten vorbeikommt. Nie über eine Kante. |
+| **`g_botGrab`** | Im reinen Kampf nimmt ein Bot im Original nichts auf. Jetzt fragt auch dieser Knoten nach nahen Gegenständen. |
+| **`g_botVariety`** | Die Zielwahl ist streng — Gewicht durch Wegzeit, das höchste gewinnt, immer. Mit 25 nimmt der Bot jedes vierte Mal das Zweitbeste. |
+
+**Gemessen**, dieselbe Aufstellung wie oben:
+
+| | Original | Menschlich |
+|---|---|---|
+| Pingpong je Bot und Minute | 16,7–18,9 | **4,7–6,0** |
+| Knotenwechsel je Bot und Minute | 80–88 | 51–54 |
+| Fernziel-Wahlen je Bot und Minute | 51 | 26 |
+| im Kampf / auf dem Rückzug | 11 % / 76 % | 22–26 % / 61–65 % |
+| Kehrtwenden im Kampf, je Minute | 5,4–6,3 | 6,9–7,0 |
+| Tode in der Grube, Anteil | 15,9 % | 11,4 % |
+| Tode in der Grube, je Lauf | 27 | 17 |
+
+Der Anteil liegt höher als mit der Bremse allein (9,1 %), die Zahl nicht (17
+gegen 16 je Lauf): es wird insgesamt weniger gestorben, seit die Bots Raketen
+ausweichen.
+
+Und das Ausweichen für sich, je drei Läufe, sonst alles gleich: **148 statt
+171 Tode** in fünf Minuten, davon 79 statt 100 durch Raketen, 14 statt 19 in
+der Grube.
+
+Auf q3dm6 mit vier Bots — eine Karte, auf der die Bots die halbe Zeit keinen
+Gegner sehen: Pingpong 7,3–8,1 statt 11,9–12,9, kein Stillstand statt sechs
+bis zehn Prozent, und rund neun Gänge „dem Lärm nach" je Bot in fünf Minuten.
+
+Der Preis, damit er nicht überrascht: außerhalb des Kampfs wechseln die Bots
+dort öfter die Richtung als das Original — 5,0 bis 7,6 Kehrtwenden je Minute
+gegen 3,0 bis 3,7. Je zwei Läufe mit einem Regler weniger: ohne die Jagd 4,3,
+ohne die Abwechslung 4,6 bis 5,7, ohne beides und ohne das Hören 4,1 bis 4,3.
+Den größten Teil macht also die Jagd: wer dem Lärm nachgeht, dreht um, wenn
+der Lärm woanders ist. Ob das lebendig wirkt oder unentschlossen, muss das
+Spielen zeigen — der Haken ist einzeln abschaltbar. Auf q3dm17 mit zehn Bots
+spielt es keine Rolle, dort ist ein Bot ein Prozent seiner Zeit ohne Gegner.
+
+
+**Raketensprünge gibt es trotzdem nicht.** In keinem Lauf – Original oder
+„Menschlich", q3dm17 oder q3dm6 – kam ein einziger Denkschritt mit der
+Reiseart Raketensprung vor. Die Klausel aus der ersten Stufe war nie das
+einzige Hindernis: q3dm17.aas rechnet einen Raketensprung mit Wegzeit 300 und
+ein Sprungfeld mit 200, also gewinnt bei der Wegsuche immer das Feld; und auf
+dem Rückzug, wo die Bots zwei Drittel ihrer Zeit sind, erlaubt das Original
+den Sprung gar nicht (`AINode_Battle_Retreat` setzt `TFL_ROCKETJUMP` nie).
+Der Regler bleibt, weil er auf Karten wirkt, auf denen der Raketensprung der
+einzige Weg ist – hier ist er ohne Wirkung.
+
+**Was das für die Messung heißt:** fast jeder dieser Regler ändert, wie sich
+die Bots bewegen — also das, wogegen die Vorhersage gemessen wird. Nach dem
+Umstellen braucht es eine neue Basislinie.
+
+## Alle Karten, und der Tritt
+
+Der Stand „Menschlich" war auf q3dm17 und q3dm6 gemessen. Der Lauf über alle
+25 Karten (zwölf Bots, vier Minuten, ohne Spieler: `tools/botlog/sweep.sh`)
+hat gezeigt, was dabei unterging: das Pingpong war überall halbiert, aber auf
+den Karten mit Grube oder Lava starben die Bots **öfter** durch die Karte als
+das Original — auf den sechs auffälligsten 92 Tode je Lauf gegen 72.
+
+Die Todesursache steht seitdem im Bot-Protokoll (`K`), und `tools/botlog/`
+kann damit nachsehen, was ein Bot in den Sekunden vor seinem Sturz getan hat
+(`deaths.pl` nach Klassen, `trace.pl` Zeile für Zeile). Drei Ursachen:
+
+- **Die Bremse sah nur den Schwung.** Auf q3dm9 biegt der Weg an einer
+  Plattformecke auf einen Steg ab. Der Bot hat noch Schwung geradeaus, dort
+  ist Leere, die Bremse schiebt ihn zurück — und er tritt einen halben Schritt
+  neben dem Steg von der Kante. Fünf von acht starben so; die zwei, bei denen
+  die Bremse nicht griff, kamen heil hinunter.
+- **Der eigene Weg galt als sicher.** Auf q3dm18 laufen die Bots (auch die des
+  Originals) mit vollem Tempo auf eine Treppe aus schwebenden Absätzen und
+  fliegen über den ersten hinaus.
+- **Die Kampfbewegung prüft mit dem Wegnetz**, und das kennt keine Todeszonen:
+  der Boden einer Grube ist dort ein Landeplatz wie jeder andere.
+
+`BotFooting` (in `code/game/ai_main.c`) rät deshalb nicht mehr, sondern
+rechnet: in jedem Bild des Servers die nächsten vier Zehntelsekunden am Boden
+mit Reibung und Beschleunigung wie im Spiel, Stufen und Rampen eingeschlossen,
+und wenn der Bot dabei den Boden verliert, den Flug bis zur Landung. Keine
+Landung sind Leere, Lava, Schleim, eine Todeszone, ein Aufprall, den er nicht
+überlebt — und die bloße Kante einer Plattform. Dann bekommt er das Mildeste,
+was hilft: kein Sprung, Schritttempo, stehenbleiben, gegen den Schwung.
+**Auf seinem Weg nach der Karte wird er nie angehalten** — die Zwischenfassung
+tat das, und die Bots standen auf q3dm9 je Lauf fünfzig Sekunden an Kanten,
+über die ihr Weg führte.
+
+In der Luft (`g_botAirControl`) steuert er dorthin, wo die Rechnung wieder
+eine Landung findet, aber nur, wenn der Flug nicht der geplante ist: ein
+Treffer hat ihn geworfen, oder er ist im Flug mit jemandem zusammengestoßen.
+Ein Sprungfeld bleibt in Ruhe — das auf q3dm9 wirft durch einen Torbogen, und
+sechzehn Einheiten Korrektur reichten, um mit dem Kopf anzuschlagen.
+
+Gemessen, sechs Karten mit Grube oder Lava (q3dm7, 9, 10, 13, 15, 18), Tode
+durch die Karte je Lauf:
+
+| | Original | alte Bremse | Tritt |
+|---|---|---|---|
+| Summe | 72 | 92 | 40 |
+| im Kampf gesprungen | 13 | 15 | 0,3 |
+| im Kampf gelaufen | 6 | 8 | 3 |
+| auf dem Weg gelaufen | 18 | 26 | 9 |
+| vom Treffer hinausgeworfen | 16 | 19 | 6 |
+
+Über alle 25 Karten: 205 Tode durch die Karte statt 428, Pingpong 12 statt 26
+je Bot-Minute, Stillstand 2,7 statt 2,9 Prozent. Kein Absturz, kein Bot, der
+hängt.
+
+**Und wer gewinnt?** `g_botStockMask` lässt im selben Spiel einen Teil der
+Bots als Original laufen (ein Bit je Clientnummer). Sechs gegen sechs auf neun
+Karten, je zwei Läufe mit vertauschten Rollen, damit die Charaktere sich
+aufheben (`tools/botlog/duel.pl`): die Menschlichen erwischen die Originale
+906-mal, umgekehrt 829-mal (1,09 zu 1), sterben 48-mal durch die Karte statt
+126-mal, und kommen auf 1,02 Abschüsse je Tod gegen 0,89.
+
+Was damals offen blieb — Pendel, schwebende Plattformen, die Sprungfelder auf
+q3tourney6 — steht weiter unten unter „Sprungfelder, Pendel und Plattformen".
+
+## Stufe 5, und wer eigentlich leichter ist
+
+Der Einwand aus dem Spiel: auf „Menschlich" zittern Bots herum, und sie sind
+leichter als die originalen. Beides ließ sich klären.
+
+**Gespielt wurde ein alter Bau.** Das Spiel lädt sein Spielmodul aus
+`Documents\ioQuake3\baseq3\zz-hitpitch.pk3` (steht in `qconsole.log`), und dort
+lag der Stand vom 29.09. — vor der Überarbeitung der Kantenbremse, die in genau
+dieser Fassung Bots an Kanten festhielt (8,7 Sekunden auf zehn Einheiten). Die
+meisten Schalter der Karte „Bots" kannte dieses Modul noch gar nicht. Das Tool
+schreibt die Cvars trotzdem; ein Modul, das sie nicht kennt, übergeht sie
+stillschweigend.
+
+**Gemessen in genau diesem Aufbau**: q3dm17, zehn Bots auf Stufe 5,
+zielsuchende Raketen für alle, dieselbe `hitsoundlab.cfg`. Mit `g_botLog 3`
+schreibt das Protokoll jedes Serverbild mit (`F`), dazu jeden Treffer (`D`);
+`tools/botlog/jitter.pl` sucht darin Zittern, das schneller ist als ein
+Denkschritt. Ergebnis für den neuen Bau: 0,03 Sekunden je Bot-Minute, beim
+Original 0,01. Stehen ohne Grund: 0,09 Sekunden je Bot-Minute, gleich viel.
+
+**Wer leichter ist, misst ein Stellvertreter.** Bot gegen Bot sagt wenig über
+Mensch gegen Bots, also spielt ein starker Original-Bot (Xaero, Stufe 5) allein
+gegen die zehn — seine Abschüsse je Tod zeigen, wie leicht das Feld ist
+(`tools/botlog/proxy.pl`). Läufe von fünf Minuten; ein einzelner Lauf streut
+um ±0,2, deshalb die Anzahl dazu:
+
+| Feld | Abschüsse je Tod des Stellvertreters | Läufe |
+|---|---|---|
+| Original | 1,85 ± 0,06 | 12 |
+| Menschlich, bis heute | 1,65 ± 0,05 | 21 |
+| … ohne Raketen ausweichen | 1,98 | 6 |
+| … ohne „kämpfen mit dem, was da ist" | 1,58 | 6 |
+| … ohne „Entscheidung halten" | 1,52 | 6 |
+| **Menschlich, neu** | **1,55 ± 0,05** | 27 |
+
+Im gemischten Spiel (fünf gegen fünf, Rollen getauscht, `tools/botlog/dmg.pl`)
+teilt das neue Menschlich 14 Prozent mehr Schaden aus, als es einsteckt, und
+stirbt 53-mal durch die Karte statt 157-mal.
+
+Das Ausweichen ist das Stärkste an „Menschlich" — ohne ist das Feld leichter
+als das Original. Zwei Schalter dagegen machten die Bots leichter, weil sie in
+Kämpfen blieben, die sie verlassen sollten: „kämpfen mit dem, was da ist"
+(Kampf schon ab 40 Leben, mit einer einzigen Rakete) und das Halten einer
+Entscheidung (ein Kampf galt, bis 30 Leben verloren waren). Das erste ist bei
+„Menschlich" jetzt aus, das zweite hält einen Kampf nur noch, solange der Bot
+dabei nicht getroffen wird, und einen Rückzug nur, bis er deutlich stärker
+geworden ist. Das Hin und Her bleibt trotzdem halbiert (21 statt 35 je
+Bot-Minute).
+
+Nachgezählt auch die Sprungfreude: bei Stufe 5 liegt sie in den Charakterdateien
+meist bei 1,0, „Menschlich" setzt 0,25. Mit den Werten der Charaktere war das
+Feld leichter (1,85), nicht schwerer — ein springender Bot fliegt eine
+Wurfparabel, und die ist leicht vorherzusagen. Die 0,25 bleiben.
+
+## Sprungfelder, Pendel und Plattformen
+
+Nachgemessen mit dem Bild-für-Bild-Protokoll, zwölf Bots, je drei Läufe von
+vier Minuten. Drei Befunde, drei Änderungen.
+
+**Die „Zusammenstöße" über den Sprungfeldern waren keine.** Auf q3tourney6
+bricht bei 22 von 22 tödlichen Flügen mit plötzlichem Tempoverlust der Flug an
+einem festen Hindernis ab, nie an einem anderen Bot — immer an denselben zwei
+Stellen. Dort fahren die Rohre der Quetschfalle herunter, wenn jemand den Knopf
+trifft. Zwei Sprungfelder hängen hintereinander, und erst das zweite wirft in
+den Raum darunter (dort liegt die BFG).
+
+Die Rechnung des Tritts (`BotFooting`) hielt jedes Sprungfeld für sicher — „es
+trägt ja". Jetzt rechnet sie den Flug mit, den das Feld gibt (`s.origin2`, genau
+das setzt `BG_TouchJumpPad`), durch alles, was gerade im Weg steht, und folgt
+auch einem zweiten Feld im Flug. Führt der Flug in eine Todeszone oder in die
+Tiefe, wartet der Bot davor, höchstens sechs Sekunden (die Falle bleibt fünf
+unten). Beim Abschuss schreibt das Protokoll, was die Rechnung vorhergesagt hat
+(`P`); verglichen mit dem, was dann geschah, stimmt sie.
+
+Zwei Fehlalarme mussten dafür weg, beide zuerst im Protokoll aufgefallen:
+- die Rechnung hielt andere Bots für Wände, dort wo sie gerade stehen — im
+  echten Flug sind sie längst weg (sie sieht jetzt durch Spieler hindurch);
+- „keine Landung" hieß oft nur, dass die Rechnung an einer Kante hängenblieb
+  (sie rechnet eine Wand je Bild, das Spiel bis zu vier). Als Gefahr zählt es
+  nur noch, wenn sie den Bot dabei tief fallen sieht. Und wer mit zehn Leben
+  eine harte Landung nicht übersteht, wartet nicht: davon wird er nicht gesünder.
+
+In der ersten Fassung standen die Bots auf q3dm17 deshalb je Lauf sieben
+Sekunden vor Sprungfeldern. Jetzt: null.
+
+**Pendel und schwebende Plattformen** (`func_pendulum`, `func_bobbing`) töten
+sofort, was sie nicht wegschieben können. Auf q3dm15 starben zehn Bots unter
+den drei Pendeln des Gangs, alle einfach durchgelaufen; auf q3dm19 standen sie
+dort, wo botlib auf die Plattform wartet, halb unter deren Rand.
+`BotMoverGuard` rechnet eine halbe Sekunde voraus, wo die Falle sein wird und
+wo der Bot mit seinem Befehl ist — getestet mit dem wirklichen Modell der Falle
+(`trap_EntityContact`), in deren Bezugssystem zurückgerechnet. Trifft es, wartet
+er, geht zurück oder weg von der Falle. Wie ein Mensch, der den Takt abpasst.
+Im Protokoll: `M`.
+
+**Nach einer schnellen Landung** darf der Tritt jetzt auch auf dem eigenen Weg
+gegen den Schwung halten, wenn der Bot schneller ist, als sein Befehl ihn
+machen kann: auf q3tourney6 landeten Bots mit 700 u/s und rutschten über die
+Kante.
+
+| je drei Läufe | vorher | jetzt |
+|---|---|---|
+| q3tourney6, Tode durch die Karte | 321 | 221 |
+| q3tourney6, davon zerquetscht | 97 | 81 |
+| q3dm19, Tode durch die Karte | 93 | 67 |
+| q3dm19, davon zerquetscht | 6 | 1 |
+| q3dm15, davon zerquetscht | 12 | 2 |
+
+Auf q3dm17 — deinem Aufbau, Stufe 5 — ändert sich an der Stärke nichts: der
+Stellvertreter kommt gegen das alte Feld auf 1,52 Abschüsse je Tod (41 Läufe),
+gegen das neue auf 1,53 (18 Läufe).
+
+**Was bleibt.** Unter der Quetschfalle auf q3tourney6 liegen die BFG und zwei
+Medipacks; wer dort ist, wenn jemand den Knopf trifft, stirbt — die Falle fährt
+mit tausend Einheiten je Sekunde, dem entkommt niemand. Das ist die Falle der
+Karte, beim Original genauso. Auf q3dm19 warten die Bots an den schwebenden
+Plattformen etwas länger als vorher (Stehen 5,7 statt 4,4 Sekunden je Bot und
+Minute, fast alles Warten auf die Plattform, wie im Original). Und der Anlauf
+zu einem Sprung über eine Lücke bleibt botlib überlassen: dort den Absprung zu
+verschieben, macht ihn schlechter.
+
+## Ersetzte Sockel
+
+Wer unter „Waffen auf der Karte" einengt, legt auf den Sockel der Schrotflinte
+einen Raketenwerfer. botlib liest die Gegenstände einer Karte aber selbst aus
+dem BSP und erkennt sie am Modell: der Eintrag der Schrotflinte blieb für
+immer ohne Entität, und der Raketenwerfer galt als **fallengelassen** — zehn
+statt dreißig Sekunden Sperre nach der Wahl, keine Umwegprüfung beim Nahziel,
+und alle dreißig Sekunden vergessen und neu entdeckt. Auf q3dm17 mit „nur
+Raketenwerfer" betraf das drei der fünf Waffensockel und sechs der acht
+Munitionskisten.
+
+`BotRelinkSocket` (in `code/botlib/be_ai_goal.c`) gibt dem Eintrag des Sockels
+das, was wirklich daliegt — nur in den ersten drei Sekunden nach dem Laden der
+Karte, denn später könnte es eine Waffe sein, die ein Toter genau neben einem
+leeren Sockel fallen ließ. Nachgesehen im Protokoll: die neun Sockel tragen
+jetzt ihre Kartennummer und die Flagge eines Kartengegenstands.
+
+**Das ist eine Änderung an der Engine.** botlib steckt in `ioquake3.exe`,
+nicht im Spielmodul. Das Spielmodul fragt beim Start, ob die Bibliothek das
+Umwidmen kennt; bei einer älteren `.exe` nimmt es wie bisher den Aufschlag für
+Fallengelassenes ganz weg und schreibt das in die Konsole.
 
 ## Die Trefferton von Quake 1 und Quake 2
 

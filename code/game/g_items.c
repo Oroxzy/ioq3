@@ -556,7 +556,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		ent->think = RespawnItem;
 		// Werkbank: den Bots sagen, wann er wiederkommt - sonst weiss es nur der,
 		// der ihn gerade genommen hat.
-		BotItemTaken( ent, respawn );
+		BotItemTaken( ent, other, respawn );
 	}
 	trap_LinkEntity( ent );
 }

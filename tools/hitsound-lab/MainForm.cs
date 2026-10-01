@@ -90,30 +90,156 @@ public class MainForm : Form, IMessageFilter {
 	// Aufgefuellt wird auf 999 und nicht auf "unendlich", weil die Bots ihre
 	// Waffenwahl an den Munitionszahlen festmachen - siehe G_TopUpAmmo.
 	readonly ComboBox infiniteAmmo = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+	// Alles ab hier bis zum Bot-Protokoll steht auf der Karte „Bots“. Die
+	// Beschriftungen sagen deshalb nicht mehr „Bots …“ - die Karte heißt schon
+	// so. Jede Vorgabe ist der Stand „Standard Q3“: eine Einstellungsdatei, die
+	// einen Regler noch nicht kennt, lässt ihn damit beim Original.
+	//
 	// Die Bots haben zwar eine Kantenpruefung, aber sie verweigert nur den
 	// Befehl - gebremst wird nirgends, und bei dreihundertzwanzig Einheiten je
 	// Sekunde braucht die Reibung rund fuenfzig Einheiten Weg. Siehe BotEdgeCare.
-	readonly CheckBox botEdgeCare = new() { Text = "Bots nicht in die Leere laufen lassen", Checked = false, AutoSize = true };
+	readonly CheckBox botEdgeCare = new() { Text = "nicht in die Leere laufen", Checked = false, AutoSize = true };
+	// Das Gegenstück in der Luft: wen ein Treffer über die Kante wirft, der hält
+	// dagegen. Im Original steht an der Stelle ein FIXME. Siehe BotFooting.
+	readonly CheckBox botAirControl = new() { Text = "in der Luft zurück ans Land steuern", Checked = false, AutoSize = true };
+	readonly CheckBox botDodge = new() { Text = "Raketen ausweichen", Checked = false, AutoSize = true };
+	// Ein Fleck ohne Wegnetz: von dort führt kein Weg zu irgendeinem Ziel, und
+	// der Bot steht, bis ihn jemand abschießt.
+	readonly CheckBox botUnstuck = new() { Text = "von Simsen ohne Wegnetz herunterkommen", Checked = false, AutoSize = true };
+	// Zwei Cvars hinter einer Auswahl, weil es eine Frage ist: bot_rocketjump
+	// sagt ob überhaupt, g_botRocketJump wer und unter welcher Bedingung. Als
+	// Haken konnte das nur „öfter“ und nie „gar nicht“. Die Einträge und ihre
+	// Reihenfolge stehen im Konstruktor, die Übersetzung in BuildConfig.
+	readonly ComboBox botRocketJumpMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
 	// Ohne Bodenreibung behaelt man beim Springen sein Tempo. Die Bots machen
 	// das von sich aus nie - siehe BotSpeedJump.
-	readonly CheckBox botJump = new() { Text = "Bots hüpfen, um Tempo zu halten", Checked = false, AutoSize = true };
-	// Jede Chatzeile kostet den Bot genau zwei Sekunden Stillstand - AINode_Stand
-	// gibt gar keinen Bewegungsbefehl. Betrifft auch "Gegner tot" mitten im Kampf.
-	readonly CheckBox botNoChat = new() { Text = "Bots nicht quatschen lassen (kostet 2 s Stillstand)", Checked = false, AutoSize = true };
+	readonly CheckBox botJump = new() { Text = "hüpfen, um Tempo zu halten (gemessen: bringt nichts)", Checked = false, AutoSize = true };
+	readonly NumericUpDown botJumper = CharValue();
+	readonly NumericUpDown botCroucher = CharValue();
 	// BotAggression gibt null zurück, sobald der Gegner 200 Einheiten höher
 	// steht - auf einer Karte aus Plattformen also fast immer.
-	readonly CheckBox botFightUp = new() { Text = "Bots auch nach oben kämpfen lassen", Checked = false, AutoSize = true };
+	readonly CheckBox botFightUp = new() { Text = "auch nach oben kämpfen", Checked = false, AutoSize = true };
+	// Feste Schwellen - fünf Raketen, sechzig Leben - statt der Frage, ob der
+	// Bot mit dem, was er in der Hand hat, kämpfen kann.
+	readonly CheckBox botBrave = new() { Text = "kämpfen mit dem, was da ist", Checked = false, AutoSize = true };
+	readonly CheckBox botHear = new() { Text = "Schüsse, Sprünge und Schritte hören", Checked = false, AutoSize = true };
+	// In Sekunden. Null ist das Original: die Entscheidung kippt mit jedem
+	// Denkschritt neu.
+	readonly NumericUpDown botSteady = new() { DecimalPlaces = 1, Increment = 0.5m, Minimum = 0m, Maximum = 5m, Value = 0m, Width = 70 };
 	// Eine Zahl, die ganze Leiter: unter 0,2 steht der Bot still, über 0,7
-	// umkreist er mit Rhythmus. Und Lagern ist Stillstand.
-	readonly CheckBox botMoveSkill = new() { Text = "Bots beweglicher (Kampfkönnen hoch, kein Lagern)", Checked = false, AutoSize = true };
+	// umkreist er mit Rhythmus. Früher ein Haken zusammen mit dem Lagern, der
+	// nur 0,9 oder „Charakterdatei“ kannte.
+	readonly NumericUpDown botAttackSkill = CharValue();
+	// Die Reaktionszeit ist die einzige der Charakterzahlen in Sekunden, also
+	// reicht sie über eins hinaus.
+	readonly NumericUpDown botReaction = SnapToCharacter( new() { DecimalPlaces = 2, Increment = 0.1m, Minimum = -1m, Maximum = 5m, Value = -1m, Width = 70 } );
+	readonly NumericUpDown botAimAccuracy = CharValue();
+	readonly NumericUpDown botAimSkill = CharValue();
+	readonly NumericUpDown botAlertness = CharValue();
+	readonly NumericUpDown botFireThrottle = CharValue();
+	readonly CheckBox botChallenge = new() { Text = "Herausforderung (bot_challenge)", Checked = false, AutoSize = true };
 	// Das Fernziel ist zwanzig Sekunden gesperrt, und Schaden loest die Sperre
 	// nirgends - ein Bot auf dreissig Leben holt weiter die Waffe statt Medipack.
-	readonly CheckBox botRethink = new() { Text = "Bots nach Treffern neu planen lassen", Checked = false, AutoSize = true };
+	readonly CheckBox botRethink = new() { Text = "nach Treffern neu planen", Checked = false, AutoSize = true };
 	// Das Spielmodul kennt jeden Respawn-Zeitpunkt und gibt ihn nie weiter.
-	readonly CheckBox botTiming = new() { Text = "Bots die Respawn-Zeiten mitzählen lassen", Checked = false, AutoSize = true };
-	// 225 Raketensprung-Verbindungen auf der Karte, blockiert von einer
-	// Gesundheitsklausel.
-	readonly CheckBox botRocketJump = new() { Text = "Bots öfter Raketensprünge machen lassen", Checked = false, AutoSize = true };
+	readonly CheckBox botTiming = new() { Text = "Respawn-Zeiten mitzählen", Checked = false, AutoSize = true };
+	readonly CheckBox botGrab = new() { Text = "im Kampf Gegenstände mitnehmen", Checked = false, AutoSize = true };
+	// Braucht das Hören: ohne botHear ist der Haken grau, und in die Config
+	// geht 0 - siehe UpdateBotEnabled.
+	readonly CheckBox botHunt = new() { Text = "ohne Gegner dorthin gehen, wo Lärm war", Checked = false, AutoSize = true };
+	// Prozent der Zielwahlen, ganzzahlig.
+	readonly NumericUpDown botVariety = new() { DecimalPlaces = 0, Increment = 5m, Minimum = 0m, Maximum = 100m, Value = 0m, Width = 70 };
+	// Lagern ist Stillstand.
+	readonly NumericUpDown botCamper = CharValue();
+	// Tausend ist das Original, und das ist mehr als jedes Powerup: die Bots
+	// laufen jeder Waffe nach, die ein Toter fallen lässt.
+	readonly NumericUpDown botDroppedWeight = new() { DecimalPlaces = 0, Increment = 50m, Minimum = 0m, Maximum = 1000m, Value = 1000m, Width = 70 };
+	// Jede Chatzeile kostet den Bot genau zwei Sekunden Stillstand - AINode_Stand
+	// gibt gar keinen Bewegungsbefehl. Betrifft auch "Gegner tot" mitten im Kampf.
+	readonly CheckBox botNoChat = new() { Text = "nicht quatschen (kostet 2 s Stillstand je Zeile)", Checked = false, AutoSize = true };
+	// Das Protokoll ist ein Messgerät und keine Eigenschaft der Bots: die
+	// beiden Knöpfe fassen es nicht an, und die Statuszeile zählt es nicht mit.
+	readonly CheckBox botLog = new() { Text = "Bot-Protokoll schreiben (botlog.log)", Checked = false, AutoSize = true };
+	readonly Label botPresetValue = new() { AutoSize = true, ForeColor = Color.DimGray };
+
+	// Ein Wert aus der Charakterdatei, 0 bis 1 - oder -1 für „lass stehen, was
+	// in der Datei steht“. Das Spiel nimmt jede Vorgabe ab null und liest bei
+	// allem darunter die Datei, siehe BotChar in code/game/ai_dmq3.c.
+	static NumericUpDown CharValue() => SnapToCharacter( new() {
+		DecimalPlaces = 2, Increment = 0.05m, Minimum = -1m, Maximum = 1m, Value = -1m, Width = 70,
+	} );
+
+	// Zwischen -1 und 0 gibt es für das Spiel nichts: BotChar nimmt eine Vorgabe
+	// ab null und liest bei allem darunter die Charakterdatei. Ein Feld auf
+	// -0,5 hieße also dasselbe wie -1, und die Statuszeile meldete trotzdem
+	// „eigene Einstellung“. Der Schritt von -1 nach oben landet deshalb auf 0,
+	// der von 0 nach unten auf -1.
+	static NumericUpDown SnapToCharacter( NumericUpDown box ) {
+		decimal last = box.Value;
+		box.ValueChanged += ( _, _ ) => {
+			if ( box.Value > -1m && box.Value < 0m ) {
+				// kommt mit einem gültigen Wert gleich wieder hier an
+				box.Value = last < 0m ? 0m : -1m;
+				return;
+			}
+			last = box.Value;
+		};
+		return box;
+	}
+
+	// Was die beiden Knöpfe stellen und woran die Statuszeile den Stand erkennt:
+	// je Regler der Wert für „Standard Q3“ und der für „Menschlich“. Ein Haken
+	// ist 0 oder 1, eine Auswahl ihr Index, ein Zahlenfeld sein Wert.
+	//
+	// EINE Tabelle für beides, mit Absicht. Stünden die Werte einmal im Knopf
+	// und einmal im Vergleich, liefen die beiden beim ersten neuen Regler
+	// auseinander - und die Zeile behauptete „eigene Einstellung“, direkt
+	// nachdem man „Menschlich“ gedrückt hat.
+	//
+	// Nicht darin: bots und skill (die Besetzung ist keine Eigenschaft der
+	// Bots) und botLog. Die Reihenfolge ist die der Karte und der Config.
+	//
+	// Als Eigenschaft und nicht als Feld, weil ein Feld die Regler bei seiner
+	// Vorbelegung noch nicht nennen darf.
+	(Control Box, decimal Stock, decimal Human)[]? botPresetTable;
+	(Control Box, decimal Stock, decimal Human)[] BotPresets => botPresetTable ??= new (Control, decimal, decimal)[] {
+		// Bewegung
+		( botEdgeCare,       0,  1 ),
+		( botAirControl,     0,  1 ),
+		( botDodge,          0,  1 ),
+		( botUnstuck,        0,  1 ),
+		( botRocketJumpMode, 1,  2 ),
+		// gemessen bringt das Hüpfen nichts, also bleibt es auch hier aus
+		( botJump,           0,  0 ),
+		( botJumper,        -1,  0.25m ),
+		( botCroucher,      -1, -1 ),
+		// Kampf
+		( botFightUp,        0,  1 ),
+		// gemessen macht das die Bots leichter: sie bleiben in Kämpfen, die sie
+		// verlassen sollten - also bei „Menschlich“ aus, der Haken bleibt
+		( botBrave,          0,  0 ),
+		( botHear,           0,  1 ),
+		( botSteady,         0,  1.5m ),
+		( botAttackSkill,   -1,  0.9m ),
+		// Zielen und Reagieren bleiben beim Charakter: gegen diese Bots wird
+		// gemessen, und ein Bot, der besser trifft, ist nicht menschlicher
+		( botReaction,      -1, -1 ),
+		( botAimAccuracy,   -1, -1 ),
+		( botAimSkill,      -1, -1 ),
+		( botAlertness,     -1, -1 ),
+		( botFireThrottle,  -1, -1 ),
+		( botChallenge,      0,  0 ),
+		// Ziele und Gegenstände
+		( botRethink,        0,  1 ),
+		( botTiming,         0,  1 ),
+		( botGrab,           0,  1 ),
+		( botHunt,           0,  1 ),
+		( botVariety,        0,  25 ),
+		( botCamper,        -1,  0 ),
+		( botDroppedWeight, 1000, 100 ),
+		// Sonstiges
+		( botNoChat,         0,  1 ),
+	};
 	// Nachladezeiten in Prozent der normalen, nur fuer Menschen. Zehn Prozent
 	// ist der Boden; darunter bliebe der Zielhilfe kein Bild mehr, auf dem sie
 	// den Schuss kommen sieht.
@@ -686,9 +812,26 @@ public class MainForm : Form, IMessageFilter {
 		infiniteAmmo.SelectedIndex = 0;
 		infiniteAmmo.SelectedIndexChanged += ( _, _ ) => UpdateSwitchEnabled();
 		autoSwitch.CheckedChanged += ( _, _ ) => UpdateSwitchEnabled();
+		// Das Original ist der Eintrag 1 und nicht 0: abgeschaltet ist der
+		// Raketensprung in Quake 3 nur, wenn man es ausdrücklich verlangt.
+		botRocketJumpMode.Items.AddRange( new object[] {
+			"gar nicht", "wie der Charakter (Original)", "alle, mit Gesundheitsklausel", "alle, auch ohne Rüstung" } );
+		botRocketJumpMode.SelectedIndex = 1;
+		// Die Statuszeile rechnet sofort und nicht über BeginInvoke: LoadSettings
+		// läuft, bevor das Fenster ein Handle hat, und dort wirft BeginInvoke.
+		// Einen Aufschub braucht es hier auch nicht - anders als bei ItemCheck
+		// steht der neue Wert schon im Regler, wenn das Ereignis kommt.
+		foreach ( var p in BotPresets ) {
+			if ( p.Box is CheckBox check ) check.CheckedChanged += ( _, _ ) => ShowBotPreset();
+			else if ( p.Box is ComboBox list ) list.SelectedIndexChanged += ( _, _ ) => ShowBotPreset();
+			else if ( p.Box is NumericUpDown number ) number.ValueChanged += ( _, _ ) => ShowBotPreset();
+		}
+		botHear.CheckedChanged += ( _, _ ) => UpdateBotEnabled();
 		holdLottery.ValueChanged += ( _, _ ) => ShowHoldLottery();
 		ShowHoldLottery();
 		// die Folge-Felder auf den Standard-Hakenstand bringen
+		UpdateBotEnabled();
+		ShowBotPreset();
 		UpdateItemEnabled();
 		ShowItemRange();
 		ShowWeaponRate();
@@ -1279,6 +1422,13 @@ public class MainForm : Form, IMessageFilter {
 		var tabs = new TabControl { Dock = DockStyle.Fill };
 		settingsTabs = tabs;
 		tabs.TabPages.Add( SettingsPage( "Spiel", BuildMatchBox(), BuildSpawnBox() ) );
+		// Die Bots hatten acht Haken mitten in „Spiel“, zwischen Selbstschaden
+		// und Munition, und es kommen achtzehn Regler dazu. Gleich an zweiter
+		// Stelle, weil sie nach der Map das sind, was eine Sitzung ausmacht -
+		// dass sich die Nummern der Karten dahinter um eins verschieben und ein
+		// gemerkter settingsTab einmal daneben liegt, ist hingenommen.
+		tabs.TabPages.Add( SettingsPage( "Bots", BuildBotPresetBox(), BuildBotCastBox(), BuildBotMoveBox(),
+			BuildBotFightBox(), BuildBotGoalBox(), BuildBotMiscBox() ) );
 		// Die Zielsuch-Raketen haben achtzehn Regler bekommen - mehr als jede
 		// andere Gruppe. Auf "Spiel" hätten sie alles andere verdrängt.
 		tabs.TabPages.Add( SettingsPage( "Raketen", BuildHomingBox(), BuildHomingFlightBox() ) );
@@ -1320,19 +1470,12 @@ public class MainForm : Form, IMessageFilter {
 		};
 
 		// Starten/Speichern/Status und der Bau-Stempel sitzen jetzt oben fest,
-		// ausserhalb der Karten - siehe BuildHeader.
+		// ausserhalb der Karten - siehe BuildHeader. Wie viele Bots und wie gut
+		// sie sind, steht mit allem anderen über sie auf der Karte „Bots“.
 		return Group( "Spiel",
 			Row( Labelled( "Spielordner:", gameDir ), browse ),
-			Row( Labelled( "Map:", map ), Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ),
+			Row( Labelled( "Map:", map ) ),
 			Row( Pad( noSelfDamage ) ),
-			Row( Pad( botEdgeCare ) ),
-			Row( Pad( botJump ) ),
-			Row( Pad( botNoChat ) ),
-			Row( Pad( botFightUp ) ),
-			Row( Pad( botMoveSkill ) ),
-			Row( Pad( botRethink ) ),
-			Row( Pad( botTiming ) ),
-			Row( Pad( botRocketJump ) ),
 			Row( Labelled( "Munition:", infiniteAmmo ) ),
 			Row( Labelled( "Nachladezeit:", weaponRate ), weaponRateDefault ),
 			Row( Pad( weaponRateValue ) ),
@@ -1422,6 +1565,270 @@ public class MainForm : Form, IMessageFilter {
 		spawnValue.Text = n == 1
 			? "jeder Waffensockel und jede Munitionskiste wird zu dieser einen Waffe"
 			: $"alle Waffensockel und Munitionskisten werden auf diese {n} Waffen verteilt";
+	}
+
+	// Die Karte „Bots“, oberste Gruppe: zwei Knöpfe, die alles auf einmal
+	// stellen, und die Zeile, die sagt, welcher Stand gerade gilt. Die Zeile
+	// steht unter den Knöpfen und nicht daneben - mit ihrem längsten Text wäre
+	// die Reihe breiter als die Spalte bei der kleinsten Teilerstellung.
+	GroupBox BuildBotPresetBox() {
+		// Mit eigener Hoehe und Rand: als erste Zeile direkt unter der
+		// Gruppenbeschriftung wurden die Knoepfe sonst unten abgeschnitten.
+		var stock = new Button { Text = "Standard Q3", Width = 124, Height = 26, Margin = new Padding( 0, 4, 6, 4 ) };
+		var human = new Button { Text = "Menschlich", Width = 124, Height = 26, Margin = new Padding( 0, 4, 0, 4 ) };
+		stock.Click += ( _, _ ) => ApplyBotPreset( false );
+		human.Click += ( _, _ ) => ApplyBotPreset( true );
+
+		hintTip.SetToolTip( stock, "Stellt jeden Regler dieser Karte auf das Original: alle Haken aus, der"
+			+ " Raketensprung wie der Charakter, jede Zahl aus der Charakterdatei. Bots, Können und das"
+			+ " Bot-Protokoll bleiben, wie sie sind." );
+		hintTip.SetToolTip( human, "Stellt jeden Regler dieser Karte auf den empfohlenen Wert. Zielen und"
+			+ " Reagieren bleiben dabei beim Charakter – ein Bot, der besser trifft, ist nicht"
+			+ " menschlicher. Bots, Können und das Bot-Protokoll bleiben, wie sie sind.\n\n"
+			+ "Achtung für die Messung: fast jeder dieser Regler ändert, wie sich die Bots bewegen –"
+			+ " also das, wogegen die Vorhersage gemessen wird. Neue Basislinie nötig, bevor du gegen"
+			+ " alte Zahlen vergleichst." );
+
+		return Group( "Voreinstellung",
+			Row( stock, human ),
+			Row( Pad( botPresetValue ) ) );
+	}
+
+	// Wie viele und wie gut. Die Knöpfe fassen beides nicht an: die Besetzung
+	// gehört zur Sitzung und nicht zum Verhalten, und wer zehn Bots auf Stufe
+	// fünf eingestellt hat, will sie nach „Menschlich“ noch haben.
+	GroupBox BuildBotCastBox() {
+		return Group( "Besetzung",
+			Row( Labelled( "Bots:", bots ), Labelled( "Können:", skill ) ) );
+	}
+
+	// Die Zahlenfelder je eine Zeile: zwei nebeneinander wären mit diesen
+	// Beschriftungen breiter als die Spalte.
+	GroupBox BuildBotMoveBox() {
+		hintTip.SetToolTip( botEdgeCare, "In jedem Bild wird vorausgerechnet, wo der Bot mit seinem Befehl in"
+			+ " den nächsten vier Zehntelsekunden landet – mit Reibung, Schwung und Schwerkraft wie"
+			+ " im Spiel. Ist das Leere, Lava, Schleim oder eine Todeszone, bekommt er das Mildeste,"
+			+ " was hilft: kein Sprung, Schritttempo, stehenbleiben, gegensteuern. Auf seinem Weg"
+			+ " nach der Karte wird er nie angehalten, nur gebremst, wenn er damit wirklich landet.\n\n"
+			+ "Gemessen auf den sechs Karten mit Grube oder Lava, zwölf Bots, je Lauf vier Minuten:"
+			+ " 40 Tode durch die Karte statt 72 beim Original." );
+		hintTip.SetToolTip( botAirControl, "Wirft ein Treffer den Bot über eine Kante oder stößt er im Flug mit"
+			+ " jemandem zusammen, steuert er dorthin, wo die Rechnung wieder eine Landung findet –"
+			+ " zuerst zurück zum letzten sicheren Stand. Das Original lässt sich fallen. Einen"
+			+ " geplanten Flug (Sprungfeld, Sprung über eine Lücke) lässt das in Ruhe." );
+		hintTip.SetToolTip( botDodge, "Fliegt eine Rakete auf den Bot zu und er sieht sie, macht er einen"
+			+ " Schritt quer zur Flugbahn – aber nie über eine Kante. Nicht jeder sieht jede"
+			+ " rechtzeitig: auf Könnensstufe 1 weicht er 44 von 100 aus, auf Stufe 5 allen."
+			+ " Gemessen mit zehn Bots und nur Raketenwerfern, je drei Läufe: 148 statt 171 Tode in"
+			+ " fünf Minuten, und nicht mehr Stürze." );
+		hintTip.SetToolTip( botUnstuck, "Ein Bot kennt die Karte nur als Netz von Feldern. Landet er daneben –"
+			+ " auf einem Sims, einem Zierrat –, führt von dort kein Weg zu irgendeinem Ziel, und er"
+			+ " steht, bis ihn jemand abschießt; gemessen einmal achtzig Sekunden lang. Mit Haken sucht"
+			+ " er nach einer Sekunde den nächsten Boden, auf dem es weitergeht, und geht hin – auch"
+			+ " über die Kante." );
+		// Der Text des alten Hakens, auf die vier Einträge umgeschrieben. Die 55
+		// Leben, die dort standen, gibt es nicht mehr: die gelockerte Klausel hat
+		// die Stürze verdoppelt und ist im Spiel wieder auf 60 - siehe
+		// BotCanAndWantsToRocketJump in code/game/ai_dmq3.c.
+		hintTip.SetToolTip( botRocketJumpMode, "Auf q3dm17 liegen 225 Raketensprung-Verbindungen, und der"
+			+ " Ausführer ist vollständig – was sie verhindert, ist eine Klausel: mindestens 60 Leben,"
+			+ " und unter 90 zusätzlich 40 Rüstung. Dazu kommt die Sprungfreude aus der Charakterdatei"
+			+ " (sieben Charaktere liegen darunter).\n\n"
+			+ "„alle, mit Gesundheitsklausel“ übergeht nur die Sprungfreude. „alle, auch ohne Rüstung“"
+			+ " lässt zusätzlich die Rüstung fallen; die 60 Leben bleiben in jedem Fall, denn ein"
+			+ " Raketensprung kostet um die fünfzig. „gar nicht“ schaltet ihn für alle ab.\n\n"
+			+ "Gemessen, ehrlich: auf q3dm17 springt trotzdem keiner, in keinem Lauf. Die Wegsuche"
+			+ " rechnet einen Raketensprung mit 300 und ein Sprungfeld mit 200, und auf dem Rückzug –"
+			+ " zwei Drittel der Zeit – erlaubt das Original ihn gar nicht. Der Regler wirkt nur dort,"
+			+ " wo ein Raketensprung der einzige Weg ist." );
+		hintTip.SetToolTip( botJump, "Springt ein Bot beim Laufen, verliert er kein Tempo an die Bodenreibung."
+			+ " Gesprungen wird nur geradeaus, schon schnell und mit Boden voraus – nicht beim"
+			+ " Ausweichen im Gefecht, denn ein Bot in der Luft fliegt eine Wurfparabel und ist"
+			+ " damit leichter zu treffen, nicht schwerer.\n\n"
+			+ "Achtung für die Messung: mehr springende Bots heißt mehr Ziele in der Luft, und"
+			+ " die Vorhersage trifft die viel besser als laufende. Sitzungen mit und ohne diesen"
+			+ " Haken sind nicht direkt vergleichbar." );
+		hintTip.SetToolTip( botJumper, "Wie gern ein Bot im Kampf springt: bei jedem Denkschritt ein Würfelwurf"
+			+ " gegen diese Zahl, höchstens ein Sprung je Sekunde. " + FromCharacter );
+		hintTip.SetToolTip( botCroucher, "Wie gern ein Bot sich im Kampf duckt, und wie lange: fünf Sekunden"
+			+ " mal diese Zahl. " + FromCharacter );
+
+		return Group( "Bewegung",
+			Row( Pad( botEdgeCare ) ),
+			Row( Pad( botAirControl ) ),
+			Row( Pad( botDodge ) ),
+			Row( Pad( botUnstuck ) ),
+			Row( Labelled( "Raketensprung:", botRocketJumpMode ) ),
+			Row( Pad( botJump ) ),
+			Row( Labelled( "Sprungfreude im Kampf:", botJumper ) ),
+			Row( Labelled( "Ducken im Kampf:", botCroucher ) ) );
+	}
+
+	GroupBox BuildBotFightBox() {
+		hintTip.SetToolTip( botFightUp, "BotAggression gibt null zurück, sobald der Gegner mehr als 200 Einheiten"
+			+ " höher steht – noch bevor Waffe oder Munition angesehen werden – und der Bot zieht"
+			+ " sich zurück. Auf q3dm17 ist das fast jeder Kampf. Mit dem Haken gilt die Grenze nur"
+			+ " noch für Waffen, mit denen nach oben nichts auszurichten ist." );
+		hintTip.SetToolTip( botBrave, "Im Original zieht sich ein Bot zurück, sobald er fünf Raketen oder"
+			+ " weniger hat oder unter 60 Leben fällt – gemessen ist er drei Viertel der Zeit auf dem"
+			+ " Rückzug. Mit Haken zählt, ob er eine Waffe mit Munition hat und ob Leben und Rüstung"
+			+ " zusammen reichen (70, die Rüstung zu zwei Dritteln gerechnet). Wer das Quad trägt, dem"
+			+ " stellt sich keiner, der es nicht selbst hat.\n\n"
+			+ "Gemessen macht das die Bots leichter: auf q3dm17, Stufe 5, kam ein starker Spieler"
+			+ " gegen zehn solche Bots auf mehr Abschüsse je Tod als ohne. Deshalb bei „Menschlich“ aus." );
+		hintTip.SetToolTip( botHear, "Die Bots sind im Original taub: jedes Geräusch fällt in einen leeren"
+			+ " Zweig. Mit Haken bemerkt ein Bot, wer in Hörweite schießt, springt oder landet – auch"
+			+ " hinter seinem Rücken. Sehen muss er ihn trotzdem können." );
+		hintTip.SetToolTip( botSteady, "Kampf, Rückzug und Verfolgung hängen im Original an derselben"
+			+ " Schwelle und kippen bei jedem Denkschritt neu – gemessen 17 Hin-und-Her je Bot und"
+			+ " Minute, mit 1,5 Sekunden noch 5. Eine getroffene Entscheidung gilt so viele Sekunden –"
+			+ " ein Kampf aber nur, solange der Bot dabei nicht getroffen wird, und ein Rückzug nur, bis"
+			+ " er deutlich stärker geworden ist (25 Leben und Rüstung). Verschwindet der Gegner"
+			+ " hinter einer Ecke, bleibt der Bot vier Zehntelsekunden beim Kampf, statt sofort die"
+			+ " Verfolgung aufzunehmen. 0 ist das Original." );
+		// Der Text des alten Hakens „Bots beweglicher“, ohne dessen ersten Satz:
+		// der setzte diese Zahl und das Lagern zusammen, jetzt hat jedes sein Feld.
+		hintTip.SetToolTip( botAttackSkill, "Diese eine Zahl ist die ganze Leiter der Kampfbewegung: unter 0,2"
+			+ " steht der Bot still, bis 0,4 läuft er nur geradeaus vor und zurück, erst darüber"
+			+ " umkreist er, und erst über 0,7 mit dem zufälligen Rhythmus, den ein Mensch hat. "
+			+ FromCharacter + "\n\n"
+			+ "Achtung: diese Zahl und das Lagern ändern, wie sich die Bots bewegen – also das,"
+			+ " wogegen die Vorhersage gemessen wird. Neue Basislinie nötig, bevor du gegen alte"
+			+ " Zahlen vergleichst." );
+		hintTip.SetToolTip( botReaction, "So lange nach dem ersten Blick auf den Gegner schießt ein Bot noch"
+			+ " nicht, in Sekunden. " + FromCharacter );
+		hintTip.SetToolTip( botAimAccuracy, "Wie genau ein Bot den Punkt trifft, auf den er zielt: je weiter"
+			+ " unter 1, desto mehr streut er. " + FromCharacter );
+		hintTip.SetToolTip( botAimSkill, "Wie gut ein Bot vorhält, also die Bewegung des Gegners und die"
+			+ " Flugzeit des Geschosses einrechnet. " + FromCharacter );
+		hintTip.SetToolTip( botAlertness, "Wie weit ein Bot einen Gegner bemerkt: 900 Einheiten und dazu 4000"
+			+ " mal diese Zahl. " + FromCharacter );
+		hintTip.SetToolTip( botFireThrottle, "Wie ein Bot sein Feuer einteilt: Salven und Pausen dazwischen."
+			+ " Am längsten sind die Pausen bei 0,5; bei 0 und bei 1 schießt er durch. " + FromCharacter );
+		hintTip.SetToolTip( botChallenge, "Der Schalter aus dem Original: die Sicht schwenkt ohne Überschwingen,"
+			+ " und ein Bot mit hoher Zielgenauigkeit, der den Gegner eine Sekunde im Blick hat, setzt"
+			+ " sie geradewegs auf den Punkt." );
+
+		return Group( "Kampf",
+			Row( Pad( botFightUp ) ),
+			Row( Pad( botBrave ) ),
+			Row( Pad( botHear ) ),
+			Row( Labelled( "Entscheidung halten (s):", botSteady ) ),
+			Row( Labelled( "Kampfbewegung:", botAttackSkill ) ),
+			Row( Labelled( "Reaktionszeit (s):", botReaction ) ),
+			Row( Labelled( "Zielgenauigkeit:", botAimAccuracy ) ),
+			Row( Labelled( "Zielkönnen (Vorhalt):", botAimSkill ) ),
+			Row( Labelled( "Wachsamkeit:", botAlertness ) ),
+			Row( Labelled( "Feuerdisziplin:", botFireThrottle ) ),
+			Row( Pad( botChallenge ) ) );
+	}
+
+	GroupBox BuildBotGoalBox() {
+		hintTip.SetToolTip( botRethink, "Ein Bot sperrt sein Fernziel für zwanzig Sekunden, und Schaden löst die"
+			+ " Sperre nirgends – wer von hundert auf dreißig fällt, holt weiter die Waffe, die sein"
+			+ " gesundes Ich ausgesucht hat. Die Gewichte sind sehr wohl gesundheitsabhängig, sie"
+			+ " werden nur nie neu ausgewertet. Ab 25 Schaden wird die Sperre gelöst, höchstens alle"
+			+ " zwei Sekunden." );
+		hintTip.SetToolTip( botTiming, "Das Spielmodul kennt den Wiederkehr-Zeitpunkt jedes Gegenstands auf die"
+			+ " Millisekunde und gibt ihn nie weiter. Ein Bot merkt sich nur, was er SELBST genommen"
+			+ " hat – nimmst du das Quad, laufen sie weiter zu der leeren Stelle, und wenn es"
+			+ " wiederkommt, steht keiner dort. Mit dem Haken erfährt jeder Bot jede Aufnahme.\n\n"
+			+ "Auf Powerups, Rüstung, die großen Medipacks und eine Waffe, die er noch nicht hat, geht"
+			+ " er zwei Sekunden vorher los und wartet dort – das Original hält eine leere Stelle für"
+			+ " „Ziel erledigt“ und dreht ab. Und was ein Toter fallen ließ, gilt als weg, sobald es"
+			+ " jemand genommen hat." );
+		hintTip.SetToolTip( botGrab, "Im reinen Kampf nimmt ein Bot im Original nichts auf, auch nicht die"
+			+ " Rüstung zwei Schritte neben ihm." );
+		hintTip.SetToolTip( botHunt, "Hat ein Bot keinen Gegner und ist gut ausgestattet, geht er dorthin, wo"
+			+ " er zuletzt etwas gehört hat, statt zur nächsten Munitionskiste. Braucht das Hören." );
+		hintTip.SetToolTip( botVariety, "Die Zielwahl ist im Original streng: bestes Gewicht durch Wegzeit,"
+			+ " immer. Alle Bots laufen deshalb dieselben Wege. Mit 25 % nimmt ein Bot jedes vierte Mal"
+			+ " das zweitbeste Ziel." );
+		hintTip.SetToolTip( botCamper, "Wie gern ein Bot an einer Stelle lagert, statt zu laufen – und Lagern"
+			+ " ist Stillstand. Unter 0,1 lagert er nie. " + FromCharacter );
+		hintTip.SetToolTip( botDroppedWeight, "Was einem Bot ein Gegenstand zusätzlich wert ist, den ein Toter"
+			+ " fallen ließ. Im Original tausend Punkte – ein Quad wiegt vierhundert –, und deshalb"
+			+ " läuft jeder Bot jeder fallengelassenen Waffe nach, auch wenn er sie schon hat. Gemessen"
+			+ " gingen damit zwei von drei Zielwahlen an Fallengelassenes. Bei 0 zählt nur noch, was der"
+			+ " Gegenstand selbst wert ist. Wird beim Laden der Karte gelesen." );
+
+		return Group( "Ziele und Gegenstände",
+			Row( Pad( botRethink ) ),
+			Row( Pad( botTiming ) ),
+			Row( Pad( botGrab ) ),
+			Row( Pad( botHunt ) ),
+			Row( Labelled( "zweitbestes Ziel nehmen (%):", botVariety ) ),
+			Row( Labelled( "Lagern:", botCamper ) ),
+			Row( Labelled( "Aufschlag für Fallengelassenes:", botDroppedWeight ) ) );
+	}
+
+	GroupBox BuildBotMiscBox() {
+		hintTip.SetToolTip( botNoChat, "Ein Bot, der etwas sagt, steht dafür genau zwei Sekunden völlig still –"
+			+ " AINode_Stand gibt keinen einzigen Bewegungsbefehl. Ausgelöst wird das unter"
+			+ " anderem durch \"Gegner tot\" mitten im Gefecht, durch Treffer und durch reinen"
+			+ " Zufall. Mit diesem Haken reden sie nicht mehr und bleiben in Bewegung." );
+		hintTip.SetToolTip( botLog, "Schreibt je Denkschritt und Bot eine Zeile nach botlog.log im"
+			+ " Homeverzeichnis (baseq3). Ausgewertet wird mit tools/botlog/botlog.pl. Zehn Bots"
+			+ " schreiben rund 400 Kilobyte je Minute." );
+
+		return Group( "Sonstiges",
+			Row( Pad( botNoChat ) ),
+			Row( Pad( botLog ) ) );
+	}
+
+	// Der Zusatz, der an jedem Charakterwert hängt. Einmal hier, damit er
+	// überall gleich lautet - das Minus ist das echte, nicht der Bindestrich.
+	const string FromCharacter = "−1 lässt den Wert aus der Charakterdatei stehen.";
+
+	// Ohne das Hören gibt es keinen Lärm, zu dem ein Bot gehen könnte. Der
+	// Haken wird grau und behält seinen Stand, damit er wieder da ist, wenn das
+	// Hören zurückkommt; in die Config geht so lange 0.
+	void UpdateBotEnabled() {
+		botHunt.Enabled = botHear.Checked;
+	}
+
+	bool BotHuntOn => botHear.Checked && botHunt.Checked;
+
+	// Was ein Regler gerade gilt, in der Zählung der Tabelle. Beim Hingehen zum
+	// Lärm ist das nicht der Haken, sondern das, was in die Config geht: ein
+	// angehakter, aber grauer Haken ist aus.
+	decimal BotValue( Control box ) => box switch {
+		CheckBox check => ( check == botHunt ? BotHuntOn : check.Checked ) ? 1 : 0,
+		ComboBox list => list.SelectedIndex,
+		NumericUpDown number => number.Minimum < 0m && number.Value < 0m ? -1m : number.Value,
+		_ => 0,
+	};
+
+	// Die Tabelle steht in der Reihenfolge der Karte, das Hören also vor dem
+	// Hingehen zum Lärm - und die Zeile rechnet nach jedem einzelnen Regler
+	// neu, zeigt unterwegs also Zwischenstände. Gezeichnet wird keiner davon,
+	// das Fenster kommt erst nach dem letzten wieder an die Reihe.
+	void ApplyBotPreset( bool human ) {
+		foreach ( var p in BotPresets ) {
+			decimal want = human ? p.Human : p.Stock;
+			if ( p.Box is CheckBox check ) check.Checked = want != 0;
+			else if ( p.Box is ComboBox list ) list.SelectedIndex = (int)want;
+			// Value wirft außerhalb der Grenzen des Felds
+			else if ( p.Box is NumericUpDown number ) number.Value = Math.Clamp( want, number.Minimum, number.Maximum );
+		}
+	}
+
+	// Welcher Stand gerade gilt. Rechnet direkt und ohne BeginInvoke, weil das
+	// auch aus LoadSettings heraus läuft, bevor das Fenster ein Handle hat.
+	void ShowBotPreset() {
+		bool stock = true, human = true;
+		foreach ( var p in BotPresets ) {
+			decimal now = BotValue( p.Box );
+			if ( now != p.Stock ) stock = false;
+			if ( now != p.Human ) human = false;
+		}
+		botPresetValue.Text = stock ? "Standard Q3 – die Bots wie im Original"
+			: human ? "Menschlich – die empfohlenen Werte"
+			: "eigene Einstellung";
+		// Goldgelb wie die anderen Zeilen dieser Art, sobald etwas vom Spiel
+		// abweicht - eine Sitzung mit solchen Bots ist mit den alten nicht
+		// direkt vergleichbar.
+		botPresetValue.ForeColor = stock ? Color.DimGray : Color.DarkGoldenrod;
 	}
 
 	GroupBox BuildSoundBox() {
@@ -1792,47 +2199,6 @@ public class MainForm : Form, IMessageFilter {
 	GroupBox BuildBotBox() {
 		hintTip.SetToolTip( botDamage, "Über dem Gegner steht bei Geschossen die Zeit bis zum"
 			+ " Einschlag, gefärbt danach, was der Schuss taugt." );
-		hintTip.SetToolTip( botTiming, "Das Spielmodul kennt den Wiederkehr-Zeitpunkt jedes Gegenstands auf die"
- 			+ " Millisekunde und gibt ihn nie weiter. Ein Bot merkt sich nur, was er SELBST genommen"
- 			+ " hat – nimmst du das Quad, laufen sie weiter zu der leeren Stelle, und wenn es"
- 			+ " wiederkommt, steht keiner dort. Mit dem Haken erfährt jeder Bot jede Aufnahme, mit"
- 			+ " zwei Sekunden Vorlauf, damit er rechtzeitig losgeht." );
-		hintTip.SetToolTip( botRocketJump, "Auf q3dm17 liegen 225 Raketensprung-Verbindungen, und der Ausführer ist"
- 			+ " vollständig – was sie verhindert, ist eine Klausel: mindestens 60 Leben, und unter 90"
- 			+ " zusätzlich 40 Rüstung. Mit dem Haken reichen 55 Leben, und die Sprungfreude aus der"
- 			+ " Charakterdatei wird übergangen (sieben Charaktere liegen darunter)." );
-		hintTip.SetToolTip( botRethink, "Ein Bot sperrt sein Fernziel für zwanzig Sekunden, und Schaden löst die"
- 			+ " Sperre nirgends – wer von hundert auf dreiüig fällt, holt weiter die Waffe, die sein"
- 			+ " gesundes Ich ausgesucht hat. Die Gewichte sind sehr wohl gesundheitsabhängig, sie"
- 			+ " werden nur nie neu ausgewertet. Ab 25 Schaden wird die Sperre gelöst, höchstens alle"
- 			+ " zwei Sekunden." );
-		hintTip.SetToolTip( botFightUp, "BotAggression gibt null zurück, sobald der Gegner mehr als 200 Einheiten"
- 			+ " höher steht – noch bevor Waffe oder Munition angesehen werden – und der Bot zieht"
- 			+ " sich zurück. Auf q3dm17 ist das fast jeder Kampf. Mit dem Haken gilt die Grenze nur"
- 			+ " noch für Waffen, mit denen nach oben nichts auszurichten ist." );
-		hintTip.SetToolTip( botMoveSkill, "Setzt das Kampfkönnen auf 0,9 und das Lagern auf 0. Diese eine Zahl ist"
- 			+ " die ganze Leiter der Kampfbewegung: unter 0,2 steht der Bot still, bis 0,4 läuft er"
- 			+ " nur geradeaus vor und zurück, erst darüber umkreist er, und erst über 0,7 mit dem"
- 			+ " zufälligen Rhythmus, den ein Mensch hat.\n\nAchtung: beide Haken ändern, wie sich"
- 			+ " die Bots bewegen – also das, wogegen die Vorhersage gemessen wird. Neue Basislinie"
- 			+ " nötig, bevor du gegen alte Zahlen vergleichst." );
-		hintTip.SetToolTip( botNoChat, "Ein Bot, der etwas sagt, steht dafür genau zwei Sekunden vüllig still –"
- 			+ " AINode_Stand gibt keinen einzigen Bewegungsbefehl. Ausgelöst wird das unter"
- 			+ " anderem durch \"Gegner tot\" mitten im Gefecht, durch Treffer und durch reinen"
- 			+ " Zufall. Mit diesem Haken reden sie nicht mehr und bleiben in Bewegung." );
-		hintTip.SetToolTip( botJump, "Springt ein Bot beim Laufen, verliert er kein Tempo an die Bodenreibung."
- 			+ " Gesprungen wird nur geradeaus, schon schnell und mit Boden voraus – nicht beim"
- 			+ " Ausweichen im Gefecht, denn ein Bot in der Luft fliegt eine Wurfparabel und ist"
- 			+ " damit leichter zu treffen, nicht schwerer.\n\n"
- 			+ "Achtung für die Messung: mehr springende Bots heißt mehr Ziele in der Luft, und"
- 			+ " die Vorhersage trifft die viel besser als laufende. Sitzungen mit und ohne diesen"
- 			+ " Haken sind nicht direkt vergleichbar." );
-		hintTip.SetToolTip( botEdgeCare, "Läuft ein Bot auf eine Kante zu, hinter der auf tausend Einheiten"
- 			+ " nichts mehr kommt, bremst er, statt einfach weiterzulaufen. Springen bleibt seine"
- 			+ " Sache – über die Lücke zu springen ist auf q3dm17 die normale Art, sich zu bewegen.\n\n"
- 			+ "Was es nicht kann: wer von einer Rakete geschubst wird, hat für bis zu zweihundert"
- 			+ " Millisekunden gar keine Bodenreibung und kann physikalisch nicht bremsen. Rund die"
- 			+ " Hälfte der Stürze sind genau das – dein eigener Beschuss." );
 		hintTip.SetToolTip( infiniteAmmo, "Füllt die Munition jedes Server-Bildes auf 999 auf, damit eine Messung"
  			+ " nicht daran endet, dass die Waffe leer ist. „Für alle“ versorgt auch die Bots -"
  			+ " dann laufen sie aber keine Munitionskiste mehr an, und genau diese Wege sind es,"
@@ -2316,14 +2682,39 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "hudScores=" + hudScores.Checked );
 		s.AppendLine( "hudStretch=" + hudStretch.Checked );
 		s.AppendLine( "hudStatusScale=" + Dec( hudStatusScale.Value ) );
+		// Die Karte „Bots“ in ihrer Reihenfolge, ein Schlüssel je Regler. Die
+		// alten Schlüssel botMoveSkill und botRocketJump werden nicht mehr
+		// geschrieben; gelesen werden sie noch, solange die neuen fehlen.
 		s.AppendLine( "botEdgeCare=" + botEdgeCare.Checked );
+		s.AppendLine( "botAirControl=" + botAirControl.Checked );
+		s.AppendLine( "botDodge=" + botDodge.Checked );
+		s.AppendLine( "botUnstuck=" + botUnstuck.Checked );
+		s.AppendLine( "botRocketJumpMode=" + botRocketJumpMode.SelectedIndex );
 		s.AppendLine( "botJump=" + botJump.Checked );
-		s.AppendLine( "botNoChat=" + botNoChat.Checked );
+		s.AppendLine( "botJumper=" + Dec( botJumper.Value ) );
+		s.AppendLine( "botCroucher=" + Dec( botCroucher.Value ) );
 		s.AppendLine( "botFightUp=" + botFightUp.Checked );
-		s.AppendLine( "botMoveSkill=" + botMoveSkill.Checked );
+		s.AppendLine( "botBrave=" + botBrave.Checked );
+		s.AppendLine( "botHear=" + botHear.Checked );
+		s.AppendLine( "botSteady=" + Dec( botSteady.Value ) );
+		s.AppendLine( "botAttackSkill=" + Dec( botAttackSkill.Value ) );
+		s.AppendLine( "botReaction=" + Dec( botReaction.Value ) );
+		s.AppendLine( "botAimAccuracy=" + Dec( botAimAccuracy.Value ) );
+		s.AppendLine( "botAimSkill=" + Dec( botAimSkill.Value ) );
+		s.AppendLine( "botAlertness=" + Dec( botAlertness.Value ) );
+		s.AppendLine( "botFireThrottle=" + Dec( botFireThrottle.Value ) );
+		s.AppendLine( "botChallenge=" + botChallenge.Checked );
 		s.AppendLine( "botRethink=" + botRethink.Checked );
 		s.AppendLine( "botTiming=" + botTiming.Checked );
-		s.AppendLine( "botRocketJump=" + botRocketJump.Checked );
+		s.AppendLine( "botGrab=" + botGrab.Checked );
+		// der Haken selbst, nicht was davon gilt: er soll wieder dastehen,
+		// wenn das Hören zurückkommt
+		s.AppendLine( "botHunt=" + botHunt.Checked );
+		s.AppendLine( "botVariety=" + (int)botVariety.Value );
+		s.AppendLine( "botCamper=" + Dec( botCamper.Value ) );
+		s.AppendLine( "botDroppedWeight=" + (int)botDroppedWeight.Value );
+		s.AppendLine( "botNoChat=" + botNoChat.Checked );
+		s.AppendLine( "botLog=" + botLog.Checked );
 		s.AppendLine( "weaponRate=" + weaponRate.Value );
 		s.AppendLine( "homingMode=" + homingMode.SelectedIndex );
 		s.AppendLine( "homingTurn=" + homingTurn.Value );
@@ -2437,14 +2828,52 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( hudScores, v, "hudScores" );
 		SetBool( hudStretch, v, "hudStretch" );
 		SetNum( hudStatusScale, v, "hudStatusScale" );
+		// Die Karte „Bots“. Ein Schlüssel, der fehlt, lässt seinen Regler auf
+		// der Vorgabe, und die ist „Standard Q3“ - eine Datei aus einem älteren
+		// Bau macht aus den neuen Reglern also nichts, was vorher nicht galt.
 		SetBool( botEdgeCare, v, "botEdgeCare" );
+		SetBool( botAirControl, v, "botAirControl" );
+		SetBool( botDodge, v, "botDodge" );
+		SetBool( botUnstuck, v, "botUnstuck" );
+		// Der alte Haken „öfter Raketensprünge“: an war g_botRocketJump 1, aus
+		// das Original. „gar nicht“ und „auch ohne Rüstung“ kannte er nicht.
+		if ( v.ContainsKey( "botRocketJumpMode" ) ) SetIndex( botRocketJumpMode, v, "botRocketJumpMode" );
+		else if ( v.TryGetValue( "botRocketJump", out var oldJump ) ) {
+			if ( oldJump.Trim() == "True" ) botRocketJumpMode.SelectedIndex = 2;
+			else if ( oldJump.Trim() == "False" ) botRocketJumpMode.SelectedIndex = 1;
+		}
 		SetBool( botJump, v, "botJump" );
-		SetBool( botNoChat, v, "botNoChat" );
+		SetNum( botJumper, v, "botJumper" );
+		SetNum( botCroucher, v, "botCroucher" );
 		SetBool( botFightUp, v, "botFightUp" );
-		SetBool( botMoveSkill, v, "botMoveSkill" );
+		SetBool( botBrave, v, "botBrave" );
+		SetBool( botHear, v, "botHear" );
+		SetNum( botSteady, v, "botSteady" );
+		SetNum( botAttackSkill, v, "botAttackSkill" );
+		SetNum( botReaction, v, "botReaction" );
+		SetNum( botAimAccuracy, v, "botAimAccuracy" );
+		SetNum( botAimSkill, v, "botAimSkill" );
+		SetNum( botAlertness, v, "botAlertness" );
+		SetNum( botFireThrottle, v, "botFireThrottle" );
+		SetBool( botChallenge, v, "botChallenge" );
 		SetBool( botRethink, v, "botRethink" );
 		SetBool( botTiming, v, "botTiming" );
-		SetBool( botRocketJump, v, "botRocketJump" );
+		SetBool( botGrab, v, "botGrab" );
+		SetBool( botHunt, v, "botHunt" );
+		SetNum( botVariety, v, "botVariety" );
+		SetNum( botCamper, v, "botCamper" );
+		SetNum( botDroppedWeight, v, "botDroppedWeight" );
+		// Der alte Haken „Bots beweglicher“ stellte zwei Zahlen auf einmal:
+		// Kampfbewegung 0,9 und Lagern 0. Ohne Haken bleibt beides bei -1, und
+		// das ist die Vorgabe. Nach den beiden SetNum, damit es gilt, sobald
+		// botAttackSkill fehlt - daran ist die alte Datei zu erkennen.
+		if ( !v.ContainsKey( "botAttackSkill" )
+			&& v.TryGetValue( "botMoveSkill", out var oldMove ) && oldMove.Trim() == "True" ) {
+			botAttackSkill.Value = 0.9m;
+			botCamper.Value = 0m;
+		}
+		SetBool( botNoChat, v, "botNoChat" );
+		SetBool( botLog, v, "botLog" );
 		SetBar( weaponRate, v, "weaponRate" );
 		SetIndex( homingMode, v, "homingMode" );
 		SetBar( homingTurn, v, "homingTurn" );
@@ -2558,6 +2987,10 @@ public class MainForm : Form, IMessageFilter {
 		if ( v.TryGetValue( key, out var s )
 			&& decimal.TryParse( s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal d )
 			&& d >= box.Minimum && d <= box.Maximum ) {
+			// Nur die Charakterwerte reichen unter null, und dort heißt alles
+			// Negative „aus der Charakterdatei“ - eine Datei mit -0,95 lädt als
+			// -1 und nicht, vom Feld nach oben gerundet, als Vorgabe 0.
+			if ( box.Minimum < 0m && d < 0m ) d = box.Minimum;
 			box.Value = d;
 		}
 	}
@@ -2664,7 +3097,6 @@ public class MainForm : Form, IMessageFilter {
 		// weil die Engine die Variable zuletzt liest.
 		cfg.AppendLine( "seta cl_aimAssistPriorityWeapon \"\"" );
 		cfg.AppendLine( "set logfile 2" );
-		cfg.AppendLine( "set bot_nochat 1" );
 		// Die Engine begrenzt die Zielhilfe selbst auf localhost und privates LAN.
 		// Menschliche Testziele sind zusaetzlich ein ausdruecklicher App-Haken.
 		// Die Waffen, auf die alle Sockel und Munitionskisten verteilt werden.
@@ -2702,16 +3134,48 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_homingProximity {Dec( homingProx.Value )}" );
 		cfg.AppendLine( $"set g_homingWarn {( homingWarn.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_infiniteAmmo {infiniteAmmo.SelectedIndex}" );
+		// Die Karte „Bots“, je Regler eine Zeile und in der Reihenfolge der
+		// Karte. Kein seta, wie bei allem hier unten. Jede Zeile wird immer
+		// geschrieben, auch beim Original: ein Wert aus der Runde davor bliebe
+		// sonst im laufenden Spiel stehen, und „Standard Q3“ wäre keiner.
 		cfg.AppendLine( $"set g_botEdgeCare {( botEdgeCare.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botAirControl {( botAirControl.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botDodge {( botDodge.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botUnstuck {( botUnstuck.Checked ? 1 : 0 )}" );
+		{
+			// Eine Auswahl, zwei Cvars: der Eintrag 0 schaltet den Raketensprung
+			// ab, und ab dem Eintrag 1 zählt g_botRocketJump von null an. Ohne
+			// Auswahl gilt das Original.
+			int mode = botRocketJumpMode.SelectedIndex < 0 ? 1 : botRocketJumpMode.SelectedIndex;
+			cfg.AppendLine( $"set bot_rocketjump {( mode > 0 ? 1 : 0 )}" );
+			cfg.AppendLine( $"set g_botRocketJump {Math.Max( mode - 1, 0 )}" );
+		}
 		cfg.AppendLine( $"set g_botJump {( botJump.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"set bot_nochat {( botNoChat.Checked ? 1 : 0 )}" );
+		// -1 lässt einen Wert aus der Charakterdatei stehen. Mit Dec, weil die
+		// deutsche Schreibweise ein Komma setzt und das Spiel mit atof liest.
+		cfg.AppendLine( $"set g_botJumper {Dec( botJumper.Value )}" );
+		cfg.AppendLine( $"set g_botCroucher {Dec( botCroucher.Value )}" );
 		cfg.AppendLine( $"set g_botFightUp {( botFightUp.Checked ? 1 : 0 )}" );
-		// -1 laesst die Werte aus der Charakterdatei stehen
-		cfg.AppendLine( $"set g_botAttackSkill {( botMoveSkill.Checked ? "0.9" : "-1" )}" );
-		cfg.AppendLine( $"set g_botCamper {( botMoveSkill.Checked ? "0" : "-1" )}" );
+		cfg.AppendLine( $"set g_botBrave {( botBrave.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botHear {( botHear.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botSteady {Dec( botSteady.Value )}" );
+		cfg.AppendLine( $"set g_botAttackSkill {Dec( botAttackSkill.Value )}" );
+		cfg.AppendLine( $"set g_botReaction {Dec( botReaction.Value )}" );
+		cfg.AppendLine( $"set g_botAimAccuracy {Dec( botAimAccuracy.Value )}" );
+		cfg.AppendLine( $"set g_botAimSkill {Dec( botAimSkill.Value )}" );
+		cfg.AppendLine( $"set g_botAlertness {Dec( botAlertness.Value )}" );
+		cfg.AppendLine( $"set g_botFireThrottle {Dec( botFireThrottle.Value )}" );
+		cfg.AppendLine( $"set bot_challenge {( botChallenge.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botRethink {( botRethink.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botTiming {( botTiming.Checked ? 1 : 0 )}" );
-		cfg.AppendLine( $"set g_botRocketJump {( botRocketJump.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botGrab {( botGrab.Checked ? 1 : 0 )}" );
+		// ohne das Hören 0, auch wenn der graue Haken noch gesetzt ist
+		cfg.AppendLine( $"set g_botHunt {( BotHuntOn ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botVariety {(int)botVariety.Value}" );
+		cfg.AppendLine( $"set g_botCamper {Dec( botCamper.Value )}" );
+		cfg.AppendLine( $"set g_botDroppedWeight {(int)botDroppedWeight.Value}" );
+		cfg.AppendLine( $"set bot_nochat {( botNoChat.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botLog {( botLog.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_weaponSpawns \"{SpawnList()}\"" );
 		cfg.AppendLine( $"map {map.Text}" );
 		cfg.AppendLine( "wait 200" );
@@ -2830,18 +3294,18 @@ public class MainForm : Form, IMessageFilter {
 		}
 	}
 
-	void ArchiveLog() {
+	void ArchiveLog( string path, string prefix ) {
 		try {
-			if ( !File.Exists( logPath ) || new FileInfo( logPath ).Length == 0 ) return;
+			if ( !File.Exists( path ) || new FileInfo( path ).Length == 0 ) return;
 
 			var attic = Path.Combine( HomePath, "logs" );
 			Directory.CreateDirectory( attic );
-			var stamp = File.GetLastWriteTime( logPath ).ToString( "yyyyMMdd-HHmmss" );
-			var target = Path.Combine( attic, $"qconsole-{stamp}.log" );
+			var stamp = File.GetLastWriteTime( path ).ToString( "yyyyMMdd-HHmmss" );
+			var target = Path.Combine( attic, $"{prefix}-{stamp}.log" );
 			if ( File.Exists( target ) ) File.Delete( target );
-			File.Move( logPath, target );
+			File.Move( path, target );
 
-			foreach ( var old in new DirectoryInfo( attic ).GetFiles( "qconsole-*.log" )
+			foreach ( var old in new DirectoryInfo( attic ).GetFiles( prefix + "-*.log" )
 				.OrderByDescending( f => f.LastWriteTime ).Skip( KeepLogs ) ) {
 				try { old.Delete(); } catch ( IOException ) { }
 			}
@@ -2885,7 +3349,11 @@ public class MainForm : Form, IMessageFilter {
 			WriteWeaponPriorityFile();
 
 			logPath = Path.Combine( HomePath, "qconsole.log" );
-			ArchiveLog();
+			ArchiveLog( logPath, "qconsole" );
+			// Das Spiel hängt an botlog.log an, und seine Uhr beginnt mit jedem
+			// Start von vorn - ohne das hier lägen zwei Sitzungen in einer
+			// Datei, und die Auswertung hielte sie für einen Lauf.
+			ArchiveLog( Path.Combine( HomePath, "botlog.log" ), "botlog" );
 			shotStamp = "";
 			aimLearned.Text = "";
 
