@@ -1080,6 +1080,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 	if ( targ->client && ( take || asave ) ) {
 		BotLogPrintf( "D %i %i %i %i %i %i\n", level.time, targ->s.number,
 			attacker ? attacker->s.number : ENTITYNUM_WORLD, take, asave, mod );
+		if ( ( targ->r.svFlags & SVF_BOT ) && attacker && attacker->client && attacker != targ ) {
+			BotDamagedBy( targ->s.number, attacker->s.number, take + asave );
+		}
 	}
 
 	// do the damage

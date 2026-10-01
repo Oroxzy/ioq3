@@ -287,6 +287,12 @@ typedef struct bot_state_s
 	int mood_stack;									//Leben und Ruestung zum Zeitpunkt der Entscheidung
 	// Werkbank: hoeren (g_botHear)
 	float heard_time[MAX_CLIENTS];					//wann wer zuletzt zu hoeren war
+	// Werkbank: zurueckschlagen (g_botRetaliate)
+	float hurt_time[MAX_CLIENTS];					//wann wer zuletzt getroffen hat
+	// Werkbank: Haken schlagen (g_botJink)
+	float jink_time;								//bis dahin gilt die Seite
+	int jink_side;									//nach links oder rechts
+	int hurt_amount[MAX_CLIENTS];					//und wieviel seither, in einem Fenster von anderthalb Sekunden
 	vec3_t noise_origin;							//wo das letzte Geraeusch herkam
 	float noise_time;								//und wann
 	// Werkbank: ausweichen (g_botDodge)
@@ -380,6 +386,8 @@ int		BotTeamLeader(bot_state_t *bs);
 qboolean BotGroundAhead(bot_state_t *bs, vec3_t dir, float dist);
 // Werkbank: ist unter dem Gegner Boden, auf dem man ihm nachlaufen kann?
 qboolean BotEnemySpotSafe(bot_state_t *bs, vec3_t origin);
+// Werkbank: wer den Bot zuletzt wie stark getroffen hat (g_botRetaliate)
+int BotRecentDamage(bot_state_t *bs, int attacker);
 // Werkbank: worauf es sich zu warten lohnt; bs darf NULL sein
 qboolean BotItemWorthWaiting(bot_state_t *bs, gitem_t *item);
 // Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist

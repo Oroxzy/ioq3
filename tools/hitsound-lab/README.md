@@ -1362,6 +1362,8 @@ fassen die Knöpfe nicht an — das gehört zur Sitzung, nicht zum Verhalten.
 | Ducken im Kampf | `g_botCroucher` | −1 | −1 |
 | auch nach oben kämpfen | `g_botFightUp` | 0 | 1 |
 | kämpfen mit dem, was da ist | `g_botBrave` | 0 | 0 (gemessen schwächer, siehe unten) |
+| zurückschlagen, wer gerade trifft | `g_botRetaliate` | 0 | 1 |
+| beim Rückzug Haken schlagen | `g_botJink` | 0 | 0 (gemessen ohne Nutzen) |
 | Schüsse, Sprünge und Schritte hören | `g_botHear` | 0 | 1 |
 | Entscheidung halten (s) | `g_botSteady` | 0 | 1,5 |
 | Kampfbewegung | `g_botAttackSkill` | −1 | 0,9 |
@@ -1801,6 +1803,55 @@ Plattformen etwas länger als vorher (Stehen 5,7 statt 4,4 Sekunden je Bot und
 Minute, fast alles Warten auf die Plattform, wie im Original). Und der Anlauf
 zu einem Sprung über eine Lücke bleibt botlib überlassen: dort den Absprung zu
 verschieben, macht ihn schlechter.
+
+## Jeder Schalter einzeln, und zwei neue
+
+Eine große Runde in deinem Aufbau (q3dm17, Stufe 5, zielsuchende Raketen),
+gemessen mit dem Stellvertreter: jeder Schalter von „Menschlich" einzeln
+zurückgedreht oder verstellt, je zwölf Läufe von fünf Minuten
+(`tools/botlog/arms.pl` fasst sie zusammen).
+
+Ergebnis: **keiner bewegt die Stärke um mehr als etwa 0,1 Abschüsse je Tod** —
+alle vierzehn Varianten lagen zwischen 1,43 und 1,62, bei einem Standardfehler
+um 0,08. Zurückgedreht wurden Hören, dem Lärm nachgehen, Respawn-Zeiten,
+Mitnehmen im Kampf, neu planen, nach oben kämpfen, zweitbestes Ziel,
+Aufschlag für Fallengelassenes, Lagern; verstellt das Halten (0,75 und 3
+Sekunden), die Sprungfreude (0), die Kampfbewegung (Charakter und 1). Der
+Stand ist also gut eingestellt, und stärker werden die Bots nur durch etwas
+Neues. Dafür, wie sie sterben (`victim`-Auswertung): auf q3dm17 vier von fünf
+auf dem Rückzug, zwei Drittel mit vollem Leben, die meisten durch das
+Maschinengewehr — und **nur die Hälfte hatte den Stellvertreter überhaupt als
+Gegner**. Die andere Hälfte schoss auf jemand anderen, während er sie erledigte.
+
+**Zurückschlagen** (`g_botRetaliate`). Hat ein Bot schon einen Gegner,
+wechselt er im Original nur zu einem, der näher ist, und sucht dabei nur nach
+vorn (`BotFindEnemy`). Jetzt merkt sich jeder Bot, wer ihn in den letzten
+anderthalb Sekunden wie stark getroffen hat (`BotDamagedBy`, aus `G_Damage`),
+und dreht sich zu dem um, der ihm mehr zusetzt als sein bisheriger Gegner —
+auch von hinten, wie ein Mensch, der am Trefferanzeiger sieht, woher es kommt.
+
+Die erste Fassung hatte einen Nebeneffekt, gefunden beim Nachzählen: im
+nächsten Denkschritt wechselte der Original-Code zurück zum näheren Gegner,
+und wieder hin — 37 Rückwechsel je Bot und Minute binnen zwei Sekunden statt
+10. Jetzt bleibt, wer gerade trifft, der Gegner, und gewechselt wird nur bei
+15 Punkten mehr Schaden. Danach wieder 10,7.
+
+**Haken schlagen** (`g_botJink`). Auf dem Rückzug läuft ein Bot stur
+geradeaus; mit dem Haken dreht er, solange der Gegner zu sehen ist, die
+Laufrichtung abwechselnd um 35 Grad (nur auf ebenem Weg und nur, wo die
+Landevorhersage nichts dagegen hat). Er tut das wirklich — die Richtung ändert
+sich auf dem Rückzug fast doppelt so stark —, aber es nützt nichts: gegen das
+Maschinengewehr helfen keine Haken. Der Schalter bleibt, bei „Menschlich" aus.
+
+| je 15 bis 18 Läufe | Abschüsse je Tod des Stellvertreters | Schaden aus/ein |
+|---|---|---|
+| Menschlich bisher | 1,53 ± 0,07 | 1,40 |
+| mit Haken schlagen | 1,57 ± 0,05 | 1,38 |
+| **mit zurückschlagen** | **1,41 ± 0,04** | **1,30** |
+
+Im gemischten Spiel gegen das Original bleibt es bei 1,12 zu 1 im Schaden,
+und auf allen 25 Karten ändert sich am Verhalten nichts (Stehen 2,9 statt 3,0
+Prozent, Hin und Her 11,1 statt 11,3 je Bot-Minute).
 
 ## Ersetzte Sockel
 

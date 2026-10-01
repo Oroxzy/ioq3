@@ -1020,6 +1020,44 @@ wenn das Ding schon wieder liegt. Das ist die billige Naeherung an das, was
 ein Mensch tut, wenn er mitzaehlt.
 ==================
 */
+/*
+==================
+BotDamagedBy / BotRecentDamage
+
+Wer einen Bot in den letzten anderthalb Sekunden wie stark getroffen hat. Ein
+Fenster, kein Gedaechtnis: ein Treffer, der laenger zurueckliegt, zaehlt nicht
+mehr, wie bei einem Menschen, der sich nach dem letzten Einschlag richtet.
+==================
+*/
+#define RETALIATE_WINDOW	1.5f
+
+void BotDamagedBy( int target, int attacker, int amount ) {
+	bot_state_t	*bs;
+
+	if ( target < 0 || target >= MAX_CLIENTS || attacker < 0 || attacker >= MAX_CLIENTS ) {
+		return;
+	}
+	bs = botstates[target];
+	if ( !bs || !bs->inuse ) {
+		return;
+	}
+	if ( FloatTime() - bs->hurt_time[attacker] > RETALIATE_WINDOW ) {
+		bs->hurt_amount[attacker] = 0;
+	}
+	bs->hurt_amount[attacker] += amount;
+	bs->hurt_time[attacker] = FloatTime();
+}
+
+int BotRecentDamage( bot_state_t *bs, int attacker ) {
+	if ( attacker < 0 || attacker >= MAX_CLIENTS ) {
+		return 0;
+	}
+	if ( FloatTime() - bs->hurt_time[attacker] > RETALIATE_WINDOW ) {
+		return 0;
+	}
+	return bs->hurt_amount[attacker];
+}
+
 void BotItemTaken( gentity_t *ent, gentity_t *other, float respawn ) {
 	bot_goal_t	goal;
 	int			i, index;
@@ -2491,6 +2529,65 @@ static qboolean BotMoverGuard( bot_state_t *bs, bot_input_t *bi ) {
 
 /*
 ==================
+BotJink
+
+Beim Rueckzug Haken schlagen.
+
+Im Kampf weicht ein Bot seitlich aus (BotAttackMove), auf dem Rueckzug und auf
+dem Weg zu einem Gegenstand mitten im Gefecht laeuft er stur seinen Weg ab -
+geradeaus, gleichmaessig, und damit fuer jede Vorhersage ein leichtes Ziel.
+Gemessen auf q3dm17, Stufe 5: von den Bots, die ein starker Spieler erledigte,
+starben vier von fuenf auf dem Rueckzug, zwei Drittel davon mit vollem Leben.
+
+Hier wird, solange der Gegner zu sehen ist, die Laufrichtung abwechselnd um
+etwa 35 Grad nach links und rechts gedreht, im zufaelligen Takt von drei bis
+sieben Zehntelsekunden. Er kommt dabei mit vier Fuenfteln des Tempos voran.
+Nur auf dem Boden, nur auf ebenem Weg (TRAVEL_WALK), und nur, wo die
+Landevorhersage sagt, dass der Haken nicht ueber eine Kante fuehrt.
+==================
+*/
+static void BotJink( bot_state_t *bs, bot_input_t *bi ) {
+	playerState_t	*ps;
+	vec3_t			want, cand, up = { 0, 0, 1 }, side;
+	float			wishspeed, now, c, s;
+
+	if ( !BotSw(bs, g_botJink) || !g_entities[bs->client].client ) {
+		return;
+	}
+	if ( bs->ainode != AINode_Battle_Retreat && bs->ainode != AINode_Battle_NBG ) {
+		return;
+	}
+	now = FloatTime();
+	if ( bs->enemy < 0 || bs->enemyvisible_time < now - 0.5f ) {
+		return;
+	}
+	ps = &g_entities[bs->client].client->ps;
+	if ( ps->groundEntityNum == ENTITYNUM_NONE || bs->travel_type != TRAVEL_WALK
+		|| ( bi->actionflags & ( ACTION_JUMP | ACTION_DELAYEDJUMP | ACTION_CROUCH ) ) ) {
+		return;
+	}
+	wishspeed = BotFootWish( bi, ps, want );
+	if ( wishspeed < 200.0f ) {
+		return;
+	}
+	if ( now > bs->jink_time ) {
+		bs->jink_side = ( bs->jink_side > 0 ) ? -1 : 1;
+		bs->jink_time = now + 0.3f + random() * 0.4f;
+	}
+	CrossProduct( want, up, side );
+	c = 0.82f;
+	s = 0.57f * bs->jink_side;
+	VectorScale( want, c, cand );
+	VectorMA( cand, s, side, cand );
+	if ( !BotFootSafe( bs, ps, cand, wishspeed, qfalse, FOOT_GROUNDFRAMES ) ) {
+		return;
+	}
+	VectorCopy( cand, bi->dir );
+	bi->actionflags &= ~( ACTION_MOVEFORWARD | ACTION_MOVEBACK | ACTION_MOVELEFT | ACTION_MOVERIGHT );
+}
+
+/*
+==================
 BotSpeedJump
 
 Springen, um schneller voranzukommen.
@@ -2568,6 +2665,7 @@ void BotUpdateInput(bot_state_t *bs, int time, int elapsed_time) {
 	// Tritt, der das letzte Wort hat. Und wenn er nicht eingegriffen hat, darf
 	// gesprungen werden, um Tempo zu halten.
 	BotDodge(bs, &bi);
+	BotJink(bs, &bi);
 	if ( !BotFooting(bs, &bi) ) {
 		BotSpeedJump(bs, &bi);
 	}

@@ -3196,6 +3196,46 @@ int BotFindEnemy(bot_state_t *bs, int curenemy) {
 	else {
 		cursquaredist = 0;
 	}
+	// Werkbank: zurueckschlagen. Wer schon einen Gegner hat, wechselt im
+	// Original nur zu einem, der naeher ist, und sucht dabei nur nach vorn -
+	// wer ihn von hinten oder von weiter weg trifft, bleibt unbeachtet. Gemessen
+	// auf q3dm17, Stufe 5: von den Bots, die ein starker Spieler erledigte,
+	// hatte ihn nur die Haelfte ueberhaupt als Gegner. Ein Mensch dreht sich
+	// zu dem um, der ihn gerade trifft (er sieht am Trefferanzeiger, woher es
+	// kommt) - jedenfalls, wenn der ihm mehr zusetzt als sein bisheriger.
+	//
+	// Und wer ihn gerade trifft, bleibt sein Gegner. Die erste Fassung wechselte
+	// zum Angreifer - und im naechsten Denkschritt wechselte der Original-Code
+	// zurueck zum naeheren Gegner, und wieder hin: gemessen 37 Wechsel je Minute
+	// zurueck zum vorigen Gegner binnen zwei Sekunden statt 10. Gewechselt wird
+	// darum nur, wenn ein anderer deutlich mehr zusetzt (15 mehr), und zu einem
+	// bloss naeheren gar nicht, solange der jetzige trifft.
+	if (curenemy >= 0 && curenemy < MAX_CLIENTS && BotSw(bs, g_botRetaliate)) {
+		int best = -1, bestdmg, dmg, curdmg;
+
+		curdmg = BotRecentDamage(bs, curenemy);
+		bestdmg = (curdmg + 15 > 19) ? curdmg + 15 : 19;
+		for (i = 0; i < level.maxclients; i++) {
+			if (i == bs->client || i == curenemy) continue;
+			dmg = BotRecentDamage(bs, i);
+			if (dmg <= bestdmg) continue;
+			if (BotSameTeam(bs, i)) continue;
+			BotEntityInfo(i, &entinfo);
+			if (!entinfo.valid || EntityIsDead(&entinfo)) continue;
+			if (BotEntityVisible(bs->entitynum, bs->eye, bs->viewangles, 360, i) <= 0) continue;
+			best = i;
+			bestdmg = dmg;
+		}
+		if (best >= 0) {
+			bs->enemy = best;
+			bs->enemysight_time = FloatTime() - 2;
+			bs->enemysuicide = qfalse;
+			bs->enemydeath_time = 0;
+			bs->enemyvisible_time = FloatTime();
+			return qtrue;
+		}
+		if (curdmg >= 20) return qfalse;
+	}
 #ifdef MISSIONPACK
 	if (gametype == GT_OBELISK) {
 		vec3_t target;

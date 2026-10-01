@@ -122,6 +122,11 @@ public class MainForm : Form, IMessageFilter {
 	// Feste Schwellen - fünf Raketen, sechzig Leben - statt der Frage, ob der
 	// Bot mit dem, was er in der Hand hat, kämpfen kann.
 	readonly CheckBox botBrave = new() { Text = "kämpfen mit dem, was da ist", Checked = false, AutoSize = true };
+	// Im Original wechselt ein Bot, der schon einen Gegner hat, nur zu einem, der
+	// näher ist - wer ihn von hinten trifft, bleibt unbeachtet. Siehe BotFindEnemy.
+	readonly CheckBox botRetaliate = new() { Text = "zurückschlagen, wer gerade trifft", Checked = false, AutoSize = true };
+	// Auf dem Rückzug läuft ein Bot im Original stur geradeaus. Siehe BotJink.
+	readonly CheckBox botJink = new() { Text = "beim Rückzug Haken schlagen", Checked = false, AutoSize = true };
 	readonly CheckBox botHear = new() { Text = "Schüsse, Sprünge und Schritte hören", Checked = false, AutoSize = true };
 	// In Sekunden. Null ist das Original: die Entscheidung kippt mit jedem
 	// Denkschritt neu.
@@ -218,6 +223,9 @@ public class MainForm : Form, IMessageFilter {
 		// gemessen macht das die Bots leichter: sie bleiben in Kämpfen, die sie
 		// verlassen sollten - also bei „Menschlich“ aus, der Haken bleibt
 		( botBrave,          0,  0 ),
+		( botRetaliate,      0,  1 ),
+		// gemessen ohne Nutzen gegen Sofortwaffen, also bei „Menschlich“ aus
+		( botJink,           0,  0 ),
 		( botHear,           0,  1 ),
 		( botSteady,         0,  1.5m ),
 		( botAttackSkill,   -1,  0.9m ),
@@ -1676,6 +1684,21 @@ public class MainForm : Form, IMessageFilter {
 			+ " stellt sich keiner, der es nicht selbst hat.\n\n"
 			+ "Gemessen macht das die Bots leichter: auf q3dm17, Stufe 5, kam ein starker Spieler"
 			+ " gegen zehn solche Bots auf mehr Abschüsse je Tod als ohne. Deshalb bei „Menschlich“ aus." );
+		hintTip.SetToolTip( botRetaliate, "Hat ein Bot schon einen Gegner, wechselt er im Original nur zu einem,"
+			+ " der näher ist, und sucht dabei nur nach vorn – wer ihn von hinten oder von weiter weg"
+			+ " trifft, bleibt unbeachtet. Auf q3dm17 hatte nur die Hälfte der Bots, die ein starker"
+			+ " Spieler erledigte, ihn überhaupt als Gegner. Mit Haken dreht sich ein Bot zu dem um,"
+			+ " der ihm in den letzten anderthalb Sekunden mehr zugesetzt hat als sein bisheriger"
+			+ " Gegner – wie ein Mensch, der am Trefferanzeiger sieht, woher es kommt. Wer ihn gerade"
+			+ " trifft, bleibt sein Gegner; gewechselt wird nur bei deutlich mehr Schaden.\n\n"
+			+ "Gemessen auf q3dm17, Stufe 5: ein starker Spieler kommt gegen das Feld auf 1,41"
+			+ " Abschüsse je Tod statt 1,53 – die Bots werden gefährlicher." );
+		hintTip.SetToolTip( botJink, "Auf dem Rückzug und auf dem Weg zu einem Gegenstand mitten im Gefecht"
+			+ " läuft ein Bot im Original stur seinen Weg ab. Mit Haken dreht er die Laufrichtung,"
+			+ " solange der Gegner zu sehen ist, abwechselnd um 35 Grad nach links und rechts – nur"
+			+ " auf ebenem Weg und nur, wo die Landevorhersage sagt, dass es nicht über eine Kante geht.\n\n"
+			+ "Gemessen ohne Nutzen: auf q3dm17 fallen die meisten Bots dem Maschinengewehr zum Opfer,"
+			+ " und gegen eine Sofortwaffe nützen Haken nichts. Deshalb bei „Menschlich“ aus." );
 		hintTip.SetToolTip( botHear, "Die Bots sind im Original taub: jedes Geräusch fällt in einen leeren"
 			+ " Zweig. Mit Haken bemerkt ein Bot, wer in Hörweite schießt, springt oder landet – auch"
 			+ " hinter seinem Rücken. Sehen muss er ihn trotzdem können." );
@@ -1712,6 +1735,8 @@ public class MainForm : Form, IMessageFilter {
 		return Group( "Kampf",
 			Row( Pad( botFightUp ) ),
 			Row( Pad( botBrave ) ),
+			Row( Pad( botRetaliate ) ),
+			Row( Pad( botJink ) ),
 			Row( Pad( botHear ) ),
 			Row( Labelled( "Entscheidung halten (s):", botSteady ) ),
 			Row( Labelled( "Kampfbewegung:", botAttackSkill ) ),
@@ -2695,6 +2720,8 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botCroucher=" + Dec( botCroucher.Value ) );
 		s.AppendLine( "botFightUp=" + botFightUp.Checked );
 		s.AppendLine( "botBrave=" + botBrave.Checked );
+		s.AppendLine( "botRetaliate=" + botRetaliate.Checked );
+		s.AppendLine( "botJink=" + botJink.Checked );
 		s.AppendLine( "botHear=" + botHear.Checked );
 		s.AppendLine( "botSteady=" + Dec( botSteady.Value ) );
 		s.AppendLine( "botAttackSkill=" + Dec( botAttackSkill.Value ) );
@@ -2847,6 +2874,8 @@ public class MainForm : Form, IMessageFilter {
 		SetNum( botCroucher, v, "botCroucher" );
 		SetBool( botFightUp, v, "botFightUp" );
 		SetBool( botBrave, v, "botBrave" );
+		SetBool( botRetaliate, v, "botRetaliate" );
+		SetBool( botJink, v, "botJink" );
 		SetBool( botHear, v, "botHear" );
 		SetNum( botSteady, v, "botSteady" );
 		SetNum( botAttackSkill, v, "botAttackSkill" );
@@ -3157,6 +3186,8 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botCroucher {Dec( botCroucher.Value )}" );
 		cfg.AppendLine( $"set g_botFightUp {( botFightUp.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botBrave {( botBrave.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botRetaliate {( botRetaliate.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botJink {( botJink.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botHear {( botHear.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botSteady {Dec( botSteady.Value )}" );
 		cfg.AppendLine( $"set g_botAttackSkill {Dec( botAttackSkill.Value )}" );
