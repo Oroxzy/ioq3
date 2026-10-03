@@ -1768,7 +1768,10 @@ public class MainForm : Form, IMessageFilter {
 			+ " er zuletzt etwas gehört hat, statt zur nächsten Munitionskiste. Braucht das Hören." );
 		hintTip.SetToolTip( botVariety, "Die Zielwahl ist im Original streng: bestes Gewicht durch Wegzeit,"
 			+ " immer. Alle Bots laufen deshalb dieselben Wege. Mit 25 % nimmt ein Bot jedes vierte Mal"
-			+ " das zweitbeste Ziel." );
+			+ " das zweitbeste Ziel – aber nicht, wenn das Beste etwas ist, worauf auch ein Mensch nicht"
+			+ " verzichtet (eine fehlende Waffe, Rüstung, Mega, ein Powerup), und nur, wenn das"
+			+ " Zweitbeste höchstens anderthalbmal so weit weg ist. Blind getauscht machte das die Bots"
+			+ " auf kleinen Karten messbar leichter." );
 		hintTip.SetToolTip( botCamper, "Wie gern ein Bot an einer Stelle lagert, statt zu laufen – und Lagern"
 			+ " ist Stillstand. Unter 0,1 lagert er nie. " + FromCharacter );
 		hintTip.SetToolTip( botDroppedWeight, "Was einem Bot ein Gegenstand zusätzlich wert ist, den ein Toter"

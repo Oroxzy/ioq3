@@ -403,11 +403,20 @@ Bot je dort war.
 
 Nicht abgewichen wird, wenn es ernst ist: unter siebzig aus Leben und
 Ruestung nimmt der Bot, was er braucht, und ein Powerup laesst niemand liegen.
+
+Und nicht blind. Die erste Fassung tauschte in jedem vierten Fall, egal wie
+viel schlechter das Zweitbeste war - der Bot liess eine Waffe, die ihm fehlte,
+oder die Ruestung liegen und holte sich Munition. Gemessen: ohne die
+Abwechslung kam ein starker Spieler auf q3tourney4 auf 1,36 Abschuesse je Tod,
+mit ihr auf 1,54 - sie machte die Bots leichter. Jetzt bleibt das Beste, wenn
+es etwas ist, worauf auch ein Mensch nicht verzichtet (BotItemWorthWaiting),
+und das Zweitbeste gilt nur, wenn es hoechstens anderthalbmal so weit weg ist.
 ==================
 */
 static void BotSecondChoice(bot_state_t *bs, int tfl) {
-	bot_goal_t	first;
+	bot_goal_t	first, second;
 	gentity_t	*ent;
+	int			t1, t2;
 
 	if (BotSw(bs, g_botVariety) <= 0 || random() * 100 >= BotSw(bs, g_botVariety)) {
 		return;
@@ -420,8 +429,8 @@ static void BotSecondChoice(bot_state_t *bs, int tfl) {
 	}
 	if (first.entitynum >= MAX_CLIENTS && first.entitynum < MAX_GENTITIES) {
 		ent = &g_entities[first.entitynum];
-		if (ent->inuse && ent->item && ent->item->giType == IT_POWERUP) {
-			return;
+		if (ent->inuse && ent->item && BotItemWorthWaiting(bs, ent->item)) {
+			return;			// Powerup, fehlende Waffe, Ruestung, Mega
 		}
 	}
 	trap_BotPopGoal(bs->gs);
@@ -429,6 +438,17 @@ static void BotSecondChoice(bot_state_t *bs, int tfl) {
 		// es gab kein zweites
 		trap_BotPushGoal(bs->gs, &first);
 		return;
+	}
+	// zu weit: dann doch das Erste
+	if (trap_BotGetTopGoal(bs->gs, &second)) {
+		t1 = trap_AAS_AreaTravelTimeToGoalArea(bs->areanum, bs->origin, first.areanum, tfl);
+		t2 = trap_AAS_AreaTravelTimeToGoalArea(bs->areanum, bs->origin, second.areanum, tfl);
+		if (t2 <= 0 || (t1 > 0 && t2 > t1 * 3 / 2 + 100)) {
+			trap_BotPopGoal(bs->gs);
+			trap_BotRemoveFromAvoidGoals(bs->gs, second.number);
+			trap_BotPushGoal(bs->gs, &first);
+			return;
+		}
 	}
 	trap_BotRemoveFromAvoidGoals(bs->gs, first.number);
 }

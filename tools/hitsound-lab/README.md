@@ -1853,6 +1853,42 @@ Im gemischten Spiel gegen das Original bleibt es bei 1,12 zu 1 im Schaden,
 und auf allen 25 Karten ändert sich am Verhalten nichts (Stehen 2,9 statt 3,0
 Prozent, Hin und Her 11,1 statt 11,3 je Bot-Minute).
 
+## Der große Test: vier Karten, zwei Stufen, eins gegen eins
+
+Bis hierher war fast alles auf q3dm17 gemessen. Der große Test prüft
+„Menschlich" gegen das Original auf q3dm17 (zehn Bots), q3dm6 und q3dm13 (je
+acht) und q3tourney4 (vier), je auf Stufe 3 und 5, dazu eins gegen eins auf
+q3tourney2 und q3tourney4 — 176 Läufe, immer mit dem Stellvertreter (Xaero,
+Stufe 5) gegen das Feld.
+
+| Abschüsse je Tod des Stellvertreters | Original | Menschlich |
+|---|---|---|
+| q3dm17, Stufe 3 | 4,54 | 3,05 |
+| q3dm17, Stufe 5 | 1,58 | 1,48 |
+| q3dm13, Stufe 3 | 7,22 | 5,55 |
+| q3dm13, Stufe 5 | 2,16 | 1,75 |
+| q3dm6, Stufe 3 | 5,07 | 5,31 |
+| q3dm6, Stufe 5 | 2,02 | 1,86 |
+| q3tourney4, Stufe 3 | 4,49 | 3,93 |
+| q3tourney4, Stufe 5 (20 Läufe) | 1,69 | 1,56 |
+| eins gegen eins, q3tourney2 | 4,76 | 4,27 |
+| eins gegen eins, q3tourney4 | 2,21 | 2,29 |
+
+Menschlich ist fast überall das schwerere Feld; q3dm6 auf Stufe 3 und eins
+gegen eins auf q3tourney4 sind gleichauf. Das Hin und Her ist auf jeder Karte
+etwa halbiert. Vorsicht beim Lesen: auf q3tourney4 mit vier Bots streut ein
+Lauf so stark, dass acht Läufe zuerst „Menschlich leichter" zeigten — zwölf
+weitere drehten das Bild um.
+
+**Die Einzelprüfung auf der kleinen Arena** (q3tourney4, Stufe 5, je zwölf
+Läufe) bestätigt, was auf q3dm17 auffiel, und zeigt eins mehr: ohne Ausweichen
+1,68, ohne Halten 1,72, ohne Respawn-Zeiten 1,64 — alle drei helfen. Die
+Abwechslung bei der Zielwahl dagegen kostete Stärke (ohne 1,36, mit 1,54): sie
+tauschte blind, auch eine fehlende Waffe gegen eine Munitionskiste. Jetzt bleibt
+das Beste, wenn es etwas ist, worauf auch ein Mensch nicht verzichtet, und das
+Zweitbeste gilt nur bis anderthalbfacher Wegzeit — 1,45 auf q3tourney4, auf
+q3dm17 unverändert (1,40), auf allen 25 Karten ohne Rückschritt.
+
 ## Ersetzte Sockel
 
 Wer unter „Waffen auf der Karte" einengt, legt auf den Sockel der Schrotflinte
