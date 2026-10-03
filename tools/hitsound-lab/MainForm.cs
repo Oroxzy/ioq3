@@ -131,6 +131,12 @@ public class MainForm : Form, IMessageFilter {
 	// In Sekunden. Null ist das Original: die Entscheidung kippt mit jedem
 	// Denkschritt neu.
 	readonly NumericUpDown botSteady = new() { DecimalPlaces = 1, Increment = 0.5m, Minimum = 0m, Maximum = 5m, Value = 0m, Width = 70 };
+	// Wer einen Gegner angeschossen hat, bleibt an ihm dran. Siehe BotPursuing.
+	readonly CheckBox botPursue = new() { Text = "unerbittlich: angeschossene Gegner verfolgen", Checked = false, AutoSize = true };
+	// Grad je Sekunde im Kampf; 0 lässt den Charakter. Siehe BotChangeViewAngles.
+	readonly NumericUpDown botTurnSpeed = new() { DecimalPlaces = 0, Increment = 60m, Minimum = 0m, Maximum = 1800m, Value = 0m, Width = 70 };
+	// Sekunden bis zum ersten Schuss, höchstens; 0 lässt den Charakter.
+	readonly NumericUpDown botReactionMax = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0m, Maximum = 2m, Value = 0m, Width = 70 };
 	// Eine Zahl, die ganze Leiter: unter 0,2 steht der Bot still, über 0,7
 	// umkreist er mit Rhythmus. Früher ein Haken zusammen mit dem Lagern, der
 	// nur 0,9 oder „Charakterdatei“ kannte.
@@ -228,6 +234,9 @@ public class MainForm : Form, IMessageFilter {
 		( botJink,           0,  0 ),
 		( botHear,           0,  1 ),
 		( botSteady,         0,  1.5m ),
+		( botPursue,         0,  1 ),
+		( botTurnSpeed,      0,  720 ),
+		( botReactionMax,    0,  0.35m ),
 		( botAttackSkill,   -1,  0.9m ),
 		// Zielen und Reagieren bleiben beim Charakter: gegen diese Bots wird
 		// gemessen, und ein Bot, der besser trifft, ist nicht menschlicher
@@ -1702,6 +1711,22 @@ public class MainForm : Form, IMessageFilter {
 		hintTip.SetToolTip( botHear, "Die Bots sind im Original taub: jedes Geräusch fällt in einen leeren"
 			+ " Zweig. Mit Haken bemerkt ein Bot, wer in Hörweite schießt, springt oder landet – auch"
 			+ " hinter seinem Rücken. Sehen muss er ihn trotzdem können." );
+		hintTip.SetToolTip( botPursue, "Hat ein Bot einem Gegner in den letzten fünf Sekunden mindestens 60 Schaden"
+			+ " gemacht und hat er selbst noch 30 Leben und Munition, bleibt er dran: kein Rückzug, keine"
+			+ " Ablenkung durch einen bloß näheren Gegner (nur einer, der ihn selbst trifft, zieht ihn weg),"
+			+ " nichts aufheben unterwegs, und verschwindet der Gegner, sucht er dort weiter, wohin der"
+			+ " lief oder wo er zu hören ist.\n\n"
+			+ "Gemessen ohne: von den Gegnern, denen ein Bot 60 Schaden gemacht hatte und die das"
+			+ " überlebten, erledigte er selbst nur jeden zwölften – den Rest holten sich andere." );
+		hintTip.SetToolTip( botTurnSpeed, "Wie schnell ein Bot im Kampf herumdreht, in Grad je Sekunde. Die"
+			+ " Charaktere drehen auf Stufe 5 mit 120 bis 360 – eine Vierteldrehung dauert damit bis zu"
+			+ " 0,4 Sekunden, ein Mensch reißt die Maus in einem Bruchteil herum. Gemessen: sah ein Bot"
+			+ " seinen Gegner und schoss nicht, war er in 57 von 100 Fällen noch nicht ausgerichtet. Das"
+			+ " Treffen selbst ändert das nicht. 0 lässt den Charakter." );
+		hintTip.SetToolTip( botReactionMax, "Höchstens so lange bis zum ersten Schuss auf einen neu gesehenen"
+			+ " Gegner, in Sekunden. Die Charaktere warten auf Stufe 5 bis anderthalb Sekunden (Klesk),"
+			+ " auch nach dem Wiederbeleben; ein Mensch reagiert in einer Viertelsekunde. Wer schneller"
+			+ " ist, bleibt so schnell. 0 lässt den Charakter." );
 		hintTip.SetToolTip( botSteady, "Kampf, Rückzug und Verfolgung hängen im Original an derselben"
 			+ " Schwelle und kippen bei jedem Denkschritt neu – gemessen 17 Hin-und-Her je Bot und"
 			+ " Minute, mit 1,5 Sekunden noch 5. Eine getroffene Entscheidung gilt so viele Sekunden –"
@@ -1739,6 +1764,9 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( botJink ) ),
 			Row( Pad( botHear ) ),
 			Row( Labelled( "Entscheidung halten (s):", botSteady ) ),
+			Row( Pad( botPursue ) ),
+			Row( Labelled( "Drehtempo im Kampf (°/s, 0 = Charakter):", botTurnSpeed ) ),
+			Row( Labelled( "Reaktion höchstens (s, 0 = Charakter):", botReactionMax ) ),
 			Row( Labelled( "Kampfbewegung:", botAttackSkill ) ),
 			Row( Labelled( "Reaktionszeit (s):", botReaction ) ),
 			Row( Labelled( "Zielgenauigkeit:", botAimAccuracy ) ),
@@ -2727,6 +2755,9 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botJink=" + botJink.Checked );
 		s.AppendLine( "botHear=" + botHear.Checked );
 		s.AppendLine( "botSteady=" + Dec( botSteady.Value ) );
+		s.AppendLine( "botPursue=" + botPursue.Checked );
+		s.AppendLine( "botTurnSpeed=" + Dec( botTurnSpeed.Value ) );
+		s.AppendLine( "botReactionMax=" + Dec( botReactionMax.Value ) );
 		s.AppendLine( "botAttackSkill=" + Dec( botAttackSkill.Value ) );
 		s.AppendLine( "botReaction=" + Dec( botReaction.Value ) );
 		s.AppendLine( "botAimAccuracy=" + Dec( botAimAccuracy.Value ) );
@@ -2881,6 +2912,9 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botJink, v, "botJink" );
 		SetBool( botHear, v, "botHear" );
 		SetNum( botSteady, v, "botSteady" );
+		SetBool( botPursue, v, "botPursue" );
+		SetNum( botTurnSpeed, v, "botTurnSpeed" );
+		SetNum( botReactionMax, v, "botReactionMax" );
 		SetNum( botAttackSkill, v, "botAttackSkill" );
 		SetNum( botReaction, v, "botReaction" );
 		SetNum( botAimAccuracy, v, "botAimAccuracy" );
@@ -3193,6 +3227,9 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botJink {( botJink.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botHear {( botHear.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botSteady {Dec( botSteady.Value )}" );
+		cfg.AppendLine( $"set g_botPursue {( botPursue.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botTurnSpeed {Dec( botTurnSpeed.Value )}" );
+		cfg.AppendLine( $"set g_botReactionMax {Dec( botReactionMax.Value )}" );
 		cfg.AppendLine( $"set g_botAttackSkill {Dec( botAttackSkill.Value )}" );
 		cfg.AppendLine( $"set g_botReaction {Dec( botReaction.Value )}" );
 		cfg.AppendLine( $"set g_botAimAccuracy {Dec( botAimAccuracy.Value )}" );

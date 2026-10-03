@@ -2416,6 +2416,19 @@ static int BotMood(bot_state_t *bs) {
 	else if (aggression > 50) mood = BOTMOOD_FIGHT;
 	else mood = BOTMOOD_NEUTRAL;
 
+	// Werkbank: unerbittlich. Wer seinen Gegner schon angeschossen hat und
+	// selbst noch kann, bleibt dran - kein Rueckzug, und eine Verfolgung, wenn
+	// er aus der Sicht verschwindet (BotWantsToChase fragt hier).
+	if (BotPursuing(bs)) {
+		if (bs->mood != BOTMOOD_FIGHT) {
+			bs->mood = BOTMOOD_FIGHT;
+			bs->mood_time = FloatTime() + BotVal(bs, g_botSteady);
+			bs->mood_health = bs->inventory[INVENTORY_HEALTH];
+			bs->mood_stack = bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR];
+		}
+		return BOTMOOD_FIGHT;
+	}
+
 	if (BotVal(bs, g_botSteady) <= 0) {
 		return mood;
 	}
@@ -3236,6 +3249,9 @@ int BotFindEnemy(bot_state_t *bs, int curenemy) {
 		}
 		if (curdmg >= 20) return qfalse;
 	}
+	// Werkbank: wer seinen Gegner angeschossen hat, wechselt nicht zu einem bloss
+	// naeheren - nur einer, der ihn selbst trifft, zieht ihn weg (oben)
+	if (curenemy >= 0 && curenemy == bs->enemy && BotPursuing(bs)) return qfalse;
 #ifdef MISSIONPACK
 	if (gametype == GT_OBELISK) {
 		vec3_t target;
@@ -3594,6 +3610,8 @@ void BotAimAtEnemy(bot_state_t *bs) {
 	if (aim_skill > 0.95) {
 		//don't aim too early
 		reactiontime = 0.5 * BotChar(bs, CHARACTERISTIC_REACTIONTIME, 0, 1, g_botReaction.value);
+		if (BotVal(bs, g_botReactionMax) > 0 && reactiontime > 0.5f * BotVal(bs, g_botReactionMax))
+			reactiontime = 0.5f * BotVal(bs, g_botReactionMax);
 		if (bs->enemysight_time > FloatTime() - reactiontime) return;
 		if (bs->teleport_time > FloatTime() - reactiontime) return;
 	}
@@ -3877,13 +3895,19 @@ void BotCheckAttack(bot_state_t *bs) {
 #endif
 	}
 	//
+	// Werkbank: fuer das Protokoll, warum nicht geschossen wird (fire_why)
 	reactiontime = BotChar(bs, CHARACTERISTIC_REACTIONTIME, 0, 1, g_botReaction.value);
-	if (bs->enemysight_time > FloatTime() - reactiontime) return;
-	if (bs->teleport_time > FloatTime() - reactiontime) return;
+	// Werkbank: hoechstens so lange wie ein Mensch. Die Charaktere warten auf
+	// Stufe 5 bis anderthalb Sekunden bis zum ersten Schuss (Klesk), auch nach
+	// dem Wiederbeleben - ein Mensch reagiert in einer Viertelsekunde.
+	if (BotVal(bs, g_botReactionMax) > 0 && reactiontime > BotVal(bs, g_botReactionMax))
+		reactiontime = BotVal(bs, g_botReactionMax);
+	if (bs->enemysight_time > FloatTime() - reactiontime) { bs->fire_why = 1; return; }
+	if (bs->teleport_time > FloatTime() - reactiontime) { bs->fire_why = 2; return; }
 	//if changing weapons
-	if (bs->weaponchange_time > FloatTime() - 0.1) return;
+	if (bs->weaponchange_time > FloatTime() - 0.1) { bs->fire_why = 3; return; }
 	//check fire throttle characteristic
-	if (bs->firethrottlewait_time > FloatTime()) return;
+	if (bs->firethrottlewait_time > FloatTime()) { bs->fire_why = 4; return; }
 	firethrottle = BotChar(bs, CHARACTERISTIC_FIRETHROTTLE, 0, 1, g_botFireThrottle.value);
 	if (bs->firethrottleshoot_time < FloatTime()) {
 		if (random() > firethrottle) {
@@ -3901,6 +3925,7 @@ void BotCheckAttack(bot_state_t *bs) {
 	//
 	if (bs->weaponnum == WP_GAUNTLET) {
 		if (VectorLengthSquared(dir) > Square(60)) {
+			bs->fire_why = 5;
 			return;
 		}
 	}
@@ -3910,11 +3935,15 @@ void BotCheckAttack(bot_state_t *bs) {
 		fov = 50;
 	//
 	vectoangles(dir, angles);
-	if (!InFieldOfVision(bs->viewangles, fov, angles))
+	if (!InFieldOfVision(bs->viewangles, fov, angles)) {
+		bs->fire_why = 6;
 		return;
+	}
 	BotAI_Trace(&bsptrace, bs->eye, NULL, NULL, bs->aimtarget, bs->client, CONTENTS_SOLID|CONTENTS_PLAYERCLIP);
-	if (bsptrace.fraction < 1 && bsptrace.ent != attackentity)
+	if (bsptrace.fraction < 1 && bsptrace.ent != attackentity) {
+		bs->fire_why = 7;
 		return;
+	}
 
 	//get the weapon info
 	trap_BotGetWeaponInfo(bs->ws, bs->weaponnum, &wi);
@@ -3934,8 +3963,10 @@ void BotCheckAttack(bot_state_t *bs) {
 	if (trace.ent >= 0 && trace.ent < MAX_CLIENTS) {
 		if (trace.ent != attackentity) {
 			//if a teammate is hit
-			if (BotSameTeam(bs, trace.ent))
+			if (BotSameTeam(bs, trace.ent)) {
+				bs->fire_why = 8;
 				return;
+			}
 		}
 	}
 	//if won't hit the enemy or not attacking a player (obelisk)
@@ -3945,6 +3976,7 @@ void BotCheckAttack(bot_state_t *bs) {
 			if (trace.fraction * 1000 < wi.proj.radius) {
 				points = (wi.proj.damage - 0.5 * trace.fraction * 1000) * 0.5;
 				if (points > 0) {
+					bs->fire_why = 9;
 					return;
 				}
 			}
@@ -3952,9 +3984,12 @@ void BotCheckAttack(bot_state_t *bs) {
 		}
 	}
 	//if fire has to be release to activate weapon
+	bs->fire_why = 0;
 	if (wi.flags & WFL_FIRERELEASED) {
 		if (bs->flags & BFL_ATTACKED) {
 			trap_EA_Attack(bs->client);
+		} else {
+			bs->fire_why = 10;
 		}
 	}
 	else {
@@ -5124,6 +5159,7 @@ static void BotHearNoise(bot_state_t *bs, entityState_t *state, int event) {
 		return;
 	}
 	bs->heard_time[state->number] = FloatTime();
+	VectorCopy(state->pos.trBase, bs->heard_origin[state->number]);
 	VectorCopy(state->pos.trBase, bs->noise_origin);
 	bs->noise_time = FloatTime();
 }

@@ -777,6 +777,9 @@ extern	vmCvar_t	g_botUnstuck;
 extern	vmCvar_t	g_botAirControl;
 extern	vmCvar_t	g_botRetaliate;
 extern	vmCvar_t	g_botJink;
+extern	vmCvar_t	g_botPursue;
+extern	vmCvar_t	g_botTurnSpeed;
+extern	vmCvar_t	g_botReactionMax;
 extern	vmCvar_t	g_botStockMask;
 // Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist (ai_main.c)
 void	QDECL BotLogPrintf( const char *fmt, ... );
@@ -798,6 +801,9 @@ extern	vmCvar_t	g_botFireThrottle;
 void BotItemTaken( gentity_t *ent, gentity_t *other, float respawn );
 // Werkbank: ein Bot wurde getroffen - fuer g_botRetaliate (ai_main.c)
 void BotDamagedBy( int target, int attacker, int amount );
+// Werkbank: ein Bot hat getroffen, ein Spieler ist gestorben - fuer g_botPursue
+void BotDealtDamage( int attacker, int target, int amount );
+void BotClientDied( int client );
 extern	vmCvar_t	g_weaponRespawn;
 extern	vmCvar_t	g_weaponTeamRespawn;
 extern	vmCvar_t	g_synchronousClients;

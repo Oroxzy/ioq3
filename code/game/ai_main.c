@@ -820,6 +820,12 @@ void BotChangeViewAngles(bot_state_t *bs, float thinktime) {
 	if (bs->enemy >= 0) {
 		factor = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_VIEW_FACTOR, 0.01f, 1);
 		maxchange = trap_Characteristic_BFloat(bs->character, CHARACTERISTIC_VIEW_MAXCHANGE, 1, 1800);
+		// Werkbank: Drehtempo im Kampf. Die Charaktere drehen auf Stufe 5 mit
+		// 120 bis 360 Grad je Sekunde - eine Vierteldrehung dauert damit bis zu
+		// 0,4 Sekunden, ein Mensch reisst die Maus in einem Bruchteil herum.
+		// Gemessen: sah ein Bot seinen Gegner und schoss nicht, war er in 57 von
+		// 100 Faellen schlicht noch nicht ausgerichtet.
+		if (BotVal(bs, g_botTurnSpeed) > 0) maxchange = BotVal(bs, g_botTurnSpeed);
 	}
 	else {
 		factor = 0.05f;
@@ -1046,6 +1052,77 @@ void BotDamagedBy( int target, int attacker, int amount ) {
 	}
 	bs->hurt_amount[attacker] += amount;
 	bs->hurt_time[attacker] = FloatTime();
+}
+
+/*
+==================
+BotDealtDamage / BotClientDied / BotPursuing
+
+Wem der Bot in den letzten fuenf Sekunden wieviel Schaden gemacht hat - das,
+was auch ein Mensch weiss: "den habe ich zweimal getroffen, der ist fast hin".
+Wer stirbt, kommt mit vollem Leben wieder, also wird das dann vergessen.
+
+Verfolgt wird, wer mindestens 60 abbekommen hat, solange der Bot selbst noch
+dreissig Leben und eine Waffe mit Munition hat - unerbittlich, wenn es die
+Lage erlaubt. Gemessen auf q3dm17, Stufe 5: von den Gegnern, denen ein Bot 60
+Schaden gemacht hatte und die das ueberlebten, erledigte er selbst nur jeden
+zwoelften; fast alle anderen holte sich ein anderer, waehrend der Bot sich
+zurueckzog. Ein Mensch setzt nach und holt sich den Abschuss.
+==================
+*/
+#define PURSUE_WINDOW	5.0f
+
+void BotDealtDamage( int attacker, int target, int amount ) {
+	bot_state_t	*bs;
+
+	if ( attacker < 0 || attacker >= MAX_CLIENTS || target < 0 || target >= MAX_CLIENTS ) {
+		return;
+	}
+	bs = botstates[attacker];
+	if ( !bs || !bs->inuse ) {
+		return;
+	}
+	if ( FloatTime() - bs->dealt_time[target] > PURSUE_WINDOW ) {
+		bs->dealt_amount[target] = 0;
+	}
+	bs->dealt_amount[target] += amount;
+	bs->dealt_time[target] = FloatTime();
+}
+
+void BotClientDied( int client ) {
+	int		i;
+
+	if ( client < 0 || client >= MAX_CLIENTS ) {
+		return;
+	}
+	for ( i = 0; i < MAX_CLIENTS; i++ ) {
+		if ( botstates[i] && botstates[i]->inuse ) {
+			botstates[i]->dealt_amount[client] = 0;
+		}
+	}
+}
+
+qboolean BotPursuing( bot_state_t *bs ) {
+	int		*inv;
+
+	if ( !BotSw(bs, g_botPursue) || bs->enemy < 0 || bs->enemy >= MAX_CLIENTS ) {
+		return qfalse;
+	}
+	if ( FloatTime() - bs->dealt_time[bs->enemy] > PURSUE_WINDOW || bs->dealt_amount[bs->enemy] < 60 ) {
+		return qfalse;
+	}
+	inv = bs->inventory;
+	if ( inv[INVENTORY_HEALTH] < 30 ) {
+		return qfalse;
+	}
+	return ( inv[INVENTORY_MACHINEGUN] > 0 && inv[INVENTORY_BULLETS] > 0 )
+		|| ( inv[INVENTORY_SHOTGUN] > 0 && inv[INVENTORY_SHELLS] > 0 )
+		|| ( inv[INVENTORY_ROCKETLAUNCHER] > 0 && inv[INVENTORY_ROCKETS] > 0 )
+		|| ( inv[INVENTORY_RAILGUN] > 0 && inv[INVENTORY_SLUGS] > 0 )
+		|| ( inv[INVENTORY_LIGHTNING] > 0 && inv[INVENTORY_LIGHTNINGAMMO] > 0 )
+		|| ( inv[INVENTORY_PLASMAGUN] > 0 && inv[INVENTORY_CELLS] > 0 )
+		|| ( inv[INVENTORY_GRENADELAUNCHER] > 0 && inv[INVENTORY_GRENADES] > 0 )
+		|| ( inv[INVENTORY_BFG10K] > 0 && inv[INVENTORY_BFGAMMO] > 0 );
 }
 
 int BotRecentDamage( bot_state_t *bs, int attacker ) {
@@ -2676,11 +2753,13 @@ void BotUpdateInput(bot_state_t *bs, int time, int elapsed_time) {
 	if ( g_botLog.integer >= 3 && g_entities[bs->client].client ) {
 		playerState_t *fps = &g_entities[bs->client].client->ps;
 
-		BotLogPrintf( "F %i %i %.0f %.0f %.0f %.0f %.0f %.0f %.2f %.2f %.0f %i %i %i %i\n",
+		// am Ende: schiesst er, und sieht er seinen Gegner gerade
+		BotLogPrintf( "F %i %i %.0f %.0f %.0f %.0f %.0f %.0f %.2f %.2f %.0f %i %i %i %i %i %i %i\n",
 			level.time, bs->client, fps->origin[0], fps->origin[1], fps->origin[2],
 			fps->velocity[0], fps->velocity[1], bi.viewangles[YAW], bi.dir[0], bi.dir[1],
 			bi.speed, bs->foot_kind, fps->groundEntityNum != ENTITYNUM_NONE,
-			bs->travel_type, fps->pm_type );
+			bs->travel_type, fps->pm_type, ( bi.actionflags & ACTION_ATTACK ) ? 1 : 0,
+			bs->enemy >= 0 && bs->enemyvisible_time >= FloatTime() - 0.15f, bs->fire_why );
 	}
 	//convert the bot input to a usercmd
 	BotInputToUserCommand(&bi, &bs->lastucmd, bs->cur_ps.delta_angles, time);
@@ -2863,6 +2942,7 @@ int BotAI(int client, float thinktime) {
 	//get the area the bot is in
 	bs->areanum = BotPointAreaNum(bs->origin);
 	// Werkbank: ein Wegbefehl aus dem vorigen Denkschritt zaehlt nicht mehr
+	bs->fire_why = 11;			// wird von BotCheckAttack ueberschrieben, wenn der Knoten fragt
 	bs->travel_type = 0;
 	bs->log_goal = 0;
 	//the real AI

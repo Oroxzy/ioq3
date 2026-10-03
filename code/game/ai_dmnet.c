@@ -2374,6 +2374,7 @@ int AINode_Battle_Fight(bot_state_t *bs) {
 	areanum = BotPointAreaNum(target);
 	if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 		VectorCopy(target, bs->lastenemyorigin);
+		if (bs->enemy >= 0 && bs->enemy < MAX_CLIENTS && g_entities[bs->enemy].client) VectorCopy(g_entities[bs->enemy].client->ps.velocity, bs->lastenemyvel);
 		bs->lastenemyareanum = areanum;
 	}
 	//update the attack inventory values
@@ -2486,7 +2487,33 @@ AIEnter_Battle_Chase
 void AIEnter_Battle_Chase(bot_state_t *bs, char *s) {
 	BotRecordNodeSwitch(bs, "battle chase", "", s);
 	bs->chase_time = FloatTime();
+	bs->chase_extend = 0;
 	bs->ainode = AINode_Battle_Chase;
+}
+
+/*
+==================
+BotChaseTo
+
+Die Verfolgung an einer neuen Stelle fortsetzen: dort, wo der Verfolgte zu
+hoeren war oder wohin er lief. Nur, wenn dort ein Feld des Wegnetzes ist.
+==================
+*/
+static qboolean BotChaseTo(bot_state_t *bs, vec3_t spot) {
+	vec3_t	p;
+	int		area;
+
+	VectorCopy(spot, p);
+	area = BotPointAreaNum(p);
+	if (!area || !trap_AAS_AreaReachability(area)) {
+		p[2] -= 48;
+		area = BotPointAreaNum(p);
+	}
+	if (!area || !trap_AAS_AreaReachability(area)) return qfalse;
+	VectorCopy(p, bs->lastenemyorigin);
+	bs->lastenemyareanum = area;
+	bs->chase_time = FloatTime();
+	return qtrue;
 }
 
 /*
@@ -2526,7 +2553,9 @@ int AINode_Battle_Chase(bot_state_t *bs)
 		return qfalse;
 	}
 	//if there is another enemy
-	if (BotFindEnemy(bs, -1)) {
+	// Werkbank: wer einen Angeschossenen verfolgt, laesst sich nur von einem
+	// ablenken, der ihn selbst trifft (BotFindEnemy mit dem jetzigen Gegner)
+	if (BotFindEnemy(bs, BotPursuing(bs) ? bs->enemy : -1)) {
 		AIEnter_Battle_Fight(bs, "battle chase: better enemy");
 		return qfalse;
 	}
@@ -2546,6 +2575,11 @@ int AINode_Battle_Chase(bot_state_t *bs)
 	}
 	//map specific code
 	BotMapScripts(bs);
+	// Werkbank: hoert er den Verfolgten, geht er dem Geraeusch nach
+	if (BotPursuing(bs) && bs->heard_time[bs->enemy] > bs->chase_time
+		&& bs->heard_time[bs->enemy] > FloatTime() - 1.0f) {
+		BotChaseTo(bs, bs->heard_origin[bs->enemy]);
+	}
 	//create the chase goal
 	goal.entitynum = bs->enemy;
 	goal.areanum = bs->lastenemyareanum;
@@ -2553,14 +2587,29 @@ int AINode_Battle_Chase(bot_state_t *bs)
 	VectorSet(goal.mins, -8, -8, -8);
 	VectorSet(goal.maxs, 8, 8, 8);
 	//if the last seen enemy spot is reached the enemy could not be found
-	if (trap_BotTouchingGoal(bs->origin, &goal)) bs->chase_time = 0;
+	if (trap_BotTouchingGoal(bs->origin, &goal) || bs->areanum == bs->lastenemyareanum) {
+		// Werkbank: nicht aufgeben, wo man ihn zuletzt sah - dort weitersuchen,
+		// wohin er lief. Zweimal, dann ist er weg.
+		if (BotPursuing(bs) && bs->chase_extend < 2) {
+			vec3_t	guess;
+
+			bs->chase_extend++;
+			VectorMA(bs->lastenemyorigin, 0.8f, bs->lastenemyvel, guess);
+			if (!BotChaseTo(bs, guess)) bs->chase_time = 0;
+			VectorClear(bs->lastenemyvel);
+		}
+		else {
+			bs->chase_time = 0;
+		}
+	}
 	//if there's no chase time left
 	if (!bs->chase_time || bs->chase_time < FloatTime() - 10) {
 		AIEnter_Seek_LTG(bs, "battle chase: time out");
 		return qfalse;
 	}
 	//check for nearby goals periodicly
-	if (bs->check_time < FloatTime()) {
+	// Werkbank: wer einen Angeschossenen verfolgt, hebt unterwegs nichts auf
+	if (bs->check_time < FloatTime() && !BotPursuing(bs)) {
 		bs->check_time = FloatTime() + 1;
 		range = 150;
 		//
@@ -2610,7 +2659,7 @@ int AINode_Battle_Chase(bot_state_t *bs)
 	//if the weapon is used for the bot movement
 	if (moveresult.flags & MOVERESULT_MOVEMENTWEAPON) bs->weaponnum = moveresult.weapon;
 	//if the bot is in the area the enemy was last seen in
-	if (bs->areanum == bs->lastenemyareanum) bs->chase_time = 0;
+	if (bs->areanum == bs->lastenemyareanum && !BotPursuing(bs)) bs->chase_time = 0;
 	//if the bot wants to retreat (the bot could have been damage during the chase)
 	if (BotWantsToRetreat(bs)) {
 		AIEnter_Battle_Retreat(bs, "battle chase: wants to retreat");
@@ -2708,6 +2757,7 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 		areanum = BotPointAreaNum(target);
 		if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 			VectorCopy(target, bs->lastenemyorigin);
+			if (bs->enemy >= 0 && bs->enemy < MAX_CLIENTS && g_entities[bs->enemy].client) VectorCopy(g_entities[bs->enemy].client->ps.velocity, bs->lastenemyvel);
 			bs->lastenemyareanum = areanum;
 		}
 	}
@@ -2895,6 +2945,7 @@ int AINode_Battle_NBG(bot_state_t *bs) {
 		areanum = BotPointAreaNum(target);
 		if (areanum && trap_AAS_AreaReachability(areanum) && BotEnemySpotSafe(bs, target)) {
 			VectorCopy(target, bs->lastenemyorigin);
+			if (bs->enemy >= 0 && bs->enemy < MAX_CLIENTS && g_entities[bs->enemy].client) VectorCopy(g_entities[bs->enemy].client->ps.velocity, bs->lastenemyvel);
 			bs->lastenemyareanum = areanum;
 		}
 	}

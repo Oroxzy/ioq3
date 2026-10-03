@@ -494,6 +494,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	// Konsolenprotokoll hat keine, und ohne sie laesst sich nicht nachsehen,
 	// was ein Bot in den Sekunden vor seinem Tod getan hat
 	BotLogPrintf( "K %i %i %i %s\n", level.time, self->s.number, killer, obit );
+	BotClientDied( self->s.number );
 
 	// broadcast the death event to everyone
 	ent = G_TempEntity( self->r.currentOrigin, EV_OBITUARY );
@@ -1082,6 +1083,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 			attacker ? attacker->s.number : ENTITYNUM_WORLD, take, asave, mod );
 		if ( ( targ->r.svFlags & SVF_BOT ) && attacker && attacker->client && attacker != targ ) {
 			BotDamagedBy( targ->s.number, attacker->s.number, take + asave );
+		}
+		if ( attacker && attacker->client && ( attacker->r.svFlags & SVF_BOT ) && attacker != targ ) {
+			BotDealtDamage( attacker->s.number, targ->s.number, take + asave );
 		}
 	}
 

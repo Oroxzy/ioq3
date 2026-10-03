@@ -293,6 +293,12 @@ typedef struct bot_state_s
 	float jink_time;								//bis dahin gilt die Seite
 	int jink_side;									//nach links oder rechts
 	int hurt_amount[MAX_CLIENTS];					//und wieviel seither, in einem Fenster von anderthalb Sekunden
+	// Werkbank: unerbittlich verfolgen (g_botPursue)
+	float dealt_time[MAX_CLIENTS];					//wann der Bot wen zuletzt getroffen hat
+	int dealt_amount[MAX_CLIENTS];					//und wieviel seither, in einem Fenster von fuenf Sekunden
+	vec3_t lastenemyvel;							//wohin der Gegner lief, als er zuletzt zu sehen war
+	int chase_extend;								//wie oft die Verfolgung ueber den letzten Sichtpunkt hinausging
+	vec3_t heard_origin[MAX_CLIENTS];				//wo wer zuletzt zu hoeren war
 	vec3_t noise_origin;							//wo das letzte Geraeusch herkam
 	float noise_time;								//und wann
 	// Werkbank: ausweichen (g_botDodge)
@@ -315,6 +321,7 @@ typedef struct bot_state_s
 	int foot_pad;									//zuletzt auf einem Sprungfeld gestanden
 	float foot_padhold;								//wann zuletzt vor einem Sprungfeld gewartet wurde
 	float foot_padstart;							//seit wann am Stueck
+	int fire_why;									//Protokoll: warum zuletzt nicht geschossen (0 geschossen, 11 nicht gefragt)
 	int foot_kind;									//Eingriff in diesem Bild: 0 keiner, 1-5 am Boden, 11-14 in der Luft
 	vec3_t foot_origin;								//wo er zuletzt sicher stand
 	vec3_t foot_air_dir;							//wohin zuletzt in der Luft gesteuert wurde
@@ -388,6 +395,8 @@ qboolean BotGroundAhead(bot_state_t *bs, vec3_t dir, float dist);
 qboolean BotEnemySpotSafe(bot_state_t *bs, vec3_t origin);
 // Werkbank: wer den Bot zuletzt wie stark getroffen hat (g_botRetaliate)
 int BotRecentDamage(bot_state_t *bs, int attacker);
+// Werkbank: hat der Bot seinen Gegner schon angeschossen und kann nachsetzen (g_botPursue)
+qboolean BotPursuing(bot_state_t *bs);
 // Werkbank: worauf es sich zu warten lohnt; bs darf NULL sein
 qboolean BotItemWorthWaiting(bot_state_t *bs, gitem_t *item);
 // Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist

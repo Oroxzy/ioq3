@@ -95,6 +95,9 @@ vmCvar_t	g_botUnstuck;
 vmCvar_t	g_botAirControl;
 vmCvar_t	g_botRetaliate;
 vmCvar_t	g_botJink;
+vmCvar_t	g_botPursue;
+vmCvar_t	g_botTurnSpeed;
+vmCvar_t	g_botReactionMax;
 vmCvar_t	g_botStockMask;
 vmCvar_t	g_botDodge;
 vmCvar_t	g_botSteady;
@@ -308,6 +311,12 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_botRetaliate, "g_botRetaliate", "0", 0, 0, qtrue },
 	// Auf dem Rueckzug Haken schlagen, solange der Gegner zu sehen ist.
 	{ &g_botJink, "g_botJink", "0", 0, 0, qtrue },
+	// Wer einen Gegner schon angeschossen hat, bleibt an ihm dran, bis er tot ist.
+	{ &g_botPursue, "g_botPursue", "0", 0, 0, qtrue },
+	// Wie schnell ein Bot im Kampf herumdreht, Grad je Sekunde; 0 der Charakter.
+	{ &g_botTurnSpeed, "g_botTurnSpeed", "0", 0, 0, qtrue },
+	// Hoechstens so lange bis zum ersten Schuss, in Sekunden; 0 der Charakter.
+	{ &g_botReactionMax, "g_botReactionMax", "0", 0, 0, qtrue },
 	// Ein Bit je Clientnummer: diese Bots spielen als Original, auch wenn die
 	// Schalter an sind. Nur fuer den Vergleich im selben Spiel.
 	{ &g_botStockMask, "g_botStockMask", "0", 0, 0, qfalse },

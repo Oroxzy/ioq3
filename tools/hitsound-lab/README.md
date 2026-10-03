@@ -1364,6 +1364,9 @@ fassen die Knöpfe nicht an — das gehört zur Sitzung, nicht zum Verhalten.
 | kämpfen mit dem, was da ist | `g_botBrave` | 0 | 0 (gemessen schwächer, siehe unten) |
 | zurückschlagen, wer gerade trifft | `g_botRetaliate` | 0 | 1 |
 | beim Rückzug Haken schlagen | `g_botJink` | 0 | 0 (gemessen ohne Nutzen) |
+| unerbittlich: angeschossene Gegner verfolgen | `g_botPursue` | 0 | 1 |
+| Drehtempo im Kampf (°/s) | `g_botTurnSpeed` | 0 (Charakter) | 720 |
+| Reaktion höchstens (s) | `g_botReactionMax` | 0 (Charakter) | 0,35 |
 | Schüsse, Sprünge und Schritte hören | `g_botHear` | 0 | 1 |
 | Entscheidung halten (s) | `g_botSteady` | 0 | 1,5 |
 | Kampfbewegung | `g_botAttackSkill` | −1 | 0,9 |
@@ -1888,6 +1891,58 @@ tauschte blind, auch eine fehlende Waffe gegen eine Munitionskiste. Jetzt bleibt
 das Beste, wenn es etwas ist, worauf auch ein Mensch nicht verzichtet, und das
 Zweitbeste gilt nur bis anderthalbfacher Wegzeit — 1,45 auf q3tourney4, auf
 q3dm17 unverändert (1,40), auf allen 25 Karten ohne Rückschritt.
+
+## Unerbittlich, und dauernd am Schießen
+
+Die Frage aus dem Spiel: verfolgt ein Bot jemanden bis zum Ende, wenn die Lage
+es erlaubt, und schießt er eigentlich dauernd, wie ein Mensch, der gewinnen
+will? Gemessen mit zwei neuen Protokollfeldern (die F-Zeile sagt jetzt, ob die
+Feuertaste gedrückt ist, ob der Gegner zu sehen ist, und warum nicht
+geschossen wurde) und `tools/botlog/fire.pl`. Beides war nicht so.
+
+**Sie ließen ihre Opfer liegen.** Hatte ein Bot einem Gegner 60 Schaden
+gemacht und der überlebte, erledigte ihn derselbe Bot danach nur in jedem
+zehnten Fall; fast alle holte sich ein anderer, während der Bot abdrehte — gleich
+danach war er meist auf dem Rückzug. Der Original-Code verfolgt nur, wenn der
+Bot sich selbst stark fühlt, hört am letzten Sichtpunkt auf, lässt sich von
+jedem anderen Gegner und jedem Gegenstand in der Nähe ablenken.
+
+**Sie sahen ihren Gegner und schossen nicht** — 27 Prozent der ganzen Zeit.
+Die Gründe: in 57 von 100 Fällen war der Bot noch nicht ausgerichtet (die
+Charaktere drehen auf Stufe 5 mit 120 bis 360 Grad je Sekunde, eine
+Vierteldrehung dauert bis zu 0,4 Sekunden), in 19 die Reaktionszeit (bis
+anderthalb Sekunden), in 12 die Wartezeit nach dem Wiederbeleben.
+
+Drei neue Schalter:
+- **unerbittlich** (`g_botPursue`): wer einem Gegner in den letzten fünf
+  Sekunden 60 Schaden gemacht hat und selbst noch 30 Leben und Munition hat,
+  bleibt dran — kein Rückzug, kein Wechsel zu einem bloß näheren Gegner (nur
+  wer ihn selbst trifft, zieht ihn weg), nichts aufheben unterwegs, und
+  verschwindet der Gegner, sucht er dort weiter, wohin der lief oder wo er zu
+  hören ist;
+- **Drehtempo** (`g_botTurnSpeed`, Grad je Sekunde): ein Tempo wie mit der
+  Maus. Getroffen wird damit nicht besser — die Genauigkeit bleibt beim
+  Charakter —, der Bot ist nur schneller ausgerichtet;
+- **Reaktion höchstens** (`g_botReactionMax`, Sekunden): wer schneller ist,
+  bleibt so schnell.
+
+| q3dm17, Stufe 5, je 15 bis 30 Läufe | Abschüsse je Tod des Stellvertreters | schießt | sieht ihn, schießt nicht |
+|---|---|---|---|
+| bisher | 1,57 | 68 % | 27 % |
+| nur unerbittlich | 1,37 | 68 % | 27 % |
+| nur Drehtempo 720 | 1,29 | 71 % | 23 % |
+| nur Reaktion 0,35 | 1,38 | 70 % | 25 % |
+| **alle drei** | **1,34** | **75 %** | **19 %** |
+
+Alle drei zusammen sind in der Streuung gleich stark wie das Drehtempo allein,
+schießen aber am meisten und holen sich am häufigsten selbst, wen sie
+angeschossen haben — genau das war gefragt. 1080 Grad je Sekunde statt 720
+bringen nichts mehr. Auf q3tourney4 (Stufe 5) sinkt der Stellvertreter damit
+von 1,54 auf 1,27, auf q3dm6 von 1,85 auf 1,60. Über alle 25 Karten fallen
+zwanzig Prozent mehr Abschüsse je Minute, weniger Tode durch die Karte, und
+der Blick springt nicht unruhiger (gleich viele Sprünge über 40 Grad je
+Bild). Das Hin und Her steigt etwas (13,7 statt 10,9 je Bot-Minute; das
+Original hat 35) — das ist das Verfolgen und Wiederfinden.
 
 ## Ersetzte Sockel
 
