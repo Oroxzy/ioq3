@@ -1367,6 +1367,10 @@ fassen die Knöpfe nicht an — das gehört zur Sitzung, nicht zum Verhalten.
 | unerbittlich: angeschossene Gegner verfolgen | `g_botPursue` | 0 | 1 |
 | Drehtempo im Kampf (°/s) | `g_botTurnSpeed` | 0 (Charakter) | 720 |
 | Reaktion höchstens (s) | `g_botReactionMax` | 0 (Charakter) | 0,35 |
+| angeschlagen Deckung suchen | `g_botCover` | 0 | 1 |
+| Dauerfeuer: um Ecken vorfeuern | `g_botSpam` | 0 | 0 (gemessen ohne Nutzen) |
+| Zielwahl: Angeschossene und Abgewandte zuerst | `g_botTarget` | 0 | 0 (gemessen ohne Nutzen) |
+| im Gefecht hüpfen (Auto-Hop) | `g_botHop` | 0 | 0 (gemessen ohne Nutzen) |
 | Schüsse, Sprünge und Schritte hören | `g_botHear` | 0 | 1 |
 | Entscheidung halten (s) | `g_botSteady` | 0 | 1,5 |
 | Kampfbewegung | `g_botAttackSkill` | −1 | 0,9 |
@@ -1943,6 +1947,59 @@ zwanzig Prozent mehr Abschüsse je Minute, weniger Tode durch die Karte, und
 der Blick springt nicht unruhiger (gleich viele Sprünge über 40 Grad je
 Bild). Das Hin und Her steigt etwas (13,7 statt 10,9 je Bot-Minute; das
 Original hat 35) — das ist das Verfolgen und Wiederfinden.
+
+## Waffen, Vorfeuern, Zielwahl, Deckung, Hüpfen
+
+Fünf Ideen, alle umgesetzt und gemessen, jede hinter einem eigenen Schalter —
+und nur eine hat sich gehalten. Gemessen wie zuletzt: der Stellvertreter gegen
+das Feld, je 15 bis 24 Läufe, auf q3dm17 und q3tourney4, die Deckung auch auf
+q3dm6 und q3dm13 (`tools/botlog/weapons.pl` für die Waffen).
+
+**Waffen.** Auf q3dm17 halten die Bots 70 Prozent ihrer Lebenszeit nur das
+Maschinengewehr, in zwei von drei Leben bekommen sie nie eine richtige Waffe.
+Das ist die Karte: fünf Waffen (zwei Raketenwerfer, eine Railgun, zwei
+Schrotflinten) für elf Spieler. Die Bots laufen mit dem Maschinengewehr fast
+immer zum Raketenwerfer, und was Getötete fallen lassen, wird schon jetzt so
+gut wie vollständig aufgehoben (30 je Minute fallengelassen, 30 aufgehoben).
+Hier gab es nichts zu verbessern.
+
+**Dauerfeuer** (`g_botSpam`): die Zielhilfe des Originals zielt in den ersten
+Sekunden einer Verfolgung mit Raketen, Granaten und BFG dorthin, wo der Gegner
+wieder auftauchen muss — und drückt nie ab. Jetzt schon, auch mit Plasma, und
+ohne Eigenschaden (`g_selfDamage 0`) feuern Splash-Waffen auch aus der Nähe.
+Wirkt, bringt aber nichts mehr: seit dem schnelleren Drehen schießen die Bots
+ohnehin drei Viertel der Zeit.
+
+**Zielwahl** (`g_botTarget`): statt immer des Nächsten den, den der Bot schon
+angeschossen hat, und den, der ihm den Rücken zudreht. Die Bots wechseln damit
+ruhiger (62 statt 77 Wechsel je Minute), werden aber nicht stärker — auf der
+kleinen Arena eher leichter, weil sie sich von dem abwenden, der sie gerade
+ansieht.
+
+**Hüpfen** (`g_botHop`): im Gefecht mit Auto-Hop dauernd springen. Ohne
+Wirkung auf die Stärke.
+
+**Deckung** (`g_botCover`, `BotCoverGoal`): auf dem Rückzug zuerst an die
+nächste Stelle, die der Gegner nicht sieht. Drei Fassungen:
+- jede Deckung: das Hin und Her verdoppelte sich — hin zur Deckung, zurück
+  zum Ziel, wieder gesehen, wieder hin;
+- nur Deckung auf dem Weg (höchstens anderthalb Sekunden Umweg), danach zwei
+  Sekunden keine Suche, schon bei leichten Treffern: ruhig, auf q3dm17
+  schwerer, auf q3dm6 aber leichter, und über alle Karten sechs Prozent
+  weniger Abschüsse — die Bots versteckten sich zu oft;
+- dieselbe, aber nur wenn der Bot wirklich angeschlagen ist (Leben und Rüstung
+  unter 60): behält den Vorteil auf q3dm17 und schadet nirgends.
+
+| Schaden aus/ein des Stellvertreters | ohne Deckung | Deckung schon bei Treffern | nur angeschlagen |
+|---|---|---|---|
+| q3dm17 | 1,25 | 1,19 | 1,19 |
+| q3tourney4 | 1,18 | 1,18 | 1,20 |
+| q3dm6 | 1,39 | 1,54 | 1,37 |
+
+Bei „Menschlich" ist nur die letzte an (`g_botCover 1`; die zweite ist
+`g_botCover 2`). Ehrlich gesagt: auch sie ist eher ein menschlicher Zug als
+ein großer Gewinn. Den großen Schritt dieser Tage haben schnelleres Drehen,
+kürzere Reaktion und das Verfolgen gemacht.
 
 ## Ersetzte Sockel
 

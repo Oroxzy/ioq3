@@ -2658,6 +2658,15 @@ int AINode_Battle_Chase(bot_state_t *bs)
 	}
 	//if the weapon is used for the bot movement
 	if (moveresult.flags & MOVERESULT_MOVEMENTWEAPON) bs->weaponnum = moveresult.weapon;
+	// Werkbank: Vorfeuern. Die Zielhilfe des Originals zielt in den ersten zwei
+	// Sekunden der Verfolgung mit Raketen, Granaten und BFG dorthin, wo der
+	// Gegner wieder auftauchen muss (BotAimAtEnemy, "prediction shots around
+	// corners") - aber der Knoten drueckt nie ab. Ein Mensch schiesst hinterher.
+	if (BotSw(bs, g_botSpam) && bs->chase_time > FloatTime() - 1.5f
+		&& (bs->weaponnum == WP_ROCKET_LAUNCHER || bs->weaponnum == WP_GRENADE_LAUNCHER
+			|| bs->weaponnum == WP_PLASMAGUN || bs->weaponnum == WP_BFG)) {
+		BotCheckAttack(bs);
+	}
 	//if the bot is in the area the enemy was last seen in
 	if (bs->areanum == bs->lastenemyareanum && !BotPursuing(bs)) bs->chase_time = 0;
 	//if the bot wants to retreat (the bot could have been damage during the chase)
@@ -2821,6 +2830,12 @@ int AINode_Battle_Retreat(bot_state_t *bs) {
 			AIEnter_Battle_NBG(bs, "battle retreat: nbg");
 			return qfalse;
 		}
+	}
+	// Werkbank: unter Beschuss erst aus der Sicht des Gegners (g_botCover)
+	{
+		bot_goal_t cover;
+
+		if (BotCoverGoal(bs, &goal, &cover)) goal = cover;
 	}
 	//initialize the movement state
 	BotSetupForMovement(bs);

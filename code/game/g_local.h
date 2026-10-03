@@ -780,6 +780,10 @@ extern	vmCvar_t	g_botJink;
 extern	vmCvar_t	g_botPursue;
 extern	vmCvar_t	g_botTurnSpeed;
 extern	vmCvar_t	g_botReactionMax;
+extern	vmCvar_t	g_botSpam;
+extern	vmCvar_t	g_botTarget;
+extern	vmCvar_t	g_botCover;
+extern	vmCvar_t	g_botHop;
 extern	vmCvar_t	g_botStockMask;
 // Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist (ai_main.c)
 void	QDECL BotLogPrintf( const char *fmt, ... );

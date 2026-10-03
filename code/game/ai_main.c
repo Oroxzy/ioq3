@@ -1125,6 +1125,193 @@ qboolean BotPursuing( bot_state_t *bs ) {
 		|| ( inv[INVENTORY_BFG10K] > 0 && inv[INVENTORY_BFGAMMO] > 0 );
 }
 
+static int BotFootHazard( bot_state_t *bs, vec3_t origin );
+
+int BotDealtRecently( bot_state_t *bs, int target ) {
+	if ( target < 0 || target >= MAX_CLIENTS || FloatTime() - bs->dealt_time[target] > PURSUE_WINDOW ) {
+		return 0;
+	}
+	return bs->dealt_amount[target];
+}
+
+/*
+==================
+BotCoverGoal
+
+Auf dem Rueckzug zuerst aus der Sicht.
+
+Gemessen auf q3dm17, Stufe 5: vier von fuenf Bots, die ein starker Spieler
+erledigte, starben auf dem Rueckzug, zwei Drittel davon mit vollem Leben -
+sie liefen offen und geradeaus zum naechsten Gegenstand, waehrend auf sie
+geschossen wurde. Ein Mensch geht erst hinter die Saeule, um die Ecke, durch
+die Tuer, und holt sich dann, was er braucht.
+
+Gesucht wird um den Bot herum, auf vier Abstaenden und sechzehn Richtungen,
+nach einer Stelle mit Boden, Wegnetz und hoechstens drei Sekunden Weg, die der
+Gegner von seinen Augen aus nicht sieht - weder den Kopf noch die Brust. Die
+naechste gewinnt. Gilt hoechstens drei Sekunden, und nur, solange der Gegner
+zu sehen ist und der Bot getroffen wird oder angeschlagen ist; danach geht es
+weiter zum eigentlichen Ziel.
+
+Und nur Deckung, die auf dem Weg liegt: hoechstens anderthalb Sekunden Umweg
+zum Ziel des Rueckzugs, und nach dem Ankommen zwei Sekunden keine neue Suche.
+Die erste Fassung nahm jede Deckung - der Bot lief hin, dann zurueck zu seinem
+Ziel, wurde wieder gesehen und lief wieder hin: das Hin und Her verdoppelte
+sich.
+==================
+*/
+qboolean BotCoverGoal( bot_state_t *bs, bot_goal_t *ltg, bot_goal_t *goal ) {
+	vec3_t		enemyeye, p, below, f, eye, chest, mins = { -15, -15, -24 }, maxs = { 15, 15, 32 };
+	trace_t		tr;
+	bsp_trace_t	bt;
+	gentity_t	*en;
+	float		now, r, a;
+	int			i, area, t, besttime, bestarea, tgoal, tvia;
+	vec3_t		best;
+
+	if ( !BotSw(bs, g_botCover) || bs->enemy < 0 || bs->enemy >= MAX_CLIENTS ) {
+		return qfalse;
+	}
+	now = FloatTime();
+	en = &g_entities[bs->enemy];
+	if ( !en->client || bs->enemyvisible_time < now - 0.2f ) {
+		bs->cover_area = 0;
+		return qfalse;			// er sieht ihn nicht: keine Deckung noetig
+	}
+	// Wann: mit 1 nur, wer wirklich angeschlagen ist (Leben und Ruestung unter
+	// 60), mit 2 schon, wer getroffen wird oder unter 100 hat. Gemessen auf
+	// drei Karten: 2 versteckte die Bots so oft, dass sie auf q3dm6 leichter
+	// wurden und ueber alle Karten sechs Prozent weniger Abschuesse fielen; 1
+	// behaelt den Vorteil auf q3dm17 und schadet nirgends.
+	if ( BotSw(bs, g_botCover) >= 2 ) {
+		if ( BotRecentDamage( bs, bs->enemy ) < 20
+			&& bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR] >= 100 ) {
+			bs->cover_area = 0;
+			return qfalse;		// unbedraengt und gesund: weiter zum Ziel
+		}
+	} else if ( bs->inventory[INVENTORY_HEALTH] + bs->inventory[INVENTORY_ARMOR] >= 60 ) {
+		bs->cover_area = 0;
+		return qfalse;			// nicht angeschlagen: weiter zum Ziel
+	}
+	VectorCopy( en->client->ps.origin, enemyeye );
+	enemyeye[2] += en->client->ps.viewheight;
+
+	// die gewaehlte Stelle gilt, solange sie noch Deckung ist
+	if ( bs->cover_area && now < bs->cover_until ) {
+		if ( bs->areanum == bs->cover_area ) {
+			bs->cover_area = 0;
+			bs->cover_search = now + 2.0f;
+			return qfalse;		// angekommen
+		}
+		VectorCopy( bs->cover_origin, eye );
+		eye[2] += 40;
+		BotAI_Trace( &bt, enemyeye, NULL, NULL, eye, ENTITYNUM_NONE, CONTENTS_SOLID );
+		if ( bt.fraction < 1.0f ) {
+			goto use;
+		}
+		bs->cover_area = 0;		// der Gegner hat sich bewegt: neu suchen
+	}
+	if ( now < bs->cover_search ) {
+		return qfalse;
+	}
+	bs->cover_search = now + 0.5f;
+	bestarea = 0;
+	besttime = 300;
+	tgoal = ltg ? trap_AAS_AreaTravelTimeToGoalArea( bs->areanum, bs->origin, ltg->areanum, bs->tfl ) : 0;
+	for ( r = 96.0f; r <= 480.0f; r += 128.0f ) {
+		for ( i = 0; i < 16; i++ ) {
+			a = i * ( M_PI / 8.0f );
+			VectorSet( p, bs->origin[0] + r * cos( a ), bs->origin[1] + r * sin( a ), bs->origin[2] + 24.0f );
+			VectorCopy( p, below );
+			below[2] -= 256.0f;
+			trap_Trace( &tr, p, mins, maxs, below, bs->entitynum, MASK_PLAYERSOLID & ~CONTENTS_BODY );
+			if ( tr.startsolid || tr.fraction >= 1.0f || tr.plane.normal[2] < 0.7f ) {
+				continue;
+			}
+			VectorCopy( tr.endpos, f );
+			if ( BotFootHazard( bs, f ) == 1 ) {
+				continue;		// Lava, Schleim, Todeszone
+			}
+			area = BotPointAreaNum( f );
+			if ( !area || !trap_AAS_AreaReachability( area ) || area == bs->areanum ) {
+				continue;
+			}
+			t = trap_AAS_AreaTravelTimeToGoalArea( bs->areanum, bs->origin, area, bs->tfl );
+			if ( t <= 0 || t >= besttime ) {
+				continue;
+			}
+			// auf dem Weg: von dort zum Ziel kaum laenger als von hier
+			if ( tgoal > 0 ) {
+				tvia = trap_AAS_AreaTravelTimeToGoalArea( area, f, ltg->areanum, bs->tfl );
+				if ( tvia <= 0 || t + tvia > tgoal + 150 ) {
+					continue;
+				}
+			}
+			VectorCopy( f, eye );
+			eye[2] += 40;
+			BotAI_Trace( &bt, enemyeye, NULL, NULL, eye, ENTITYNUM_NONE, CONTENTS_SOLID );
+			if ( bt.fraction >= 1.0f ) {
+				continue;		// der Kopf ist zu sehen
+			}
+			VectorCopy( f, chest );
+			chest[2] += 16;
+			BotAI_Trace( &bt, enemyeye, NULL, NULL, chest, ENTITYNUM_NONE, CONTENTS_SOLID );
+			if ( bt.fraction >= 1.0f ) {
+				continue;		// die Brust ist zu sehen
+			}
+			besttime = t;
+			bestarea = area;
+			VectorCopy( f, best );
+		}
+	}
+	if ( !bestarea ) {
+		return qfalse;
+	}
+	VectorCopy( best, bs->cover_origin );
+	bs->cover_area = bestarea;
+	bs->cover_until = now + 3.0f;
+	BotLogPrintf( "C %i %i %.0f %.0f %.0f %.0f %.0f %.0f %i\n", level.time, bs->client,
+		bs->origin[0], bs->origin[1], bs->origin[2], best[0], best[1], best[2], besttime );
+use:
+	memset( goal, 0, sizeof( *goal ) );
+	VectorCopy( bs->cover_origin, goal->origin );
+	goal->areanum = bs->cover_area;
+	VectorSet( goal->mins, -8, -8, -8 );
+	VectorSet( goal->maxs, 8, 8, 8 );
+	goal->entitynum = -1;
+	return qtrue;
+}
+
+/*
+==================
+BotHop
+
+Im Gefecht mit Auto-Hop dauernd huepfen, wie ein Spieler mit der Bewegung von
+Quake Live. Nur auf dem Boden, nur wenn er schon laeuft, und ob der Sprung
+landet, entscheidet danach der Tritt (BotFooting). Ein Versuch: gemessen
+machte Springen die Bots bisher eher leichter.
+==================
+*/
+static void BotHop( bot_state_t *bs, bot_input_t *bi ) {
+	playerState_t	*ps;
+	float			speed;
+
+	if ( !BotSw(bs, g_botHop) || !pmove_AutoHop.integer || bs->ainode != AINode_Battle_Fight
+		|| !g_entities[bs->client].client ) {
+		return;
+	}
+	ps = &g_entities[bs->client].client->ps;
+	if ( ps->groundEntityNum == ENTITYNUM_NONE
+		|| ( bi->actionflags & ( ACTION_CROUCH | ACTION_DELAYEDJUMP ) ) ) {
+		return;
+	}
+	speed = sqrt( ps->velocity[0] * ps->velocity[0] + ps->velocity[1] * ps->velocity[1] );
+	if ( speed < 200.0f ) {
+		return;
+	}
+	bi->actionflags |= ACTION_JUMP;
+}
+
 int BotRecentDamage( bot_state_t *bs, int attacker ) {
 	if ( attacker < 0 || attacker >= MAX_CLIENTS ) {
 		return 0;
@@ -2743,6 +2930,7 @@ void BotUpdateInput(bot_state_t *bs, int time, int elapsed_time) {
 	// gesprungen werden, um Tempo zu halten.
 	BotDodge(bs, &bi);
 	BotJink(bs, &bi);
+	BotHop(bs, &bi);
 	if ( !BotFooting(bs, &bi) ) {
 		BotSpeedJump(bs, &bi);
 	}

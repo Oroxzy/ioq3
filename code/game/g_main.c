@@ -98,6 +98,10 @@ vmCvar_t	g_botJink;
 vmCvar_t	g_botPursue;
 vmCvar_t	g_botTurnSpeed;
 vmCvar_t	g_botReactionMax;
+vmCvar_t	g_botSpam;
+vmCvar_t	g_botTarget;
+vmCvar_t	g_botCover;
+vmCvar_t	g_botHop;
 vmCvar_t	g_botStockMask;
 vmCvar_t	g_botDodge;
 vmCvar_t	g_botSteady;
@@ -317,6 +321,14 @@ static cvarTable_t		gameCvarTable[] = {
 	{ &g_botTurnSpeed, "g_botTurnSpeed", "0", 0, 0, qtrue },
 	// Hoechstens so lange bis zum ersten Schuss, in Sekunden; 0 der Charakter.
 	{ &g_botReactionMax, "g_botReactionMax", "0", 0, 0, qtrue },
+	// Dauerfeuer: um Ecken vorfeuern, und ohne Eigenschaden auch aus der Naehe.
+	{ &g_botSpam, "g_botSpam", "0", 0, 0, qtrue },
+	// Zielwahl: angeschossene und abgewandte Gegner zuerst, statt des naechsten.
+	{ &g_botTarget, "g_botTarget", "0", 0, 0, qtrue },
+	// Auf dem Rueckzug zuerst aus der Sicht des Gegners gehen.
+	{ &g_botCover, "g_botCover", "0", 0, 0, qtrue },
+	// Im Gefecht mit Auto-Hop dauernd huepfen (Versuch).
+	{ &g_botHop, "g_botHop", "0", 0, 0, qtrue },
 	// Ein Bit je Clientnummer: diese Bots spielen als Original, auch wenn die
 	// Schalter an sind. Nur fuer den Vergleich im selben Spiel.
 	{ &g_botStockMask, "g_botStockMask", "0", 0, 0, qfalse },

@@ -137,6 +137,14 @@ public class MainForm : Form, IMessageFilter {
 	readonly NumericUpDown botTurnSpeed = new() { DecimalPlaces = 0, Increment = 60m, Minimum = 0m, Maximum = 1800m, Value = 0m, Width = 70 };
 	// Sekunden bis zum ersten Schuss, höchstens; 0 lässt den Charakter.
 	readonly NumericUpDown botReactionMax = new() { DecimalPlaces = 2, Increment = 0.05m, Minimum = 0m, Maximum = 2m, Value = 0m, Width = 70 };
+	// Siehe AINode_Battle_Chase und BotCheckAttack.
+	readonly CheckBox botSpam = new() { Text = "Dauerfeuer: um Ecken vorfeuern", Checked = false, AutoSize = true };
+	// Siehe BotTargetBonus.
+	readonly CheckBox botTarget = new() { Text = "Zielwahl: Angeschossene und Abgewandte zuerst", Checked = false, AutoSize = true };
+	// Siehe BotCoverGoal.
+	readonly CheckBox botCover = new() { Text = "angeschlagen Deckung suchen", Checked = false, AutoSize = true };
+	// Siehe BotHop.
+	readonly CheckBox botHop = new() { Text = "im Gefecht hüpfen (Auto-Hop)", Checked = false, AutoSize = true };
 	// Eine Zahl, die ganze Leiter: unter 0,2 steht der Bot still, über 0,7
 	// umkreist er mit Rhythmus. Früher ein Haken zusammen mit dem Lagern, der
 	// nur 0,9 oder „Charakterdatei“ kannte.
@@ -237,6 +245,12 @@ public class MainForm : Form, IMessageFilter {
 		( botPursue,         0,  1 ),
 		( botTurnSpeed,      0,  720 ),
 		( botReactionMax,    0,  0.35m ),
+		// gemessen: nur die Deckung macht die Bots stärker; Dauerfeuer, Zielwahl
+		// und Hüpfen liegen im Rauschen und heben die Deckung teils wieder auf
+		( botSpam,           0,  0 ),
+		( botTarget,         0,  0 ),
+		( botCover,          0,  1 ),		// 1 = nur angeschlagen
+		( botHop,            0,  0 ),
 		( botAttackSkill,   -1,  0.9m ),
 		// Zielen und Reagieren bleiben beim Charakter: gegen diese Bots wird
 		// gemessen, und ein Bot, der besser trifft, ist nicht menschlicher
@@ -1727,6 +1741,28 @@ public class MainForm : Form, IMessageFilter {
 			+ " Gegner, in Sekunden. Die Charaktere warten auf Stufe 5 bis anderthalb Sekunden (Klesk),"
 			+ " auch nach dem Wiederbeleben; ein Mensch reagiert in einer Viertelsekunde. Wer schneller"
 			+ " ist, bleibt so schnell. 0 lässt den Charakter." );
+		hintTip.SetToolTip( botSpam, "Verschwindet der Gegner hinter einer Ecke, schießt der Bot mit Raketen,"
+			+ " Granaten, Plasma oder BFG noch anderthalb Sekunden dorthin, wo er wieder auftauchen muss."
+			+ " Die Zielhilfe des Originals zielt schon dorthin, drückt aber nie ab. Und ohne"
+			+ " Eigenschaden (g_selfDamage 0) feuert er Splash-Waffen auch aus nächster Nähe.\n\n"
+			+ "Gemessen ohne Nutzen: die Bots schießen mit schnellerem Drehen und kürzerer Reaktion"
+			+ " schon drei Viertel der Zeit. Deshalb bei „Menschlich“ aus." );
+		hintTip.SetToolTip( botTarget, "Im Original wechselt ein Bot nur zu einem Gegner, der näher ist. Mit"
+			+ " Haken zählt auch, wen er schon angeschossen hat und wer ihm gerade den Rücken zudreht –"
+			+ " gewechselt wird nur bei klarem Vorteil und höchstens einmal je Sekunde.\n\n"
+			+ "Die Bots wechseln damit ruhiger (62 statt 77 Wechsel je Minute), werden aber nicht"
+			+ " stärker – auf der kleinen Arena eher leichter, weil sie sich von dem abwenden, der sie"
+			+ " gerade ansieht. Deshalb bei „Menschlich“ aus." );
+		hintTip.SetToolTip( botCover, "Auf dem Rückzug läuft ein Bot im Original offen zum nächsten Gegenstand."
+			+ " Mit Haken geht er, wenn er angeschlagen ist (Leben und Rüstung unter 60), zuerst an die"
+			+ " nächste Stelle auf seinem Weg, die der Gegner nicht sieht – höchstens drei Sekunden"
+			+ " entfernt und anderthalb Sekunden Umweg –, und dann weiter.\n\n"
+			+ "Gemessen auf drei Karten: auf q3dm17 wird das Feld etwas schwerer, anderswo bleibt es"
+			+ " gleich. Deckung schon bei leichten Treffern (in der Konsole g_botCover 2) versteckte die"
+			+ " Bots zu oft – weniger Action, und auf q3dm6 wurden sie leichter." );
+		hintTip.SetToolTip( botHop, "Im Gefecht dauernd hüpfen, wie mit der Bewegung von Quake Live (braucht"
+			+ " Auto-Hop). Ein Versuch, gemessen ohne Wirkung auf die Stärke – deshalb bei"
+			+ " „Menschlich“ aus." );
 		hintTip.SetToolTip( botSteady, "Kampf, Rückzug und Verfolgung hängen im Original an derselben"
 			+ " Schwelle und kippen bei jedem Denkschritt neu – gemessen 17 Hin-und-Her je Bot und"
 			+ " Minute, mit 1,5 Sekunden noch 5. Eine getroffene Entscheidung gilt so viele Sekunden –"
@@ -1767,6 +1803,10 @@ public class MainForm : Form, IMessageFilter {
 			Row( Pad( botPursue ) ),
 			Row( Labelled( "Drehtempo im Kampf (°/s, 0 = Charakter):", botTurnSpeed ) ),
 			Row( Labelled( "Reaktion höchstens (s, 0 = Charakter):", botReactionMax ) ),
+			Row( Pad( botSpam ) ),
+			Row( Pad( botTarget ) ),
+			Row( Pad( botCover ) ),
+			Row( Pad( botHop ) ),
 			Row( Labelled( "Kampfbewegung:", botAttackSkill ) ),
 			Row( Labelled( "Reaktionszeit (s):", botReaction ) ),
 			Row( Labelled( "Zielgenauigkeit:", botAimAccuracy ) ),
@@ -2758,6 +2798,10 @@ public class MainForm : Form, IMessageFilter {
 		s.AppendLine( "botPursue=" + botPursue.Checked );
 		s.AppendLine( "botTurnSpeed=" + Dec( botTurnSpeed.Value ) );
 		s.AppendLine( "botReactionMax=" + Dec( botReactionMax.Value ) );
+		s.AppendLine( "botSpam=" + botSpam.Checked );
+		s.AppendLine( "botTarget=" + botTarget.Checked );
+		s.AppendLine( "botCover=" + botCover.Checked );
+		s.AppendLine( "botHop=" + botHop.Checked );
 		s.AppendLine( "botAttackSkill=" + Dec( botAttackSkill.Value ) );
 		s.AppendLine( "botReaction=" + Dec( botReaction.Value ) );
 		s.AppendLine( "botAimAccuracy=" + Dec( botAimAccuracy.Value ) );
@@ -2915,6 +2959,10 @@ public class MainForm : Form, IMessageFilter {
 		SetBool( botPursue, v, "botPursue" );
 		SetNum( botTurnSpeed, v, "botTurnSpeed" );
 		SetNum( botReactionMax, v, "botReactionMax" );
+		SetBool( botSpam, v, "botSpam" );
+		SetBool( botTarget, v, "botTarget" );
+		SetBool( botCover, v, "botCover" );
+		SetBool( botHop, v, "botHop" );
 		SetNum( botAttackSkill, v, "botAttackSkill" );
 		SetNum( botReaction, v, "botReaction" );
 		SetNum( botAimAccuracy, v, "botAimAccuracy" );
@@ -3230,6 +3278,10 @@ public class MainForm : Form, IMessageFilter {
 		cfg.AppendLine( $"set g_botPursue {( botPursue.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botTurnSpeed {Dec( botTurnSpeed.Value )}" );
 		cfg.AppendLine( $"set g_botReactionMax {Dec( botReactionMax.Value )}" );
+		cfg.AppendLine( $"set g_botSpam {( botSpam.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botTarget {( botTarget.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botCover {( botCover.Checked ? 1 : 0 )}" );
+		cfg.AppendLine( $"set g_botHop {( botHop.Checked ? 1 : 0 )}" );
 		cfg.AppendLine( $"set g_botAttackSkill {Dec( botAttackSkill.Value )}" );
 		cfg.AppendLine( $"set g_botReaction {Dec( botReaction.Value )}" );
 		cfg.AppendLine( $"set g_botAimAccuracy {Dec( botAimAccuracy.Value )}" );

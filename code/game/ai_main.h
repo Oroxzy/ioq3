@@ -291,6 +291,13 @@ typedef struct bot_state_s
 	float hurt_time[MAX_CLIENTS];					//wann wer zuletzt getroffen hat
 	// Werkbank: Haken schlagen (g_botJink)
 	float jink_time;								//bis dahin gilt die Seite
+	// Werkbank: Deckung (g_botCover)
+	vec3_t cover_origin;							//die Stelle ausser Sicht, zu der er gerade laeuft
+	int cover_area;									//ihr Feld, 0 = keine
+	float cover_until;								//so lange gilt sie hoechstens
+	float cover_search;								//vorher nicht neu suchen
+	// Werkbank: Zielwahl (g_botTarget)
+	float target_switch_time;						//wann zuletzt aus Berechnung gewechselt wurde
 	int jink_side;									//nach links oder rechts
 	int hurt_amount[MAX_CLIENTS];					//und wieviel seither, in einem Fenster von anderthalb Sekunden
 	// Werkbank: unerbittlich verfolgen (g_botPursue)
@@ -397,6 +404,10 @@ qboolean BotEnemySpotSafe(bot_state_t *bs, vec3_t origin);
 int BotRecentDamage(bot_state_t *bs, int attacker);
 // Werkbank: hat der Bot seinen Gegner schon angeschossen und kann nachsetzen (g_botPursue)
 qboolean BotPursuing(bot_state_t *bs);
+// Werkbank: wieviel der Bot diesem Gegner in den letzten fuenf Sekunden gemacht hat
+int BotDealtRecently(bot_state_t *bs, int target);
+// Werkbank: eine Stelle ausser Sicht des Gegners, auf dem Rueckzug (g_botCover)
+qboolean BotCoverGoal(bot_state_t *bs, bot_goal_t *ltg, bot_goal_t *goal);
 // Werkbank: worauf es sich zu warten lohnt; bs darf NULL sein
 qboolean BotItemWorthWaiting(bot_state_t *bs, gitem_t *item);
 // Werkbank: eine Zeile ins Bot-Protokoll, wenn g_botLog an ist

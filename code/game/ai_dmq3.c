@@ -3186,6 +3186,33 @@ float BotEntityVisible(int viewer, vec3_t eye, vec3_t viewangles, float fov, int
 BotFindEnemy
 ==================
 */
+/*
+==================
+BotTargetBonus
+
+Wie lohnend ein Gegner ist, in Einheiten Entfernung: wen der Bot schon
+angeschossen hat (bis zu 400 bei 100 Schaden), und wer ihm gerade den
+Ruecken zudreht (300). Ein Mensch weiss beides.
+==================
+*/
+static float BotTargetBonus(bot_state_t *bs, int client) {
+	float		bonus = 0;
+	int			dealt;
+	vec3_t		forward, dir;
+	gentity_t	*en = &g_entities[client];
+
+	dealt = BotDealtRecently(bs, client);
+	if (dealt > 100) dealt = 100;
+	bonus += dealt * 4;
+	if (en->client) {
+		AngleVectors(en->client->ps.viewangles, forward, NULL, NULL);
+		VectorSubtract(bs->origin, en->client->ps.origin, dir);
+		VectorNormalize(dir);
+		if (DotProduct(forward, dir) < 0.5f) bonus += 300;
+	}
+	return bonus;
+}
+
 int BotFindEnemy(bot_state_t *bs, int curenemy) {
 	int i, healthdecrease;
 	float f, alertness, easyfragger, vis;
@@ -3252,6 +3279,44 @@ int BotFindEnemy(bot_state_t *bs, int curenemy) {
 	// Werkbank: wer seinen Gegner angeschossen hat, wechselt nicht zu einem bloss
 	// naeheren - nur einer, der ihn selbst trifft, zieht ihn weg (oben)
 	if (curenemy >= 0 && curenemy == bs->enemy && BotPursuing(bs)) return qfalse;
+	// Werkbank: Zielwahl. Im Original wechselt ein Bot nur zu einem Gegner, der
+	// naeher ist. Ein Mensch nimmt lieber den, den er schon angeschossen hat,
+	// und den, der ihm gerade den Ruecken zudreht. Gewechselt wird nur bei
+	// klarem Vorteil und hoechstens einmal je Sekunde, damit er nicht zwischen
+	// zweien hin und her springt.
+	if (curenemy >= 0 && curenemy < MAX_CLIENTS && BotSw(bs, g_botTarget)) {
+		int best = -1;
+		float score, bestscore, curscore;
+
+		curscore = sqrt(cursquaredist) - BotTargetBonus(bs, curenemy);
+		bestscore = curscore - 150;
+		if (bs->target_switch_time > FloatTime() - 1.0f) return qfalse;
+		for (i = 0; i < level.maxclients; i++) {
+			if (i == bs->client || i == curenemy) continue;
+			if (g_entities[i].flags & FL_NOTARGET) continue;
+			BotEntityInfo(i, &entinfo);
+			if (!entinfo.valid || EntityIsDead(&entinfo)) continue;
+			if (EntityIsInvisible(&entinfo) && !EntityIsShooting(&entinfo)) continue;
+			if (BotSameTeam(bs, i)) continue;
+			VectorSubtract(entinfo.origin, bs->origin, dir);
+			squaredist = VectorLengthSquared(dir);
+			if (squaredist > Square(900.0 + alertness * 4000.0)) continue;
+			score = sqrt(squaredist) - BotTargetBonus(bs, i);
+			if (score >= bestscore) continue;
+			f = (healthdecrease || EntityIsShooting(&entinfo) || BotHeard(bs, i)) ? 360 : 180;
+			if (BotEntityVisible(bs->entitynum, bs->eye, bs->viewangles, f, i) <= 0) continue;
+			best = i;
+			bestscore = score;
+		}
+		if (best < 0) return qfalse;
+		bs->enemy = best;
+		bs->enemysight_time = FloatTime() - 2;
+		bs->enemysuicide = qfalse;
+		bs->enemydeath_time = 0;
+		bs->enemyvisible_time = FloatTime();
+		bs->target_switch_time = FloatTime();
+		return qtrue;
+	}
 #ifdef MISSIONPACK
 	if (gametype == GT_OBELISK) {
 		vec3_t target;
@@ -3797,7 +3862,8 @@ void BotAimAtEnemy(bot_state_t *bs) {
 			//do prediction shots around corners
 			if (wi.number == WP_BFG ||
 				wi.number == WP_ROCKET_LAUNCHER ||
-				wi.number == WP_GRENADE_LAUNCHER) {
+				wi.number == WP_GRENADE_LAUNCHER ||
+				(wi.number == WP_PLASMAGUN && BotSw(bs, g_botSpam))) {
 				//create the chase goal
 				goal.entitynum = bs->client;
 				goal.areanum = bs->areanum;
@@ -3970,7 +4036,10 @@ void BotCheckAttack(bot_state_t *bs) {
 		}
 	}
 	//if won't hit the enemy or not attacking a player (obelisk)
-	if (trace.ent != attackentity || attackentity >= MAX_CLIENTS) {
+	// Werkbank: ohne Eigenschaden (g_selfDamage 0) gibt es nichts, wovor die
+	// folgende Pruefung schuetzt - ein Mensch feuert dann auch aus der Naehe
+	if ((trace.ent != attackentity || attackentity >= MAX_CLIENTS)
+		&& !(BotSw(bs, g_botSpam) && !g_selfDamage.integer)) {
 		//if the projectile does radial damage
 		if (wi.proj.damagetype & DAMAGETYPE_RADIAL) {
 			if (trace.fraction * 1000 < wi.proj.radius) {
