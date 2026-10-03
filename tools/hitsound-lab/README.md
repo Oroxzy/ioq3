@@ -2001,6 +2001,67 @@ Bei „Menschlich" ist nur die letzte an (`g_botCover 1`; die zweite ist
 ein großer Gewinn. Den großen Schritt dieser Tage haben schnelleres Drehen,
 kürzere Reaktion und das Verfolgen gemacht.
 
+## Die große Prüfung: jeder Schalter, jeder Wert, 15 Bots, 25 Karten
+
+Zum Schluss alles auf einmal, mit dem fertigen Stand und gegen den
+Stellvertreter: jeder Schalter von „Menschlich" einzeln zurückgedreht (22
+Varianten, je 15 Läufe auf q3dm17, je 12 auf q3tourney4 — 621 Läufe), dreizehn
+andere Zahlenwerte (195 Läufe), ein Härtetest mit 15 Bots über zwanzig Minuten,
+alle 25 Karten gegen das Original, gemischte Duelle auf sechs Karten. Dazu das
+Spielmodul mit allen Compiler-Warnungen gebaut (eine harmlose Stelle, beseitigt).
+
+**Was die Bots stark macht**, nach dem Verlust, wenn man es abschaltet (q3dm17,
+Stufe 5; die Voreinstellung steht bei 1,24 Abschüssen je Tod des Stellvertreters,
+das Original bei 1,68):
+
+| ohne … | Abschüsse je Tod | ohne … | Abschüsse je Tod |
+|---|---|---|---|
+| Reaktion höchstens 0,35 s | 1,47 | zurückschlagen | 1,46 |
+| Raketen ausweichen | 1,44 | Drehtempo 720 | 1,43 |
+| hören | 1,43 | Deckung | 1,39 |
+| nach oben kämpfen | 1,37 | dem Lärm nach | 1,37 |
+| Sprungfreude 0,25 | 1,36 | Entscheidung halten | 1,34 |
+
+Alles andere — Aufschlag für Fallengelassenes, Luftsteuerung, Kampfbewegung,
+Respawn-Zeiten, Sims, neu planen, Mitnehmen, Abwechslung, nicht in die Leere,
+Verfolgen, Lagern — liegt einzeln im Rauschen (±0,06). Das Verfolgen allein
+hatte vorher 0,2 gebracht; mit zurückschlagen und schnellem Drehen daneben
+geht sein Anteil in deren auf. Es bleibt an, weil es das ist, was ein Mensch
+tut. Auf q3tourney4 mit vier Bots streut jeder Arm um ±0,1, dort lässt sich
+kein einzelner Schalter ablesen.
+
+**Die Zahlenwerte sind richtig eingestellt.** Keiner der dreizehn anderen
+Werte war besser als die Voreinstellung, die meisten schlechter: Drehtempo 480
+(1,40) oder 1080 (1,27), Reaktion 0,2 (1,44) oder 0,5 (1,44), Halten 0,75
+(1,36) oder 3 (1,40), Sprungfreude 0 (1,37) oder 0,5 (1,38), Kampfbewegung 1,0
+(1,33), Abwechslung 10 (1,38) oder 50 (1,37), Deckung schon bei Treffern (1,34).
+
+**Härtetest**, 15 Bots auf Stufe 5, zwanzig Minuten q3dm17, je fünfzehn
+q3tourney6 und q3dm19: kein Absturz, keine Fehlermeldung, der Server hält den
+Takt (9,9 Denkschritte je Bot und Sekunde von 10 möglichen, Spielzeit gleich
+Wanduhr), die Bots stehen nicht mehr als mit zwölf.
+
+**Alle 25 Karten**, zwölf Bots, Original gegen Menschlich:
+
+| | Original | Menschlich |
+|---|---|---|
+| Tode durch die Karte | 417 | 147 |
+| Hin und Her je Bot-Minute | 27,2 | 14,6 |
+| Stillstand | 2,9 % | 2,9 % |
+| Zappeln | 0,2 | 0,2 |
+| Abschüsse je Bot-Minute | 5,0 | 5,2 |
+
+Mehr Abschüsse bei weniger Toten durch die Karte: die Bots sind nicht
+vorsichtiger geworden, sondern besser. q3tourney6 fällt auf — 74 Prozent
+Kartentode beim Original (die Quetschfalle und die Sprungfelder dorthin), 22
+bei Menschlich.
+
+**Gemischt, sechs gegen sechs** im selben Spiel auf q3dm6, 7, 11, 13, 17 und
+18, Rollen getauscht (`tools/botlog/dmg.pl`): die Menschlichen teilen 1,22-mal
+so viel Schaden aus, wie sie einstecken, erwischen die Originale 1182-mal
+gegen 967 und sterben 33-mal durch die Karte statt 92-mal. Auf keiner der
+sechs Karten verlieren sie.
+
 ## Ersetzte Sockel
 
 Wer unter „Waffen auf der Karte" einengt, legt auf den Sockel der Schrotflinte

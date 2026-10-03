@@ -1215,6 +1215,7 @@ qboolean BotCoverGoal( bot_state_t *bs, bot_goal_t *ltg, bot_goal_t *goal ) {
 		return qfalse;
 	}
 	bs->cover_search = now + 0.5f;
+	VectorClear( best );
 	bestarea = 0;
 	besttime = 300;
 	tgoal = ltg ? trap_AAS_AreaTravelTimeToGoalArea( bs->areanum, bs->origin, ltg->areanum, bs->tfl ) : 0;
